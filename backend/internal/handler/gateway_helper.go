@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -138,6 +139,85 @@ const (
 	// SSEPingFormatComment is an SSE comment ping for OpenAI/Codex CLI clients
 	SSEPingFormatComment SSEPingFormat = ":\n\n"
 )
+
+type compatStreamErrorFormat string
+
+const (
+	compatStreamErrorFormatDefault        compatStreamErrorFormat = ""
+	compatStreamErrorFormatOpenAIEvent    compatStreamErrorFormat = "openai_event"
+	compatStreamErrorFormatResponsesEvent compatStreamErrorFormat = "responses_event"
+	compatStreamErrorFormatAnthropicEvent compatStreamErrorFormat = "anthropic_event"
+)
+
+const (
+	compatStreamPingFormatContextKey  = "compat_stream_ping_format"
+	compatStreamErrorFormatContextKey = "compat_stream_error_format"
+)
+
+func setCompatStreamPingFormat(c *gin.Context, format SSEPingFormat) {
+	if c == nil {
+		return
+	}
+	c.Set(compatStreamPingFormatContextKey, format)
+}
+
+func resolveCompatStreamPingFormat(c *gin.Context, defaultFormat SSEPingFormat) SSEPingFormat {
+	if c == nil {
+		return defaultFormat
+	}
+	if value, ok := c.Get(compatStreamPingFormatContextKey); ok {
+		switch v := value.(type) {
+		case SSEPingFormat:
+			return v
+		case string:
+			return SSEPingFormat(v)
+		}
+	}
+	return defaultFormat
+}
+
+func setCompatStreamErrorFormat(c *gin.Context, format compatStreamErrorFormat) {
+	if c == nil {
+		return
+	}
+	c.Set(compatStreamErrorFormatContextKey, format)
+}
+
+func getCompatStreamErrorFormat(c *gin.Context) compatStreamErrorFormat {
+	if c == nil {
+		return compatStreamErrorFormatDefault
+	}
+	if value, ok := c.Get(compatStreamErrorFormatContextKey); ok {
+		switch v := value.(type) {
+		case compatStreamErrorFormat:
+			return v
+		case string:
+			return compatStreamErrorFormat(v)
+		}
+	}
+	return compatStreamErrorFormatDefault
+}
+
+func buildCompatStreamingErrorEvent(c *gin.Context, errType, message string) string {
+	return buildCompatStreamingErrorEventWithDefault(c, errType, message, compatStreamErrorFormatResponsesEvent)
+}
+
+func buildCompatStreamingErrorEventWithDefault(c *gin.Context, errType, message string, defaultFormat compatStreamErrorFormat) string {
+	format := getCompatStreamErrorFormat(c)
+	if format == compatStreamErrorFormatDefault {
+		format = defaultFormat
+	}
+	switch format {
+	case compatStreamErrorFormatOpenAIEvent:
+		return "event: error\ndata: " + `{"error":{"type":` + strconv.Quote(errType) + `,"message":` + strconv.Quote(message) + `}}` + "\n\n"
+	case compatStreamErrorFormatAnthropicEvent:
+		return "event: error\ndata: " + `{"type":"error","error":{"type":` + strconv.Quote(errType) + `,"message":` + strconv.Quote(message) + `}}` + "\n\n"
+	case compatStreamErrorFormatResponsesEvent:
+		return `data: {"type":"error","error":{"type":` + strconv.Quote(errType) + `,"message":` + strconv.Quote(message) + `}}` + "\n\n"
+	default:
+		return `data: {"type":"error","error":{"type":` + strconv.Quote(errType) + `,"message":` + strconv.Quote(message) + `}}` + "\n\n"
+	}
+}
 
 // ConcurrencyError represents a concurrency limit error with context
 type ConcurrencyError struct {
@@ -310,7 +390,8 @@ func (h *ConcurrencyHelper) waitForSlotWithPingTimeout(c *gin.Context, slotType 
 	}
 
 	// Determine if ping is needed (streaming + ping format defined)
-	needPing := isStream && h.pingFormat != ""
+	pingFormat := resolveCompatStreamPingFormat(c, h.pingFormat)
+	needPing := isStream && pingFormat != ""
 
 	var flusher http.Flusher
 	if needPing {
@@ -350,7 +431,7 @@ func (h *ConcurrencyHelper) waitForSlotWithPingTimeout(c *gin.Context, slotType 
 				c.Header("X-Accel-Buffering", "no")
 				*streamStarted = true
 			}
-			if _, err := fmt.Fprint(c.Writer, string(h.pingFormat)); err != nil {
+			if _, err := fmt.Fprint(c.Writer, string(pingFormat)); err != nil {
 				return nil, err
 			}
 			flusher.Flush()

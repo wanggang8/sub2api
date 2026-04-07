@@ -41,6 +41,7 @@ type cleanupRepoStub struct {
 	listErr       error
 	claimQueue    []*UsageCleanupTask
 	claimErr      error
+	claimCalls    int
 	deleteQueue   []cleanupDeleteResponse
 	deleteCalls   []cleanupDeleteCall
 	markSucceeded []cleanupMarkCall
@@ -125,6 +126,7 @@ func (s *cleanupRepoStub) ListTasks(ctx context.Context, params pagination.Pagin
 func (s *cleanupRepoStub) ClaimNextPendingTask(ctx context.Context, staleRunningAfterSeconds int64) (*UsageCleanupTask, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.claimCalls++
 	if s.claimErr != nil {
 		return nil, s.claimErr
 	}
@@ -418,6 +420,23 @@ func TestUsageCleanupServiceRunOnceClaimError(t *testing.T) {
 
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
+	require.Empty(t, repo.markSucceeded)
+	require.Empty(t, repo.markFailed)
+}
+
+func TestUsageCleanupServiceRunOnceTransientClaimErrorBacksOff(t *testing.T) {
+	repo := &cleanupRepoStub{
+		claimErr: errors.New("read tcp 198.18.0.1:52665->198.18.0.23:5432: read: can't assign requested address"),
+	}
+	cfg := &config.Config{UsageCleanup: config.UsageCleanupConfig{Enabled: true}}
+	svc := NewUsageCleanupService(repo, nil, nil, cfg)
+
+	svc.runOnce()
+	svc.runOnce()
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	require.Equal(t, 1, repo.claimCalls)
 	require.Empty(t, repo.markSucceeded)
 	require.Empty(t, repo.markFailed)
 }

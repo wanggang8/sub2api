@@ -82,6 +82,8 @@ temp/
 *.temp
 *.log
 *.bak
+*.yamlbak
+*.ymlbak
 .cache/
 .dev/
 .serena/
@@ -132,4 +134,3 @@ docs/*
 frontend/coverage/
 aicodex
 output/
-

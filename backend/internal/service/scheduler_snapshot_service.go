@@ -30,6 +30,7 @@ type SchedulerSnapshotService struct {
 	stopOnce      sync.Once
 	wg            sync.WaitGroup
 	fallbackLimit *fallbackLimiter
+	outboxBackoff *transientDBBackoff
 	lagMu         sync.Mutex
 	lagFailures   int
 }
@@ -53,7 +54,18 @@ func NewSchedulerSnapshotService(
 		cfg:           cfg,
 		stopCh:        make(chan struct{}),
 		fallbackLimit: newFallbackLimiter(maxQPS),
+		outboxBackoff: newTransientDBBackoff(transientDBBackoffWindow),
 	}
+}
+
+func (s *SchedulerSnapshotService) pollBackoff() *transientDBBackoff {
+	if s == nil {
+		return nil
+	}
+	if s.outboxBackoff == nil {
+		s.outboxBackoff = newTransientDBBackoff(transientDBBackoffWindow)
+	}
+	return s.outboxBackoff
 }
 
 func (s *SchedulerSnapshotService) Start() {
@@ -234,10 +246,20 @@ func (s *SchedulerSnapshotService) pollOutbox() {
 		return
 	}
 
+	if backoff := s.pollBackoff(); backoff != nil && backoff.shouldSkip(time.Now()) {
+		return
+	}
+
 	events, err := s.outboxRepo.ListAfter(ctx, watermark, 200)
 	if err != nil {
+		if backoff := s.pollBackoff(); backoff != nil && !backoff.record(err, time.Now()) {
+			return
+		}
 		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] outbox poll failed: %v", err)
 		return
+	}
+	if backoff := s.pollBackoff(); backoff != nil {
+		backoff.reset()
 	}
 	if len(events) == 0 {
 		return

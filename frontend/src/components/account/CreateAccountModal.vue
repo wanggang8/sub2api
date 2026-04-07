@@ -2463,6 +2463,33 @@
       </div>
 
       <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <div class="flex items-center justify-between">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.tlsInsecureSkipVerify.label') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.tlsInsecureSkipVerify.hint') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            :aria-pressed="tlsInsecureSkipVerifyEnabled"
+            @click="tlsInsecureSkipVerifyEnabled = !tlsInsecureSkipVerifyEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              tlsInsecureSkipVerifyEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                tlsInsecureSkipVerifyEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+      </div>
+
+      <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <!-- Mixed Scheduling (only for antigravity accounts) -->
         <div v-if="form.platform === 'antigravity'" class="flex items-center gap-2">
           <label class="flex cursor-pointer items-center gap-2">
@@ -3057,6 +3084,7 @@ const selectedErrorCodes = ref<number[]>([])
 const customErrorCodeInput = ref<number | null>(null)
 const interceptWarmupRequests = ref(false)
 const autoPauseOnExpired = ref(true)
+const tlsInsecureSkipVerifyEnabled = ref(false)
 const openaiPassthroughEnabled = ref(false)
 const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
@@ -3780,6 +3808,7 @@ const resetForm = () => {
   customErrorCodeInput.value = null
   interceptWarmupRequests.value = false
   autoPauseOnExpired.value = true
+  tlsInsecureSkipVerifyEnabled.value = false
   openaiPassthroughEnabled.value = false
   openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
@@ -3897,6 +3926,18 @@ const buildSoraExtra = (
   delete extra.openai_apikey_responses_websockets_v2_enabled
   delete extra.responses_websockets_v2_enabled
   delete extra.openai_ws_enabled
+  return Object.keys(extra).length > 0 ? extra : undefined
+}
+
+const withTLSInsecureSkipVerifyExtra = (base?: Record<string, unknown>): Record<string, unknown> | undefined => {
+  const extra: Record<string, unknown> = { ...(base || {}) }
+
+  if (tlsInsecureSkipVerifyEnabled.value) {
+    extra.tls_insecure_skip_verify = true
+  } else {
+    delete extra.tls_insecure_skip_verify
+  }
+
   return Object.keys(extra).length > 0 ? extra : undefined
 }
 
@@ -4208,7 +4249,7 @@ const handleImportAccessToken = async (accessTokenInput: string) => {
           platform: 'sora',
           type: 'oauth',
           credentials,
-          extra: soraExtra,
+          extra: withTLSInsecureSkipVerifyExtra(soraExtra),
           proxy_id: form.proxy_id,
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,
@@ -4292,6 +4333,7 @@ const createAccountAndFinish = async (
       finalExtra = quotaExtra
     }
   }
+  finalExtra = withTLSInsecureSkipVerifyExtra(finalExtra)
   await doCreateAccount({
     name: form.name,
     notes: form.notes,
@@ -4362,7 +4404,7 @@ const handleOpenAIExchange = async (authCode: string) => {
         platform: 'openai',
         type: 'oauth',
         credentials,
-        extra,
+        extra: withTLSInsecureSkipVerifyExtra(extra),
         proxy_id: form.proxy_id,
         concurrency: form.concurrency,
         load_factor: form.load_factor ?? undefined,
@@ -4392,7 +4434,7 @@ const handleOpenAIExchange = async (authCode: string) => {
         platform: 'sora',
         type: 'oauth',
         credentials: soraCredentials,
-        extra: soraExtra,
+        extra: withTLSInsecureSkipVerifyExtra(soraExtra),
         proxy_id: form.proxy_id,
         concurrency: form.concurrency,
         load_factor: form.load_factor ?? undefined,
@@ -4486,7 +4528,7 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
             platform: 'openai',
             type: 'oauth',
             credentials,
-            extra,
+            extra: withTLSInsecureSkipVerifyExtra(extra),
             proxy_id: form.proxy_id,
             concurrency: form.concurrency,
             load_factor: form.load_factor ?? undefined,
@@ -4514,7 +4556,7 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
             platform: 'sora',
             type: 'oauth',
             credentials: soraCredentials,
-            extra: soraExtra,
+            extra: withTLSInsecureSkipVerifyExtra(soraExtra),
             proxy_id: form.proxy_id,
             concurrency: form.concurrency,
             load_factor: form.load_factor ?? undefined,
@@ -4609,7 +4651,7 @@ const handleSoraValidateST = async (sessionTokenInput: string) => {
           platform: 'sora',
           type: 'oauth',
           credentials,
-          extra: soraExtra,
+          extra: withTLSInsecureSkipVerifyExtra(soraExtra),
           proxy_id: form.proxy_id,
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,
@@ -4698,7 +4740,7 @@ const handleAntigravityValidateRT = async (refreshTokenInput: string) => {
           platform: 'antigravity',
           type: 'oauth',
           credentials,
-          extra: {},
+          extra: withTLSInsecureSkipVerifyExtra({}),
           proxy_id: form.proxy_id,
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,
@@ -5040,7 +5082,7 @@ const handleCookieAuth = async (sessionKey: string) => {
           platform: form.platform,
           type: addMethod.value, // Use addMethod as type: 'oauth' or 'setup-token'
           credentials,
-          extra,
+          extra: withTLSInsecureSkipVerifyExtra(extra),
           proxy_id: form.proxy_id,
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,

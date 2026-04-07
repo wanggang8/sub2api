@@ -10,30 +10,80 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
 type queuedHTTPUpstream struct {
-	responses []*http.Response
-	requests  []*http.Request
-	tlsFlags  []bool
+	responses  []*http.Response
+	requests   []*http.Request
+	tlsFlags   []bool
+	tlsOptions []*UpstreamTLSOptions
 }
 
 func (u *queuedHTTPUpstream) Do(_ *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
 	return nil, fmt.Errorf("unexpected Do call")
 }
 
-func (u *queuedHTTPUpstream) DoWithTLS(req *http.Request, _ string, _ int64, _ int, profile *tlsfingerprint.Profile) (*http.Response, error) {
+func (u *queuedHTTPUpstream) DoWithTLS(req *http.Request, _ string, _ int64, _ int, opts *UpstreamTLSOptions) (*http.Response, error) {
 	u.requests = append(u.requests, req)
-	u.tlsFlags = append(u.tlsFlags, profile != nil)
+	u.tlsOptions = append(u.tlsOptions, opts)
+	u.tlsFlags = append(u.tlsFlags, opts != nil && opts.FingerprintProfile != nil)
 	if len(u.responses) == 0 {
 		return nil, fmt.Errorf("no mocked response")
 	}
 	resp := u.responses[0]
 	u.responses = u.responses[1:]
 	return resp, nil
+}
+
+func TestAccountTestService_testSoraAccountConnection_PropagatesTLSInsecureSkipVerify(t *testing.T) {
+	upstream := &queuedHTTPUpstream{
+		responses: []*http.Response{
+			newJSONResponse(http.StatusOK, `{"email":"demo@example.com"}`),
+			newJSONResponse(http.StatusOK, `{"data":[]}`),
+			newJSONResponse(http.StatusOK, `{"invite_code":"inv_abc","redeemed_count":3,"total_count":50}`),
+			newJSONResponse(http.StatusOK, `{"rate_limit_and_credit_balance":{"estimated_num_videos_remaining":27,"rate_limit_reached":false,"access_resets_in_seconds":46833}}`),
+		},
+	}
+	svc := &AccountTestService{
+		httpUpstream: upstream,
+		cfg: &config.Config{
+			Gateway: config.GatewayConfig{
+				TLSFingerprint: config.TLSFingerprintConfig{
+					Enabled: true,
+				},
+			},
+			Sora: config.SoraConfig{
+				Client: config.SoraClientConfig{
+					DisableTLSFingerprint: false,
+				},
+			},
+		},
+	}
+	account := &Account{
+		ID:          1,
+		Platform:    PlatformSora,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"access_token": "test_token",
+		},
+		Extra: map[string]any{
+			"tls_insecure_skip_verify": true,
+		},
+	}
+
+	c, _ := newSoraTestContext()
+	err := svc.testSoraAccountConnection(c, account)
+
+	require.NoError(t, err)
+	require.Len(t, upstream.tlsOptions, 4)
+	for _, opts := range upstream.tlsOptions {
+		require.NotNil(t, opts)
+		require.True(t, opts.InsecureSkipVerify)
+		require.NotNil(t, opts.FingerprintProfile)
+	}
 }
 
 func newJSONResponse(status int, body string) *http.Response {

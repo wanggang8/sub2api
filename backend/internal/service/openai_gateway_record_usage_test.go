@@ -933,6 +933,43 @@ func TestOpenAIGatewayServiceRecordUsage_BillsMappedRequestsUsingRequestedModel(
 	require.Equal(t, expectedCost.ActualCost, userRepo.lastAmount)
 }
 
+func TestOpenAIGatewayServiceRecordUsage_FallsBackToUpstreamModelWhenRequestedPricingMissing(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	userRepo := &openAIRecordUsageUserRepoStub{}
+	subRepo := &openAIRecordUsageSubRepoStub{}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, subRepo, nil)
+	usage := OpenAIUsage{InputTokens: 20, OutputTokens: 10}
+
+	expectedCost, err := svc.billingService.CalculateCost("gpt-5.4", UsageTokens{
+		InputTokens:  20,
+		OutputTokens: 10,
+	}, 1.1)
+	require.NoError(t, err)
+
+	err = svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID:     "resp_requested_pricing_fallback",
+			Model:         "CustomModel",
+			UpstreamModel: "gpt-5.4",
+			Usage:         usage,
+			Duration:      time.Second,
+		},
+		APIKey:  &APIKey{ID: 10},
+		User:    &User{ID: 20},
+		Account: &Account{ID: 30},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.Equal(t, "CustomModel", usageRepo.lastLog.Model)
+	require.NotNil(t, usageRepo.lastLog.UpstreamModel)
+	require.Equal(t, "gpt-5.4", *usageRepo.lastLog.UpstreamModel)
+	require.Equal(t, expectedCost.ActualCost, usageRepo.lastLog.ActualCost)
+	require.Equal(t, expectedCost.TotalCost, usageRepo.lastLog.TotalCost)
+	require.Equal(t, expectedCost.ActualCost, userRepo.lastAmount)
+	require.True(t, usageRepo.lastLog.ActualCost > 0, "fallback pricing should avoid zero-cost usage logs")
+}
+
 func TestOpenAIGatewayServiceRecordUsage_ChannelMappedDoesNotOverrideBillingModelWhenUnmapped(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	userRepo := &openAIRecordUsageUserRepoStub{}

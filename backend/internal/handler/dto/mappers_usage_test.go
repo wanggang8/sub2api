@@ -151,3 +151,21 @@ func TestUsageLogFromService_FallsBackToLegacyModelWhenRequestedModelMissing(t *
 func f64Ptr(value float64) *float64 {
 	return &value
 }
+
+func TestAccountFromServiceShallow_IncludesTLSInsecureSkipVerify(t *testing.T) {
+	t.Parallel()
+
+	account := &service.Account{
+		ID:       42,
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeAPIKey,
+		Extra: map[string]any{
+			"tls_insecure_skip_verify": true,
+		},
+	}
+
+	dtoAccount := AccountFromServiceShallow(account)
+	require.NotNil(t, dtoAccount)
+	require.NotNil(t, dtoAccount.TLSInsecureSkipVerify)
+	require.True(t, *dtoAccount.TLSInsecureSkipVerify)
+}

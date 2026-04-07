@@ -113,3 +113,17 @@ func TestValidatedTransport_ValidationErrorStopsRoundTrip(t *testing.T) {
 	require.ErrorIs(t, err, expectedErr)
 	require.Equal(t, int32(0), atomic.LoadInt32(&baseCalls))
 }
+
+func TestBuildTransport_AllowsInsecureSkipVerify(t *testing.T) {
+	transport, err := buildTransport(Options{InsecureSkipVerify: true})
+	require.NoError(t, err)
+	require.NotNil(t, transport)
+	require.NotNil(t, transport.TLSClientConfig)
+	require.True(t, transport.TLSClientConfig.InsecureSkipVerify)
+}
+
+func TestBuildClientKey_DiffersByInsecureSkipVerify(t *testing.T) {
+	keyStrict := buildClientKey(Options{Timeout: time.Second})
+	keyInsecure := buildClientKey(Options{Timeout: time.Second, InsecureSkipVerify: true})
+	require.NotEqual(t, keyStrict, keyInsecure)
+}

@@ -51,7 +51,8 @@ type AnthropicContentBlock struct {
 	Text string `json:"text,omitempty"`
 
 	// type=thinking
-	Thinking string `json:"thinking,omitempty"`
+	Thinking  string `json:"thinking,omitempty"`
+	Signature string `json:"signature,omitempty"`
 
 	// type=image
 	Source *AnthropicImageSource `json:"source,omitempty"`
@@ -153,6 +154,7 @@ type AnthropicDelta struct {
 type ResponsesRequest struct {
 	Model           string              `json:"model"`
 	Input           json.RawMessage     `json:"input"` // string or []ResponsesInputItem
+	Instructions    string              `json:"instructions,omitempty"`
 	MaxOutputTokens *int                `json:"max_output_tokens,omitempty"`
 	Temperature     *float64            `json:"temperature,omitempty"`
 	TopP            *float64            `json:"top_p,omitempty"`
@@ -180,6 +182,9 @@ type ResponsesInputItem struct {
 	// Role-based messages (system/user/assistant)
 	Role    string          `json:"role,omitempty"`
 	Content json.RawMessage `json:"content,omitempty"` // string or []ResponsesContentPart
+
+	// type=reasoning
+	Summary []ResponsesSummary `json:"summary,omitempty"`
 
 	// type=function_call
 	CallID    string `json:"call_id,omitempty"`

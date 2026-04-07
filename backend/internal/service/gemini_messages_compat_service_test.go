@@ -12,16 +12,17 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
 type geminiCompatHTTPUpstreamStub struct {
-	response *http.Response
-	err      error
-	calls    int
-	lastReq  *http.Request
+	response       *http.Response
+	err            error
+	calls          int
+	doWithTLSCalls int
+	lastReq        *http.Request
+	lastTLSOptions *UpstreamTLSOptions
 }
 
 func (s *geminiCompatHTTPUpstreamStub) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
@@ -37,7 +38,9 @@ func (s *geminiCompatHTTPUpstreamStub) Do(req *http.Request, proxyURL string, ac
 	return &resp, nil
 }
 
-func (s *geminiCompatHTTPUpstreamStub) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
+func (s *geminiCompatHTTPUpstreamStub) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, opts *UpstreamTLSOptions) (*http.Response, error) {
+	s.doWithTLSCalls++
+	s.lastTLSOptions = opts
 	return s.Do(req, proxyURL, accountID, accountConcurrency)
 }
 
@@ -281,6 +284,44 @@ func TestConvertClaudeMessagesToGeminiGenerateContent_AddsThoughtSignatureForToo
 	if !strings.Contains(s, "\"thoughtSignature\":\""+geminiDummyThoughtSignature+"\"") {
 		t.Fatalf("expected injected thoughtSignature %q, got: %s", geminiDummyThoughtSignature, s)
 	}
+}
+
+func TestGeminiMessagesCompatForward_UsesAccountTLSInsecureSkipVerify(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	httpStub := &geminiCompatHTTPUpstreamStub{
+		response: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"x-request-id": []string{"gemini-req-2"}},
+			Body:       io.NopCloser(strings.NewReader(`{"candidates":[{"content":{"parts":[{"text":"hello"}]}}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5}}`)),
+		},
+	}
+	svc := &GeminiMessagesCompatService{httpUpstream: httpStub, cfg: &config.Config{}}
+	account := &Account{
+		ID:   9,
+		Type: AccountTypeAPIKey,
+		Extra: map[string]any{
+			"tls_insecure_skip_verify": true,
+		},
+		Credentials: map[string]any{
+			"api_key": "test-key",
+			"model_mapping": map[string]any{
+				"claude-sonnet-4": "claude-sonnet-4-20250514",
+			},
+		},
+	}
+	body := []byte(`{"model":"claude-sonnet-4","max_tokens":16,"messages":[{"role":"user","content":"hello"}]}`)
+
+	result, err := svc.Forward(context.Background(), c, account, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, 1, httpStub.doWithTLSCalls)
+	require.NotNil(t, httpStub.lastTLSOptions)
+	require.True(t, httpStub.lastTLSOptions.InsecureSkipVerify)
+	require.Nil(t, httpStub.lastTLSOptions.FingerprintProfile)
 }
 
 func TestEnsureGeminiFunctionCallThoughtSignatures_InsertsWhenMissing(t *testing.T) {

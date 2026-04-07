@@ -1237,6 +1237,34 @@
         </div>
       </div>
 
+      <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <div class="flex items-center justify-between">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.tlsInsecureSkipVerify.label') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.tlsInsecureSkipVerify.hint') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="tls-insecure-skip-verify-toggle"
+            :aria-pressed="tlsInsecureSkipVerifyEnabled"
+            @click="tlsInsecureSkipVerifyEnabled = !tlsInsecureSkipVerifyEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              tlsInsecureSkipVerifyEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                tlsInsecureSkipVerifyEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+      </div>
+
       <!-- Quota Control Section (Anthropic OAuth/SetupToken only) -->
       <div
         v-if="account?.platform === 'anthropic' && (account?.type === 'oauth' || account?.type === 'setup-token')"
@@ -1847,6 +1875,7 @@ const selectedErrorCodes = ref<number[]>([])
 const customErrorCodeInput = ref<number | null>(null)
 const interceptWarmupRequests = ref(false)
 const autoPauseOnExpired = ref(false)
+const tlsInsecureSkipVerifyEnabled = ref(false)
 const mixedScheduling = ref(false) // For antigravity accounts: enable mixed scheduling
 const allowOverages = ref(false) // For antigravity accounts: enable AI Credits overages
 const antigravityModelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
@@ -2060,6 +2089,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   const extra = newAccount.extra as Record<string, unknown> | undefined
   mixedScheduling.value = extra?.mixed_scheduling === true
   allowOverages.value = extra?.allow_overages === true
+  tlsInsecureSkipVerifyEnabled.value =
+    newAccount.tls_insecure_skip_verify === true || extra?.tls_insecure_skip_verify === true
 
   // Load OpenAI passthrough toggle (OpenAI OAuth/API Key)
   openaiPassthroughEnabled.value = false
@@ -2308,13 +2339,25 @@ watch(
   { immediate: true }
 )
 
-const loadTLSProfiles = async () => {
+async function loadTLSProfiles() {
   try {
     const profiles = await adminAPI.tlsFingerprintProfiles.list()
     tlsFingerprintProfiles.value = profiles.map(p => ({ id: p.id, name: p.name }))
   } catch {
     tlsFingerprintProfiles.value = []
   }
+}
+
+function withTLSInsecureSkipVerifyExtra(baseExtra?: Record<string, unknown>): Record<string, unknown> | undefined {
+  const extra: Record<string, unknown> = { ...(baseExtra || {}) }
+
+  if (tlsInsecureSkipVerifyEnabled.value) {
+    extra.tls_insecure_skip_verify = true
+  } else {
+    delete extra.tls_insecure_skip_verify
+  }
+
+  return Object.keys(extra).length > 0 ? extra : undefined
 }
 
 // Model mapping helpers
@@ -3127,6 +3170,16 @@ const handleSubmit = async () => {
         delete newExtra.quota_reset_timezone
       }
       updatePayload.extra = newExtra
+    }
+
+    const finalExtra = withTLSInsecureSkipVerifyExtra(
+      (updatePayload.extra as Record<string, unknown> | undefined) ||
+      (props.account.extra as Record<string, unknown> | undefined)
+    )
+    if (finalExtra) {
+      updatePayload.extra = finalExtra
+    } else {
+      delete updatePayload.extra
     }
 
     const canContinue = await ensureAntigravityMixedChannelConfirmed(async () => {

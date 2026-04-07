@@ -2575,6 +2575,10 @@ export default {
           hint: '启用后，新会话会优先调度到该客户端之前使用过的账号，避免频繁切换账号'
         }
       },
+      tlsInsecureSkipVerify: {
+        label: '跳过 TLS 证书校验',
+        hint: '对该账号的上游 HTTPS 请求跳过证书链和主机名校验，仅建议用于私有部署、自签证书或证书不匹配的场景'
+      },
       affinityNoClients: '无亲和客户端',
       affinityClients: '{count} 个亲和客户端：',
       affinitySection: '客户端亲和',
@@ -3894,8 +3898,16 @@ export default {
         pinnedAccountId: '固定 account_id',
         retryNotes: '重试说明',
         requestBody: '请求体',
+        requestHeaders: '请求头',
+        clientResponseBody: '客户端响应体',
+        upstreamPayload: '上游载荷',
+        diagnostics: '诊断信息',
+        upstreamStatus: '上游状态码',
+        requestBodyBytes: '请求体字节数',
+        requestBodyTruncated: '请求体已截断',
         errorBody: '错误体',
         trimmed: '已截断',
+        firstToken: '首 Token',
         confirmRetry: '确认重试',
         retrySuccess: '重试成功',
         retryFailed: '重试失败',

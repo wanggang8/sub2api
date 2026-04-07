@@ -4284,7 +4284,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		}
 
 		// 发送请求
-		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
+		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, UpstreamTLSOptionsFromAccount(account, tlsProfile))
 		if err != nil {
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
@@ -4362,7 +4362,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					retryReq, buildErr := s.buildUpstreamRequest(retryCtx, c, account, filteredBody, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
 					releaseRetryCtx()
 					if buildErr == nil {
-						retryResp, retryErr := s.httpUpstream.DoWithTLS(retryReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
+						retryResp, retryErr := s.httpUpstream.DoWithTLS(retryReq, proxyURL, account.ID, account.Concurrency, UpstreamTLSOptionsFromAccount(account, tlsProfile))
 						if retryErr == nil {
 							if retryResp.StatusCode < 400 {
 								logger.LegacyPrintf("service.gateway", "Account %d: thinking block retry succeeded (blocks downgraded)", account.ID)
@@ -4397,7 +4397,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 									retryReq2, buildErr2 := s.buildUpstreamRequest(retryCtx2, c, account, filteredBody2, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
 									releaseRetryCtx2()
 									if buildErr2 == nil {
-										retryResp2, retryErr2 := s.httpUpstream.DoWithTLS(retryReq2, proxyURL, account.ID, account.Concurrency, tlsProfile)
+										retryResp2, retryErr2 := s.httpUpstream.DoWithTLS(retryReq2, proxyURL, account.ID, account.Concurrency, UpstreamTLSOptionsFromAccount(account, tlsProfile))
 										if retryErr2 == nil {
 											resp = retryResp2
 											break
@@ -4468,7 +4468,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 						budgetRetryReq, buildErr := s.buildUpstreamRequest(budgetRetryCtx, c, account, rectifiedBody, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
 						releaseBudgetRetryCtx()
 						if buildErr == nil {
-							budgetRetryResp, retryErr := s.httpUpstream.DoWithTLS(budgetRetryReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
+							budgetRetryResp, retryErr := s.httpUpstream.DoWithTLS(budgetRetryReq, proxyURL, account.ID, account.Concurrency, UpstreamTLSOptionsFromAccount(account, tlsProfile))
 							if retryErr == nil {
 								resp = budgetRetryResp
 								break
@@ -4774,7 +4774,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 			return nil, err
 		}
 
-		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, UpstreamTLSOptionsFromAccount(account, s.tlsFPProfileService.ResolveTLSProfile(account)))
 		if err != nil {
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
@@ -5493,7 +5493,7 @@ func (s *GatewayService) executeBedrockUpstream(
 			return nil, err
 		}
 
-		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, nil)
+		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, UpstreamTLSOptionsFromAccount(account, nil))
 		if err != nil {
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
@@ -7893,7 +7893,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	}
 
 	// 计算费用
-	cost := s.calculateRecordUsageCost(ctx, result, apiKey, billingModel, multiplier, opts)
+	cost := s.calculateRecordUsageCost(ctx, result, apiKey, billingModel, result.UpstreamModel, multiplier, opts)
 
 	// 判断计费方式：订阅模式 vs 余额模式
 	isSubscriptionBilling := subscription != nil && apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
@@ -7941,16 +7941,35 @@ func (s *GatewayService) calculateRecordUsageCost(
 	result *ForwardResult,
 	apiKey *APIKey,
 	billingModel string,
+	upstreamModel string,
 	multiplier float64,
 	opts *recordUsageOpts,
 ) *CostBreakdown {
+	cost, _, err := calculateUsageCostWithUpstreamFallback(billingModel, upstreamModel, func(model string) (*CostBreakdown, error) {
+		return s.calculateRecordUsageCostForModel(ctx, result, apiKey, model, multiplier, opts)
+	})
+	if err != nil {
+		logger.LegacyPrintf("service.gateway", "Calculate cost failed: %v", err)
+		return &CostBreakdown{ActualCost: 0}
+	}
+	return cost
+}
+
+func (s *GatewayService) calculateRecordUsageCostForModel(
+	ctx context.Context,
+	result *ForwardResult,
+	apiKey *APIKey,
+	billingModel string,
+	multiplier float64,
+	opts *recordUsageOpts,
+) (*CostBreakdown, error) {
 	// Sora 媒体类型分支（仅 Claude 路径启用）
 	if opts.EnableClaudePath {
 		if result.MediaType == MediaTypeImage || result.MediaType == MediaTypeVideo {
-			return s.calculateSoraMediaCost(result, apiKey, billingModel, multiplier)
+			return s.calculateSoraMediaCost(result, apiKey, billingModel, multiplier), nil
 		}
 		if result.MediaType == MediaTypePrompt {
-			return &CostBreakdown{}
+			return &CostBreakdown{}, nil
 		}
 	}
 
@@ -8006,7 +8025,7 @@ func (s *GatewayService) calculateImageCost(
 	apiKey *APIKey,
 	billingModel string,
 	multiplier float64,
-) *CostBreakdown {
+) (*CostBreakdown, error) {
 	if resolved := s.resolveChannelPricing(ctx, billingModel, apiKey); resolved != nil {
 		tokens := UsageTokens{
 			InputTokens:       result.Usage.InputTokens,
@@ -8025,10 +8044,9 @@ func (s *GatewayService) calculateImageCost(
 			Resolved:       resolved,
 		})
 		if err != nil {
-			logger.LegacyPrintf("service.gateway", "Calculate image token cost failed: %v", err)
-			return &CostBreakdown{ActualCost: 0}
+			return nil, err
 		}
-		return cost
+		return cost, nil
 	}
 
 	var groupConfig *ImagePriceConfig
@@ -8039,7 +8057,7 @@ func (s *GatewayService) calculateImageCost(
 			Price4K: apiKey.Group.ImagePrice4K,
 		}
 	}
-	return s.billingService.CalculateImageCost(billingModel, result.ImageSize, result.ImageCount, groupConfig, multiplier)
+	return s.billingService.CalculateImageCost(billingModel, result.ImageSize, result.ImageCount, groupConfig, multiplier), nil
 }
 
 // calculateTokenCost 计算 Token 计费：根据 opts 决定走普通/长上下文/渠道统一计费。
@@ -8050,7 +8068,7 @@ func (s *GatewayService) calculateTokenCost(
 	billingModel string,
 	multiplier float64,
 	opts *recordUsageOpts,
-) *CostBreakdown {
+) (*CostBreakdown, error) {
 	tokens := UsageTokens{
 		InputTokens:           result.Usage.InputTokens,
 		OutputTokens:          result.Usage.OutputTokens,
@@ -8087,10 +8105,9 @@ func (s *GatewayService) calculateTokenCost(
 		cost, err = s.billingService.CalculateCost(billingModel, tokens, multiplier)
 	}
 	if err != nil {
-		logger.LegacyPrintf("service.gateway", "Calculate cost failed: %v", err)
-		return &CostBreakdown{ActualCost: 0}
+		return nil, err
 	}
-	return cost
+	return cost, nil
 }
 
 // buildRecordUsageLog 构建使用日志并设置计费模式。
@@ -8388,7 +8405,7 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 	}
 
 	// 发送请求
-	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, UpstreamTLSOptionsFromAccount(account, s.tlsFPProfileService.ResolveTLSProfile(account)))
 	if err != nil {
 		setOpsUpstreamError(c, 0, sanitizeUpstreamErrorMessage(err.Error()), "")
 		s.countTokensError(c, http.StatusBadGateway, "upstream_error", "Request failed")
@@ -8416,7 +8433,7 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 		filteredBody := FilterThinkingBlocksForRetry(body)
 		retryReq, buildErr := s.buildCountTokensRequest(ctx, c, account, filteredBody, token, tokenType, reqModel, shouldMimicClaudeCode)
 		if buildErr == nil {
-			retryResp, retryErr := s.httpUpstream.DoWithTLS(retryReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+			retryResp, retryErr := s.httpUpstream.DoWithTLS(retryReq, proxyURL, account.ID, account.Concurrency, UpstreamTLSOptionsFromAccount(account, s.tlsFPProfileService.ResolveTLSProfile(account)))
 			if retryErr == nil {
 				resp = retryResp
 				respBody, err = readUpstreamResponseBodyLimited(resp.Body, maxReadBytes)
@@ -8505,7 +8522,7 @@ func (s *GatewayService) forwardCountTokensAnthropicAPIKeyPassthrough(ctx contex
 		proxyURL = account.Proxy.URL()
 	}
 
-	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, UpstreamTLSOptionsFromAccount(account, s.tlsFPProfileService.ResolveTLSProfile(account)))
 	if err != nil {
 		setOpsUpstreamError(c, 0, sanitizeUpstreamErrorMessage(err.Error()), "")
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{

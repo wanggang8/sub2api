@@ -58,3 +58,29 @@ func TestPrepareOpsRequestBodyForQueue_LargeBodyTruncated(t *testing.T) {
 	require.LessOrEqual(t, len(*requestBodyJSON), opsMaxStoredRequestBodyBytes)
 	require.Contains(t, *requestBodyJSON, "request_body_truncated")
 }
+
+func TestPrepareOpsRequestBodyForQueue_LargeResponsesBodyKeepsInputSummary(t *testing.T) {
+	largeMsg := strings.Repeat("x", opsMaxStoredRequestBodyBytes*2)
+	raw := []byte(`{
+		"model":"gpt-5.4-mini",
+		"stream":true,
+		"max_output_tokens":32000,
+		"instructions":"follow repo conventions",
+		"tool_choice":"auto",
+		"tools":[{"type":"function","name":"read_file","strict":true}],
+		"input":[
+			{"type":"message","role":"assistant","content":"older"},
+			{"type":"message","role":"user","content":"` + largeMsg + `"}
+		]
+	}`)
+
+	requestBodyJSON, truncated, requestBodyBytes := PrepareOpsRequestBodyForQueue(raw)
+	require.NotNil(t, requestBodyJSON)
+	require.NotNil(t, requestBodyBytes)
+	require.True(t, truncated)
+	require.Equal(t, len(raw), *requestBodyBytes)
+	require.LessOrEqual(t, len(*requestBodyJSON), opsMaxStoredRequestBodyBytes)
+	require.Contains(t, *requestBodyJSON, `"input"`)
+	require.Contains(t, *requestBodyJSON, `"tools"`)
+	require.Contains(t, *requestBodyJSON, `"instructions"`)
+}

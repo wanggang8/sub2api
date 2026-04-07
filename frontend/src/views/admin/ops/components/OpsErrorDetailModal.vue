@@ -108,10 +108,41 @@
         </div>
       </div>
 
-      <!-- Response content (client request -> error_body; upstream -> upstream_error_detail/message) -->
-      <div class="rounded-xl bg-gray-50 p-6 dark:bg-dark-900">
-        <h3 class="text-sm font-black uppercase tracking-wider text-gray-900 dark:text-white">{{ t('admin.ops.errorDetail.responseBody') }}</h3>
-        <pre class="mt-4 max-h-[520px] overflow-auto rounded-xl border border-gray-200 bg-white p-4 text-xs text-gray-800 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-100"><code>{{ prettyJSON(primaryResponseBody || '') }}</code></pre>
+      <div v-if="diagnosticRows.length" class="rounded-xl bg-gray-50 p-6 dark:bg-dark-900">
+        <h3 class="text-sm font-black uppercase tracking-wider text-gray-900 dark:text-white">{{ t('admin.ops.errorDetail.diagnostics') }}</h3>
+        <div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div
+            v-for="row in diagnosticRows"
+            :key="row.key"
+            class="rounded-xl border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-800"
+          >
+            <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ row.label }}</div>
+            <div class="mt-1 break-all font-mono text-sm font-medium text-gray-900 dark:text-white">{{ row.value }}</div>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="timingRows.length" class="rounded-xl bg-gray-50 p-6 dark:bg-dark-900">
+        <h3 class="text-sm font-black uppercase tracking-wider text-gray-900 dark:text-white">{{ t('admin.ops.errorDetail.timings') }}</h3>
+        <div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div
+            v-for="row in timingRows"
+            :key="row.key"
+            class="rounded-xl border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-800"
+          >
+            <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ row.label }}</div>
+            <div class="mt-1 break-all font-mono text-sm font-medium text-gray-900 dark:text-white">{{ row.value }}</div>
+          </div>
+        </div>
+      </div>
+
+      <div
+        v-for="section in payloadSections"
+        :key="section.key"
+        class="rounded-xl bg-gray-50 p-6 dark:bg-dark-900"
+      >
+        <h3 class="text-sm font-black uppercase tracking-wider text-gray-900 dark:text-white">{{ section.title }}</h3>
+        <pre class="mt-4 max-h-[520px] overflow-auto rounded-xl border border-gray-200 bg-white p-4 text-xs text-gray-800 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-100"><code>{{ prettyJSON(section.value) }}</code></pre>
       </div>
 
       <!-- Upstream errors list (only for request errors) -->
@@ -195,7 +226,7 @@ import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores'
 import { opsAPI, type OpsErrorDetail } from '@/api/admin/ops'
 import { formatDateTime } from '@/utils/format'
-import { resolvePrimaryResponseBody, resolveUpstreamPayload } from '../utils/errorDetailResponse'
+import { resolveUpstreamPayload } from '../utils/errorDetailResponse'
 
 interface Props {
   show: boolean
@@ -220,11 +251,110 @@ const showUpstreamList = computed(() => props.errorType === 'request')
 
 const requestId = computed(() => detail.value?.request_id || detail.value?.client_request_id || '')
 
-const primaryResponseBody = computed(() => {
-  return resolvePrimaryResponseBody(detail.value, props.errorType)
+type DetailDiagnosticRow = {
+  key: string
+  label: string
+  value: string
+}
+
+type DetailPayloadSection = {
+  key: string
+  title: string
+  value: string
+}
+
+function trimmed(value: unknown): string {
+  return String(value ?? '').trim()
+}
+
+function stringifyMs(value: number | null | undefined): string {
+  if (typeof value !== 'number') return ''
+  return `${value} ms`
+}
+
+const diagnosticRows = computed<DetailDiagnosticRow[]>(() => {
+  if (!detail.value) return []
+  const rows: DetailDiagnosticRow[] = []
+  if (typeof detail.value.upstream_status_code === 'number') {
+    rows.push({
+      key: 'upstream_status_code',
+      label: t('admin.ops.errorDetail.upstreamStatus'),
+      value: String(detail.value.upstream_status_code),
+    })
+  }
+  if (typeof detail.value.request_body_bytes === 'number') {
+    rows.push({
+      key: 'request_body_bytes',
+      label: t('admin.ops.errorDetail.requestBodyBytes'),
+      value: String(detail.value.request_body_bytes),
+    })
+  }
+  if (detail.value.request_body_truncated || typeof detail.value.request_body_bytes === 'number') {
+    rows.push({
+      key: 'request_body_truncated',
+      label: t('admin.ops.errorDetail.requestBodyTruncated'),
+      value: String(Boolean(detail.value.request_body_truncated)),
+    })
+  }
+  return rows
 })
 
+const timingRows = computed<DetailDiagnosticRow[]>(() => {
+  if (!detail.value) return []
+  const rows: DetailDiagnosticRow[] = []
+  const candidates: Array<[string, string, number | null | undefined]> = [
+    ['auth_latency_ms', t('admin.ops.errorDetail.auth'), detail.value.auth_latency_ms],
+    ['routing_latency_ms', t('admin.ops.errorDetail.routing'), detail.value.routing_latency_ms],
+    ['upstream_latency_ms', t('admin.ops.errorDetail.upstream'), detail.value.upstream_latency_ms],
+    ['response_latency_ms', t('admin.ops.errorDetail.response'), detail.value.response_latency_ms],
+    ['time_to_first_token_ms', t('admin.ops.errorDetail.firstToken'), detail.value.time_to_first_token_ms],
+  ]
+  for (const [key, label, value] of candidates) {
+    const rendered = stringifyMs(value)
+    if (!rendered) continue
+    rows.push({ key, label, value: rendered })
+  }
+  return rows
+})
 
+const payloadSections = computed<DetailPayloadSection[]>(() => {
+  if (!detail.value) return []
+  const sections: DetailPayloadSection[] = []
+  const clientResponseBody = trimmed(detail.value.error_body)
+  const upstreamPayload = resolveUpstreamPayload(detail.value)
+  const requestBody = trimmed(detail.value.request_body)
+  const requestHeaders = trimmed(detail.value.request_headers)
+
+  if (clientResponseBody) {
+    sections.push({
+      key: 'client_response_body',
+      title: t('admin.ops.errorDetail.clientResponseBody'),
+      value: clientResponseBody,
+    })
+  }
+  if (upstreamPayload && upstreamPayload !== clientResponseBody) {
+    sections.push({
+      key: 'upstream_payload',
+      title: t('admin.ops.errorDetail.upstreamPayload'),
+      value: upstreamPayload,
+    })
+  }
+  if (requestBody) {
+    sections.push({
+      key: 'request_body',
+      title: t('admin.ops.errorDetail.requestBody'),
+      value: requestBody,
+    })
+  }
+  if (requestHeaders) {
+    sections.push({
+      key: 'request_headers',
+      title: t('admin.ops.errorDetail.requestHeaders'),
+      value: requestHeaders,
+    })
+  }
+  return sections
+})
 
 
 const title = computed(() => {

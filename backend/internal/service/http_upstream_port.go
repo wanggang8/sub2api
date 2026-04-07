@@ -12,13 +12,14 @@ type HTTPUpstream interface {
 	// Do 执行 HTTP 请求（不启用 TLS 指纹）
 	Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error)
 
-	// DoWithTLS 执行带 TLS 指纹伪装的 HTTP 请求
+	// DoWithTLS 执行带 TLS 选项的 HTTP 请求。
 	//
-	// profile 参数:
-	//   - nil: 不启用 TLS 指纹，行为与 Do 方法相同
-	//   - non-nil: 使用指定的 Profile 进行 TLS 指纹伪装
-	//
-	// Profile 由调用方通过 TLSFingerprintProfileService 解析后传入，
-	// 支持按账号绑定的数据库 profile 或内置默认 profile。
-	DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error)
+	// options 为 nil 时，行为与 Do 方法相同。
+	DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, options *UpstreamTLSOptions) (*http.Response, error)
+}
+
+// UpstreamTLSOptions describes per-account TLS behavior for upstream requests.
+type UpstreamTLSOptions struct {
+	FingerprintProfile *tlsfingerprint.Profile
+	InsecureSkipVerify bool
 }

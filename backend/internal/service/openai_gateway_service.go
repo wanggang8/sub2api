@@ -2306,7 +2306,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 		// Send request
 		upstreamStart := time.Now()
-		resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+		resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, UpstreamTLSOptionsFromAccount(account, nil))
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
 			// Ensure the client receives an error response (handlers assume Forward writes on non-failover errors).
@@ -2519,7 +2519,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	}
 
 	upstreamStart := time.Now()
-	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, UpstreamTLSOptionsFromAccount(account, nil))
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
 		safeErr := sanitizeUpstreamErrorMessage(err.Error())
@@ -4287,21 +4287,22 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if result.ServiceTier != nil {
 		serviceTier = strings.TrimSpace(*result.ServiceTier)
 	}
-	if s.resolver != nil && apiKey.Group != nil {
-		gid := apiKey.Group.ID
-		cost, err = s.billingService.CalculateCostUnified(CostInput{
-			Ctx:            ctx,
-			Model:          billingModel,
-			GroupID:        &gid,
-			Tokens:         tokens,
-			RequestCount:   1,
-			RateMultiplier: multiplier,
-			ServiceTier:    serviceTier,
-			Resolver:       s.resolver,
-		})
-	} else {
-		cost, err = s.billingService.CalculateCostWithServiceTier(billingModel, tokens, multiplier, serviceTier)
-	}
+	cost, billingModel, err = calculateUsageCostWithUpstreamFallback(billingModel, result.UpstreamModel, func(model string) (*CostBreakdown, error) {
+		if s.resolver != nil && apiKey.Group != nil {
+			gid := apiKey.Group.ID
+			return s.billingService.CalculateCostUnified(CostInput{
+				Ctx:            ctx,
+				Model:          model,
+				GroupID:        &gid,
+				Tokens:         tokens,
+				RequestCount:   1,
+				RateMultiplier: multiplier,
+				ServiceTier:    serviceTier,
+				Resolver:       s.resolver,
+			})
+		}
+		return s.billingService.CalculateCostWithServiceTier(model, tokens, multiplier, serviceTier)
+	})
 	if err != nil {
 		cost = &CostBreakdown{ActualCost: 0}
 	}

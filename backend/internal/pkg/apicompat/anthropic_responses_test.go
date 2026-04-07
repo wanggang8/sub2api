@@ -240,6 +240,20 @@ func TestResponsesToAnthropic_Reasoning(t *testing.T) {
 	assert.Equal(t, "42", anth.Content[1].Text)
 }
 
+func TestResponsesToAnthropicRequestMergesInstructionsIntoSystem(t *testing.T) {
+	req := &ResponsesRequest{
+		Model:        "gpt-5.2",
+		Instructions: "follow the rules",
+		Input:        json.RawMessage(`[{"role":"user","content":"hello"}]`),
+	}
+
+	anth, err := ResponsesToAnthropicRequest(req)
+	require.NoError(t, err)
+	require.JSONEq(t, `"follow the rules"`, string(anth.System))
+	require.Len(t, anth.Messages, 1)
+	require.Equal(t, "user", anth.Messages[0].Role)
+}
+
 func TestResponsesToAnthropic_Incomplete(t *testing.T) {
 	resp := &ResponsesResponse{
 		ID:     "resp_inc",

@@ -1514,6 +1514,24 @@ func TestOpenAIBuildUpstreamRequestOAuthOfficialClientOriginatorCompatibility(t 
 	}
 }
 
+func TestOpenAIBuildUpstreamRequestPreservesInboundUserAgentByDefault(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader([]byte(`{"model":"gpt-5"}`)))
+	c.Request.Header.Set("User-Agent", "Cursor/1.2.3")
+
+	svc := &OpenAIGatewayService{}
+	account := &Account{
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"chatgpt_account_id": "chatgpt-acc"},
+	}
+
+	req, err := svc.buildUpstreamRequest(c.Request.Context(), c, account, []byte(`{"model":"gpt-5"}`), "token", false, "", false)
+	require.NoError(t, err)
+	require.Equal(t, "Cursor/1.2.3", req.Header.Get("User-Agent"))
+}
+
 // ==================== P1-08 修复：model 替换性能优化测试 ====================
 
 // ==================== P1-08 修复：model 替换性能优化测试 =============

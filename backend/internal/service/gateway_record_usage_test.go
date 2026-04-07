@@ -191,6 +191,38 @@ func TestGatewayServiceRecordUsage_PreservesRequestedAndUpstreamModels(t *testin
 	require.Equal(t, mappedModel, *usageRepo.lastLog.UpstreamModel)
 }
 
+func TestGatewayServiceRecordUsage_FallsBackToUpstreamModelWhenRequestedPricingMissing(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	userRepo := &openAIRecordUsageUserRepoStub{}
+	subRepo := &openAIRecordUsageSubRepoStub{}
+	svc := newGatewayRecordUsageServiceForTest(usageRepo, userRepo, subRepo)
+
+	expectedCost, err := svc.billingService.CalculateCost("claude-sonnet-4", UsageTokens{
+		InputTokens:  10,
+		OutputTokens: 6,
+	}, 1.1)
+	require.NoError(t, err)
+
+	err = svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID:     "gateway_requested_pricing_fallback",
+			Usage:         ClaudeUsage{InputTokens: 10, OutputTokens: 6},
+			Model:         "CustomModel",
+			UpstreamModel: "claude-sonnet-4",
+			Duration:      time.Second,
+		},
+		APIKey:  &APIKey{ID: 501, Quota: 100},
+		User:    &User{ID: 601},
+		Account: &Account{ID: 701},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.Equal(t, expectedCost.ActualCost, usageRepo.lastLog.ActualCost)
+	require.Equal(t, expectedCost.TotalCost, usageRepo.lastLog.TotalCost)
+	require.True(t, usageRepo.lastLog.ActualCost > 0, "fallback pricing should avoid zero-cost usage logs")
+}
+
 func TestGatewayServiceRecordUsage_UsageLogWriteErrorDoesNotSkipBilling(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: false, err: MarkUsageLogCreateNotPersisted(context.Canceled)}
 	userRepo := &openAIRecordUsageUserRepoStub{}

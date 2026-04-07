@@ -13,6 +13,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 )
 
 type Account struct {
@@ -1240,6 +1241,30 @@ func (a *Account) GetTLSFingerprintProfileID() int64 {
 		}
 	}
 	return 0
+}
+
+// IsTLSInsecureSkipVerifyEnabled reports whether this account skips upstream TLS verification.
+func (a *Account) IsTLSInsecureSkipVerifyEnabled() bool {
+	if a == nil || a.Extra == nil {
+		return false
+	}
+	if v, ok := a.Extra["tls_insecure_skip_verify"]; ok {
+		if enabled, ok := v.(bool); ok {
+			return enabled
+		}
+	}
+	return false
+}
+
+// UpstreamTLSOptionsFromAccount derives upstream TLS behavior from the account and optional fingerprint profile.
+func UpstreamTLSOptionsFromAccount(account *Account, profile *tlsfingerprint.Profile) *UpstreamTLSOptions {
+	if profile == nil && (account == nil || !account.IsTLSInsecureSkipVerifyEnabled()) {
+		return nil
+	}
+	return &UpstreamTLSOptions{
+		FingerprintProfile: profile,
+		InsecureSkipVerify: account != nil && account.IsTLSInsecureSkipVerifyEnabled(),
+	}
 }
 
 // GetUserMsgQueueMode 获取用户消息队列模式

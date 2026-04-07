@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"sort"
 	"strings"
 	"time"
 
@@ -605,6 +606,9 @@ func trimConversationArrays(root map[string]any, maxBytes int) (map[string]any, 
 	if out, ok := trimArrayField(root, "contents", maxBytes); ok {
 		return out, true
 	}
+	if out, ok := trimArrayField(root, "input", maxBytes); ok {
+		return out, true
+	}
 	return root, false
 }
 
@@ -676,12 +680,16 @@ func shrinkToEssentials(root map[string]any) map[string]any {
 		"max_input_tokens",
 		"max_completion_tokens",
 		"thinking",
+		"instructions",
+		"tool_choice",
+		"reasoning",
+		"service_tier",
 		"temperature",
 		"top_p",
 		"top_k",
 	} {
 		if v, ok := root[key]; ok {
-			out[key] = v
+			out[key] = summarizeEssentialTopLevelValue(key, v)
 		}
 	}
 
@@ -696,7 +704,310 @@ func shrinkToEssentials(root map[string]any) map[string]any {
 			out["contents"] = []any{arr[len(arr)-1]}
 		}
 	}
+	if summarized, total := summarizeResponsesInput(root["input"]); len(summarized) > 0 {
+		out["input"] = summarized
+		if total > len(summarized) {
+			out["input_item_count"] = total
+		}
+	}
+	if summarized, total := summarizeResponsesTools(root["tools"]); len(summarized) > 0 {
+		out["tools"] = summarized
+		if total > len(summarized) {
+			out["tool_count"] = total
+		}
+	}
 	return out
+}
+
+type jsonSummaryLimits struct {
+	maxDepth      int
+	maxArrayItems int
+	maxObjectKeys int
+	maxStringLen  int
+}
+
+func summarizeEssentialTopLevelValue(key string, value any) any {
+	switch key {
+	case "instructions":
+		if text, ok := value.(string); ok {
+			return truncateString(text, 2048)
+		}
+	case "tool_choice", "reasoning", "thinking":
+		return summarizeJSONValue(value, jsonSummaryLimits{
+			maxDepth:      3,
+			maxArrayItems: 4,
+			maxObjectKeys: 8,
+			maxStringLen:  512,
+		}, 0)
+	}
+	return value
+}
+
+func summarizeResponsesInput(raw any) ([]any, int) {
+	arr, ok := raw.([]any)
+	if !ok || len(arr) == 0 {
+		return nil, 0
+	}
+
+	start := 0
+	if len(arr) > 3 {
+		start = len(arr) - 3
+	}
+
+	out := make([]any, 0, len(arr)-start)
+	for _, item := range arr[start:] {
+		out = append(out, summarizeResponsesInputItem(item))
+	}
+	return out, len(arr)
+}
+
+func summarizeResponsesInputItem(raw any) any {
+	item, ok := raw.(map[string]any)
+	if !ok {
+		return summarizeJSONValue(raw, jsonSummaryLimits{
+			maxDepth:      3,
+			maxArrayItems: 3,
+			maxObjectKeys: 6,
+			maxStringLen:  768,
+		}, 0)
+	}
+
+	out := make(map[string]any)
+	for _, key := range []string{"type", "role", "id", "call_id", "name", "status"} {
+		if value, ok := item[key]; ok {
+			out[key] = summarizeJSONValue(value, jsonSummaryLimits{
+				maxDepth:      1,
+				maxArrayItems: 1,
+				maxObjectKeys: 4,
+				maxStringLen:  256,
+			}, 0)
+		}
+	}
+	for _, key := range []string{"content", "arguments", "output", "summary"} {
+		if value, ok := item[key]; ok {
+			out[key] = summarizeJSONValue(value, jsonSummaryLimits{
+				maxDepth:      4,
+				maxArrayItems: 4,
+				maxObjectKeys: 8,
+				maxStringLen:  1024,
+			}, 0)
+		}
+	}
+	if len(out) == 0 {
+		return summarizeJSONValue(item, jsonSummaryLimits{
+			maxDepth:      3,
+			maxArrayItems: 3,
+			maxObjectKeys: 6,
+			maxStringLen:  768,
+		}, 0)
+	}
+	return out
+}
+
+func summarizeResponsesTools(raw any) ([]any, int) {
+	arr, ok := raw.([]any)
+	if !ok || len(arr) == 0 {
+		return nil, 0
+	}
+
+	limit := len(arr)
+	if limit > 6 {
+		limit = 6
+	}
+
+	out := make([]any, 0, limit)
+	for _, item := range arr[:limit] {
+		out = append(out, summarizeResponsesTool(item))
+	}
+	return out, len(arr)
+}
+
+func summarizeResponsesTool(raw any) any {
+	tool, ok := raw.(map[string]any)
+	if !ok {
+		return summarizeJSONValue(raw, jsonSummaryLimits{
+			maxDepth:      3,
+			maxArrayItems: 3,
+			maxObjectKeys: 6,
+			maxStringLen:  512,
+		}, 0)
+	}
+
+	out := make(map[string]any)
+	for _, key := range []string{"type", "name", "description", "strict"} {
+		if value, ok := tool[key]; ok {
+			out[key] = summarizeJSONValue(value, jsonSummaryLimits{
+				maxDepth:      1,
+				maxArrayItems: 1,
+				maxObjectKeys: 4,
+				maxStringLen:  256,
+			}, 0)
+		}
+	}
+	if params, ok := tool["parameters"]; ok {
+		out["parameters"] = summarizeToolParameters(params)
+	}
+	if len(out) == 0 {
+		return summarizeJSONValue(tool, jsonSummaryLimits{
+			maxDepth:      3,
+			maxArrayItems: 3,
+			maxObjectKeys: 6,
+			maxStringLen:  512,
+		}, 0)
+	}
+	return out
+}
+
+func summarizeToolParameters(raw any) any {
+	params, ok := raw.(map[string]any)
+	if !ok {
+		return summarizeJSONValue(raw, jsonSummaryLimits{
+			maxDepth:      3,
+			maxArrayItems: 4,
+			maxObjectKeys: 6,
+			maxStringLen:  256,
+		}, 0)
+	}
+
+	out := make(map[string]any)
+	if value, ok := params["type"]; ok {
+		out["type"] = value
+	}
+	if value, ok := params["additionalProperties"]; ok {
+		out["additionalProperties"] = value
+	}
+	if value, ok := params["required"]; ok {
+		out["required"] = summarizeJSONValue(value, jsonSummaryLimits{
+			maxDepth:      2,
+			maxArrayItems: 8,
+			maxObjectKeys: 2,
+			maxStringLen:  128,
+		}, 0)
+	}
+	if rawProps, ok := params["properties"].(map[string]any); ok {
+		names := make([]string, 0, len(rawProps))
+		for name := range rawProps {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		if len(names) > 12 {
+			names = names[:12]
+		}
+		out["properties"] = names
+		if len(rawProps) > len(names) {
+			out["property_count"] = len(rawProps)
+		}
+	}
+	if len(out) == 0 {
+		return summarizeJSONValue(params, jsonSummaryLimits{
+			maxDepth:      3,
+			maxArrayItems: 4,
+			maxObjectKeys: 6,
+			maxStringLen:  256,
+		}, 0)
+	}
+	return out
+}
+
+func summarizeJSONValue(value any, limits jsonSummaryLimits, depth int) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		if limits.maxDepth > 0 && depth >= limits.maxDepth {
+			return map[string]any{"truncated": true, "kind": "object"}
+		}
+		return summarizeJSONMap(typed, limits, depth+1)
+	case []any:
+		if limits.maxDepth > 0 && depth >= limits.maxDepth {
+			return map[string]any{"truncated": true, "kind": "array", "item_count": len(typed)}
+		}
+		start := 0
+		if limits.maxArrayItems > 0 && len(typed) > limits.maxArrayItems {
+			start = len(typed) - limits.maxArrayItems
+		}
+		out := make([]any, 0, len(typed)-start)
+		for _, item := range typed[start:] {
+			out = append(out, summarizeJSONValue(item, limits, depth+1))
+		}
+		return out
+	case string:
+		return truncateString(typed, limits.maxStringLen)
+	default:
+		return value
+	}
+}
+
+func summarizeJSONMap(m map[string]any, limits jsonSummaryLimits, depth int) map[string]any {
+	keys := prioritizedSummaryKeys(m, limits.maxObjectKeys)
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		out[key] = summarizeJSONValue(m[key], limits, depth)
+	}
+	if len(keys) < len(m) {
+		out["truncated_keys"] = len(m) - len(keys)
+	}
+	return out
+}
+
+func prioritizedSummaryKeys(m map[string]any, limit int) []string {
+	if len(m) == 0 || limit == 0 {
+		return nil
+	}
+
+	priority := []string{
+		"type",
+		"role",
+		"name",
+		"description",
+		"strict",
+		"id",
+		"call_id",
+		"status",
+		"content",
+		"text",
+		"arguments",
+		"output",
+		"summary",
+		"image_url",
+		"detail",
+		"required",
+		"properties",
+	}
+
+	keys := make([]string, 0, min(limit, len(m)))
+	seen := make(map[string]struct{}, len(priority))
+	for _, key := range priority {
+		if _, ok := m[key]; !ok {
+			continue
+		}
+		keys = append(keys, key)
+		seen[key] = struct{}{}
+		if len(keys) == limit {
+			return keys
+		}
+	}
+
+	rest := make([]string, 0, len(m)-len(keys))
+	for key := range m {
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		rest = append(rest, key)
+	}
+	sort.Strings(rest)
+	for _, key := range rest {
+		keys = append(keys, key)
+		if len(keys) == limit {
+			break
+		}
+	}
+	return keys
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func shallowCopyMap(m map[string]any) map[string]any {

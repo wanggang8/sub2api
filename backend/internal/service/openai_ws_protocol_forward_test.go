@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
@@ -58,7 +57,7 @@ func (u *httpUpstreamSequenceRecorder) Do(req *http.Request, proxyURL string, ac
 	return u.responses[len(u.responses)-1], nil
 }
 
-func (u *httpUpstreamSequenceRecorder) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
+func (u *httpUpstreamSequenceRecorder) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, opts *UpstreamTLSOptions) (*http.Response, error) {
 	return u.Do(req, proxyURL, accountID, accountConcurrency)
 }
 

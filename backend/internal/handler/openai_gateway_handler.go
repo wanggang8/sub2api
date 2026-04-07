@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"runtime/debug"
-	"strconv"
 	"strings"
 	"time"
 
@@ -1513,11 +1512,9 @@ func (h *OpenAIGatewayHandler) mapUpstreamError(statusCode int) (int, string, st
 // handleStreamingAwareError handles errors that may occur after streaming has started
 func (h *OpenAIGatewayHandler) handleStreamingAwareError(c *gin.Context, status int, errType, message string, streamStarted bool) {
 	if streamStarted {
-		// Stream already started, send error as SSE event then close
 		flusher, ok := c.Writer.(http.Flusher)
 		if ok {
-			// SSE 错误事件固定 schema，使用 Quote 直拼可避免额外 Marshal 分配。
-			errorEvent := "event: error\ndata: " + `{"error":{"type":` + strconv.Quote(errType) + `,"message":` + strconv.Quote(message) + `}}` + "\n\n"
+			errorEvent := buildCompatStreamingErrorEventWithDefault(c, errType, message, compatStreamErrorFormatOpenAIEvent)
 			if _, err := fmt.Fprint(c.Writer, errorEvent); err != nil {
 				_ = c.Error(err)
 			}
@@ -1526,7 +1523,6 @@ func (h *OpenAIGatewayHandler) handleStreamingAwareError(c *gin.Context, status 
 		return
 	}
 
-	// Normal case: return JSON response with proper status code
 	h.errorResponse(c, status, errType, message)
 }
 

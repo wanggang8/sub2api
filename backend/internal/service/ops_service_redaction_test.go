@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -95,5 +96,38 @@ func TestShrinkToEssentials_IncludesThinking(t *testing.T) {
 	out := shrinkToEssentials(root)
 	if _, ok := out["thinking"]; !ok {
 		t.Fatalf("expected thinking to be included in essentials: %#v", out)
+	}
+}
+
+func TestShrinkToEssentials_IncludesResponsesInputAndTools(t *testing.T) {
+	t.Parallel()
+
+	root := map[string]any{
+		"model":             "gpt-5.4-mini",
+		"stream":            true,
+		"max_output_tokens": 32000,
+		"instructions":      "follow repo conventions",
+		"tool_choice":       "auto",
+		"reasoning": map[string]any{
+			"effort": "high",
+		},
+		"tools": []any{
+			map[string]any{"type": "function", "name": "read_file", "strict": true},
+		},
+		"input": []any{
+			map[string]any{"type": "message", "role": "assistant", "content": "older"},
+			map[string]any{"type": "message", "role": "user", "content": strings.Repeat("x", 6000)},
+		},
+	}
+
+	out := shrinkToEssentials(root)
+	if _, ok := out["input"]; !ok {
+		t.Fatalf("expected input to be included in essentials: %#v", out)
+	}
+	if _, ok := out["tools"]; !ok {
+		t.Fatalf("expected tools to be included in essentials: %#v", out)
+	}
+	if _, ok := out["instructions"]; !ok {
+		t.Fatalf("expected instructions to be included in essentials: %#v", out)
 	}
 }

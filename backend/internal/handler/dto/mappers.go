@@ -279,6 +279,10 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 			}
 		}
 	}
+	if a.IsTLSInsecureSkipVerifyEnabled() {
+		enabled := true
+		out.TLSInsecureSkipVerify = &enabled
+	}
 
 	// 提取账号配额限制（apikey / bedrock 类型有效）
 	if a.IsAPIKeyOrBedrock() {

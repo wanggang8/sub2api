@@ -1,11 +1,23 @@
 import { describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 
-const { updateAccountMock, checkMixedChannelRiskMock } = vi.hoisted(() => ({
+const { updateAccountMock, checkMixedChannelRiskMock, listTLSFingerprintProfilesMock } = vi.hoisted(() => ({
   updateAccountMock: vi.fn(),
-  checkMixedChannelRiskMock: vi.fn()
+  checkMixedChannelRiskMock: vi.fn(),
+  listTLSFingerprintProfilesMock: vi.fn()
 }))
+
+vi.hoisted(() => {
+  Object.defineProperty(globalThis, 'localStorage', {
+    value: {
+      getItem: vi.fn(),
+      setItem: vi.fn(),
+      removeItem: vi.fn()
+    },
+    configurable: true
+  })
+})
 
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
@@ -26,6 +38,9 @@ vi.mock('@/api/admin', () => ({
     accounts: {
       update: updateAccountMock,
       checkMixedChannelRisk: checkMixedChannelRiskMock
+    },
+    tlsFingerprintProfiles: {
+      list: listTLSFingerprintProfilesMock
     }
   }
 }))
@@ -108,6 +123,29 @@ function buildAccount() {
   } as any
 }
 
+function buildAnthropicOAuthAccount() {
+  return {
+    id: 2,
+    name: 'Claude OAuth',
+    notes: '',
+    platform: 'anthropic',
+    type: 'oauth',
+    credentials: {},
+    extra: {
+      tls_insecure_skip_verify: true
+    },
+    tls_insecure_skip_verify: true,
+    proxy_id: null,
+    concurrency: 1,
+    priority: 1,
+    rate_multiplier: 1,
+    status: 'active',
+    group_ids: [],
+    expires_at: null,
+    auto_pause_on_expired: false
+  } as any
+}
+
 function mountModal(account = buildAccount()) {
   return mount(EditAccountModal, {
     props: {
@@ -134,6 +172,8 @@ describe('EditAccountModal', () => {
     const account = buildAccount()
     updateAccountMock.mockReset()
     checkMixedChannelRiskMock.mockReset()
+    listTLSFingerprintProfilesMock.mockReset()
+    listTLSFingerprintProfilesMock.mockResolvedValue([])
     checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
     updateAccountMock.mockResolvedValue(account)
 
@@ -155,5 +195,31 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.model_mapping).toEqual({
       'gpt-5.2': 'gpt-5.2'
     })
+  })
+
+  it('renders and persists tls_insecure_skip_verify for anthropic oauth accounts', async () => {
+    const account = buildAnthropicOAuthAccount()
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    listTLSFingerprintProfilesMock.mockReset()
+    listTLSFingerprintProfilesMock.mockResolvedValue([])
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="tls-insecure-skip-verify-toggle"]').exists()).toBe(true)
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.tls_insecure_skip_verify).toBe(true)
+
+    await wrapper.get('[data-testid="tls-insecure-skip-verify-toggle"]').trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(2)
+    expect(updateAccountMock.mock.calls[1]?.[1]?.extra?.tls_insecure_skip_verify).toBeUndefined()
   })
 })

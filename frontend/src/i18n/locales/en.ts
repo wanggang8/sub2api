@@ -2431,6 +2431,10 @@ export default {
           hint: 'When enabled, new sessions prefer accounts previously used by this client to reduce account switching'
         }
       },
+      tlsInsecureSkipVerify: {
+        label: 'Skip TLS Certificate Verification',
+        hint: "Skip certificate chain and hostname verification for this account's upstream HTTPS requests. Use only for self-hosted relays, self-signed certs, or certificate mismatch scenarios."
+      },
       affinityNoClients: 'No affinity clients',
       affinityClients: '{count} affinity clients:',
       affinitySection: 'Client Affinity',
@@ -3729,8 +3733,16 @@ export default {
         pinnedAccountId: 'Pinned account_id',
         retryNotes: 'Retry Notes',
         requestBody: 'Request Body',
+        requestHeaders: 'Request Headers',
+        clientResponseBody: 'Client Response Body',
+        upstreamPayload: 'Upstream Payload',
+        diagnostics: 'Diagnostics',
+        upstreamStatus: 'Upstream Status',
+        requestBodyBytes: 'Request Body Bytes',
+        requestBodyTruncated: 'Request Body Truncated',
         errorBody: 'Error Body',
         trimmed: 'trimmed',
+        firstToken: 'First Token',
         confirmRetry: 'Confirm Retry',
         retrySuccess: 'Retry succeeded',
         retryFailed: 'Retry failed',

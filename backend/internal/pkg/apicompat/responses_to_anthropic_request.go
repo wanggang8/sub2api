@@ -15,6 +15,9 @@ func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, erro
 	if err != nil {
 		return nil, err
 	}
+	if instructions := strings.TrimSpace(req.Instructions); instructions != "" {
+		system = mergeResponsesInstructionsIntoAnthropicSystem(system, instructions)
+	}
 
 	out := &AnthropicRequest{
 		Model:       req.Model,
@@ -219,6 +222,24 @@ func extractTextFromContent(raw json.RawMessage) string {
 		return strings.Join(texts, "\n\n")
 	}
 	return ""
+}
+
+func mergeResponsesInstructionsIntoAnthropicSystem(existing json.RawMessage, instructions string) json.RawMessage {
+	instructions = strings.TrimSpace(instructions)
+	if instructions == "" {
+		return existing
+	}
+	if len(existing) == 0 {
+		merged, _ := json.Marshal(instructions)
+		return merged
+	}
+	existingText, err := parseAnthropicSystemPrompt(existing)
+	if err != nil || strings.TrimSpace(existingText) == "" {
+		merged, _ := json.Marshal(instructions)
+		return merged
+	}
+	merged, _ := json.Marshal(existingText + "\n\n" + instructions)
+	return merged
 }
 
 // convertResponsesUserToAnthropicContent converts a Responses user message

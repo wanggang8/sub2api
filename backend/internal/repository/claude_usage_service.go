@@ -68,9 +68,12 @@ func (s *claudeUsageService) FetchUsageWithOptions(ctx context.Context, opts *se
 
 	var resp *http.Response
 
-	// 如果有 TLS Profile 且有 HTTPUpstream，使用 DoWithTLS
-	if opts.TLSProfile != nil && s.httpUpstream != nil {
-		resp, err = s.httpUpstream.DoWithTLS(req, opts.ProxyURL, opts.AccountID, 0, opts.TLSProfile)
+	// 如果有 TLS 选项且有 HTTPUpstream，使用 DoWithTLS
+	if (opts.TLSProfile != nil || opts.InsecureSkipVerify) && s.httpUpstream != nil {
+		resp, err = s.httpUpstream.DoWithTLS(req, opts.ProxyURL, opts.AccountID, 0, &service.UpstreamTLSOptions{
+			FingerprintProfile: opts.TLSProfile,
+			InsecureSkipVerify: opts.InsecureSkipVerify,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("request with TLS fingerprint failed: %w", err)
 		}
@@ -79,6 +82,7 @@ func (s *claudeUsageService) FetchUsageWithOptions(ctx context.Context, opts *se
 		client, err := httpclient.GetClient(httpclient.Options{
 			ProxyURL:           opts.ProxyURL,
 			Timeout:            30 * time.Second,
+			InsecureSkipVerify: opts.InsecureSkipVerify,
 			ValidateResolvedIP: true,
 			AllowPrivateHosts:  s.allowPrivateHosts,
 		})

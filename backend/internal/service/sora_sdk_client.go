@@ -478,7 +478,7 @@ func (c *SoraSDKClient) GetWatermarkFreeURLCustom(ctx context.Context, account *
 	}
 	var resp *http.Response
 	if c.httpUpstream != nil {
-		resp, err = c.httpUpstream.Do(req, proxyURL, accountID, accountConcurrency)
+		resp, err = c.httpUpstream.DoWithTLS(req, proxyURL, accountID, accountConcurrency, UpstreamTLSOptionsFromAccount(account, nil))
 	} else {
 		resp, err = http.DefaultClient.Do(req)
 	}
@@ -723,7 +723,7 @@ func (c *SoraSDKClient) doSoraBackendJSON(
 
 	var resp *http.Response
 	if c.httpUpstream != nil {
-		resp, err = c.httpUpstream.Do(req, proxyURL, accountID, accountConcurrency)
+		resp, err = c.httpUpstream.DoWithTLS(req, proxyURL, accountID, accountConcurrency, UpstreamTLSOptionsFromAccount(account, nil))
 	} else {
 		resp, err = http.DefaultClient.Do(req)
 	}
@@ -901,7 +901,7 @@ func (c *SoraSDKClient) exchangeSessionToken(ctx context.Context, account *Accou
 
 	var resp *http.Response
 	if c.httpUpstream != nil {
-		resp, err = c.httpUpstream.Do(req, proxyURL, accountID, accountConcurrency)
+		resp, err = c.httpUpstream.DoWithTLS(req, proxyURL, accountID, accountConcurrency, UpstreamTLSOptionsFromAccount(account, nil))
 	} else {
 		resp, err = http.DefaultClient.Do(req)
 	}

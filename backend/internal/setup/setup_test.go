@@ -70,6 +70,32 @@ func TestSetupDefaultAdminConcurrency(t *testing.T) {
 	})
 }
 
+func TestCliValidateUsername(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		username string
+		want     bool
+	}{
+		{name: "simple username", username: "postgres", want: true},
+		{name: "underscore username", username: "user_name", want: true},
+		{name: "supabase pooler username", username: "postgres.uxjftkfxqsafrghfhqrr", want: true},
+		{name: "reject spaces", username: "user name", want: false},
+		{name: "reject quotes", username: "\"postgres\"", want: false},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := cliValidateUsername(tc.username); got != tc.want {
+				t.Fatalf("cliValidateUsername(%q)=%v, want %v", tc.username, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestWriteConfigFileKeepsDefaultUserConcurrency(t *testing.T) {
 	t.Setenv("RUN_MODE", "simple")
 	t.Setenv("DATA_DIR", t.TempDir())

@@ -1294,11 +1294,9 @@ func (h *GatewayHandler) mapUpstreamError(statusCode int) (int, string, string) 
 // handleStreamingAwareError handles errors that may occur after streaming has started
 func (h *GatewayHandler) handleStreamingAwareError(c *gin.Context, status int, errType, message string, streamStarted bool) {
 	if streamStarted {
-		// Stream already started, send error as SSE event then close
 		flusher, ok := c.Writer.(http.Flusher)
 		if ok {
-			// SSE 错误事件固定 schema，使用 Quote 直拼可避免额外 Marshal 分配。
-			errorEvent := `data: {"type":"error","error":{"type":` + strconv.Quote(errType) + `,"message":` + strconv.Quote(message) + `}}` + "\n\n"
+			errorEvent := buildCompatStreamingErrorEventWithDefault(c, errType, message, compatStreamErrorFormatResponsesEvent)
 			if _, err := fmt.Fprint(c.Writer, errorEvent); err != nil {
 				_ = c.Error(err)
 			}
@@ -1307,7 +1305,6 @@ func (h *GatewayHandler) handleStreamingAwareError(c *gin.Context, status int, e
 		return
 	}
 
-	// Normal case: return JSON response with proper status code
 	h.errorResponse(c, status, errType, message)
 }
 

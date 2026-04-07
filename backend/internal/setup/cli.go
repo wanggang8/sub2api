@@ -25,7 +25,7 @@ func cliValidateDBName(name string) bool {
 }
 
 func cliValidateUsername(name string) bool {
-	validName := regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
+	validName := regexp.MustCompile(`^[a-zA-Z0-9_.]+$`)
 	return validName.MatchString(name) && len(name) <= 63
 }
 
@@ -90,7 +90,7 @@ func RunCLI() error {
 		if cliValidateUsername(cfg.Database.User) {
 			break
 		}
-		fmt.Println("  Invalid username. Use alphanumeric and underscores only.")
+		fmt.Println("  Invalid username. Use alphanumeric, dots, and underscores only.")
 	}
 
 	cfg.Database.Password = promptPassword("PostgreSQL Password")

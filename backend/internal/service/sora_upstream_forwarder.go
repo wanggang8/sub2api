@@ -69,7 +69,7 @@ func (s *SoraGatewayService) forwardToUpstream(
 	}
 
 	// 发送请求
-	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, UpstreamTLSOptionsFromAccount(account, nil))
 	if err != nil {
 		s.writeSoraError(c, http.StatusBadGateway, "upstream_error", "Failed to connect to upstream Sora service", clientStream)
 		return nil, &UpstreamFailoverError{

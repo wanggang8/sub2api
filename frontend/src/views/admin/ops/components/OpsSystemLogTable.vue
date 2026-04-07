@@ -159,6 +159,30 @@ const toRFC3339 = (value: string) => {
   return d.toISOString()
 }
 
+const resolveTimeRangeWindow = () => {
+  const end = new Date()
+  const value = filters.time_range
+  const amount = Number.parseInt(value, 10)
+  if (!Number.isFinite(amount) || amount <= 0) return undefined
+
+  const unit = value.slice(-1)
+  const start = new Date(end)
+  if (unit === 'm') {
+    start.setMinutes(start.getMinutes() - amount)
+  } else if (unit === 'h') {
+    start.setHours(start.getHours() - amount)
+  } else if (unit === 'd') {
+    start.setDate(start.getDate() - amount)
+  } else {
+    return undefined
+  }
+
+  return {
+    start_time: start.toISOString(),
+    end_time: end.toISOString(),
+  }
+}
+
 const buildQuery = () => {
   const query: Record<string, any> = {
     page: page.value,
@@ -277,9 +301,16 @@ const cleanupCurrentFilter = async () => {
   const ok = window.confirm('确认按当前筛选条件清理系统日志？该操作不可撤销。')
   if (!ok) return
   try {
+    const timeWindow = filters.start_time || filters.end_time
+      ? {
+          start_time: toRFC3339(filters.start_time),
+          end_time: toRFC3339(filters.end_time),
+        }
+      : resolveTimeRangeWindow()
+
     const payload = {
-      start_time: toRFC3339(filters.start_time),
-      end_time: toRFC3339(filters.end_time),
+      start_time: timeWindow?.start_time,
+      end_time: timeWindow?.end_time,
       level: filters.level.trim() || undefined,
       component: filters.component.trim() || undefined,
       request_id: filters.request_id.trim() || undefined,

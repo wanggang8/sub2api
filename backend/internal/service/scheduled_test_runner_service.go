@@ -19,6 +19,7 @@ type ScheduledTestRunnerService struct {
 	accountTestSvc *AccountTestService
 	rateLimitSvc   *RateLimitService
 	cfg            *config.Config
+	dbBackoff      *transientDBBackoff
 
 	cron      *cron.Cron
 	startOnce sync.Once
@@ -39,7 +40,18 @@ func NewScheduledTestRunnerService(
 		accountTestSvc: accountTestSvc,
 		rateLimitSvc:   rateLimitSvc,
 		cfg:            cfg,
+		dbBackoff:      newTransientDBBackoff(transientDBBackoffWindow),
 	}
+}
+
+func (s *ScheduledTestRunnerService) listDueBackoff() *transientDBBackoff {
+	if s == nil {
+		return nil
+	}
+	if s.dbBackoff == nil {
+		s.dbBackoff = newTransientDBBackoff(transientDBBackoffWindow)
+	}
+	return s.dbBackoff
 }
 
 // Start begins the cron ticker (every minute).
@@ -91,11 +103,21 @@ func (s *ScheduledTestRunnerService) runScheduled() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
+	if backoff := s.listDueBackoff(); backoff != nil && backoff.shouldSkip(time.Now()) {
+		return
+	}
+
 	now := time.Now()
 	plans, err := s.planRepo.ListDue(ctx, now)
 	if err != nil {
+		if backoff := s.listDueBackoff(); backoff != nil && !backoff.record(err, time.Now()) {
+			return
+		}
 		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] ListDue error: %v", err)
 		return
+	}
+	if backoff := s.listDueBackoff(); backoff != nil {
+		backoff.reset()
 	}
 	if len(plans) == 0 {
 		return

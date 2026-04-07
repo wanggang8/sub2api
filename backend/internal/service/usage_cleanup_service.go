@@ -28,6 +28,7 @@ type UsageCleanupService struct {
 	timingWheel *TimingWheelService
 	dashboard   *DashboardAggregationService
 	cfg         *config.Config
+	dbBackoff   *transientDBBackoff
 
 	running   int32
 	startOnce sync.Once
@@ -44,9 +45,20 @@ func NewUsageCleanupService(repo UsageCleanupRepository, timingWheel *TimingWhee
 		timingWheel:  timingWheel,
 		dashboard:    dashboard,
 		cfg:          cfg,
+		dbBackoff:    newTransientDBBackoff(transientDBBackoffWindow),
 		workerCtx:    workerCtx,
 		workerCancel: workerCancel,
 	}
+}
+
+func (s *UsageCleanupService) claimBackoff() *transientDBBackoff {
+	if s == nil {
+		return nil
+	}
+	if s.dbBackoff == nil {
+		s.dbBackoff = newTransientDBBackoff(transientDBBackoffWindow)
+	}
+	return s.dbBackoff
 }
 
 func describeUsageCleanupFilters(filters UsageCleanupFilters) string {
@@ -172,10 +184,20 @@ func (s *UsageCleanupService) runOnce() {
 	ctx, cancel := context.WithTimeout(parent, svc.taskTimeout())
 	defer cancel()
 
+	if backoff := svc.claimBackoff(); backoff != nil && backoff.shouldSkip(time.Now()) {
+		return
+	}
+
 	task, err := svc.repo.ClaimNextPendingTask(ctx, int64(svc.taskTimeout().Seconds()))
 	if err != nil {
+		if backoff := svc.claimBackoff(); backoff != nil && !backoff.record(err, time.Now()) {
+			return
+		}
 		logger.LegacyPrintf("service.usage_cleanup", "[UsageCleanup] claim pending task failed: %v", err)
 		return
+	}
+	if backoff := svc.claimBackoff(); backoff != nil {
+		backoff.reset()
 	}
 	if task == nil {
 		slog.Debug("[UsageCleanup] run_once done: no_task=true")

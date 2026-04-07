@@ -304,7 +304,7 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 		proxyURL = account.Proxy.URL()
 	}
 
-	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, UpstreamTLSOptionsFromAccount(account, s.tlsFPProfileService.ResolveTLSProfile(account)))
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
 	}
@@ -394,7 +394,7 @@ func (s *AccountTestService) testBedrockAccountConnection(c *gin.Context, ctx co
 		proxyURL = account.Proxy.URL()
 	}
 
-	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, nil)
+	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, UpstreamTLSOptionsFromAccount(account, nil))
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
 	}
@@ -524,7 +524,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		proxyURL = account.Proxy.URL()
 	}
 
-	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, UpstreamTLSOptionsFromAccount(account, s.tlsFPProfileService.ResolveTLSProfile(account)))
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
 	}
@@ -619,7 +619,7 @@ func (s *AccountTestService) testGeminiAccountConnection(c *gin.Context, account
 		proxyURL = account.Proxy.URL()
 	}
 
-	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, UpstreamTLSOptionsFromAccount(account, s.tlsFPProfileService.ResolveTLSProfile(account)))
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
 	}
@@ -804,7 +804,7 @@ func (s *AccountTestService) testSoraAPIKeyAccountConnection(c *gin.Context, acc
 		proxyURL = account.Proxy.URL()
 	}
 
-	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
+	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, UpstreamTLSOptionsFromAccount(account, nil))
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("上游连接失败: %s", err.Error()))
 	}
@@ -892,7 +892,7 @@ func (s *AccountTestService) testSoraAccountConnection(c *gin.Context, account *
 	}
 	soraTLSProfile := s.resolveSoraTLSProfile()
 
-	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, soraTLSProfile)
+	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, UpstreamTLSOptionsFromAccount(account, soraTLSProfile))
 	if err != nil {
 		recorder.addStep("me", "failed", 0, "network_error", err.Error())
 		s.emitSoraProbeSummary(c, recorder)
@@ -957,7 +957,7 @@ func (s *AccountTestService) testSoraAccountConnection(c *gin.Context, account *
 		subReq.Header.Set("Origin", "https://sora.chatgpt.com")
 		subReq.Header.Set("Referer", "https://sora.chatgpt.com/")
 
-		subResp, subErr := s.httpUpstream.DoWithTLS(subReq, proxyURL, account.ID, account.Concurrency, soraTLSProfile)
+		subResp, subErr := s.httpUpstream.DoWithTLS(subReq, proxyURL, account.ID, account.Concurrency, UpstreamTLSOptionsFromAccount(account, soraTLSProfile))
 		if subErr != nil {
 			recorder.addStep("subscription", "failed", 0, "network_error", subErr.Error())
 			s.sendEvent(c, TestEvent{Type: "content", Text: fmt.Sprintf("Subscription check skipped: %s", subErr.Error())})
@@ -1144,7 +1144,7 @@ func (s *AccountTestService) fetchSoraTestEndpoint(
 	req.Header.Set("Origin", "https://sora.chatgpt.com")
 	req.Header.Set("Referer", "https://sora.chatgpt.com/")
 
-	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, tlsProfile)
+	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, UpstreamTLSOptionsFromAccount(account, tlsProfile))
 	if err != nil {
 		return 0, nil, nil, err
 	}

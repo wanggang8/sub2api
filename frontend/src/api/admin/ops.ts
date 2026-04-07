@@ -997,6 +997,7 @@ export interface OpsErrorDetail extends OpsErrorLog {
   request_body: string
   request_body_truncated: boolean
   request_body_bytes?: number | null
+  request_headers?: string | null
 
   is_business_limited: boolean
 }

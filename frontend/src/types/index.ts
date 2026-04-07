@@ -744,6 +744,9 @@ export interface Account {
   custom_base_url_enabled?: boolean | null
   custom_base_url?: string | null
 
+  // TLS 证书校验跳过（账号级）
+  tls_insecure_skip_verify?: boolean | null
+
   // 客户端亲和调度（仅 Anthropic/Antigravity 平台有效）
   // 启用后新会话会优先调度到客户端之前使用过的账号
   client_affinity_enabled?: boolean | null

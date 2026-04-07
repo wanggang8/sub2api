@@ -45,6 +45,8 @@ type Handlers struct {
 	Admin         *AdminHandlers
 	Gateway       *GatewayHandler
 	OpenAIGateway *OpenAIGatewayHandler
+	CursorCompat  *CursorCompatHandler
+	AugmentCompat *AugmentCompatHandler
 	SoraGateway   *SoraGatewayHandler
 	SoraClient    *SoraClientHandler
 	Setting       *SettingHandler
