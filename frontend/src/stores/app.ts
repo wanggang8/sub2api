@@ -7,7 +7,6 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Toast, ToastType, PublicSettings } from '@/types'
 import {
-  checkUpdates as checkUpdatesAPI,
   type VersionInfo,
   type ReleaseInfo
 } from '@/api/admin/system'
@@ -235,7 +234,8 @@ export const useAppStore = defineStore('app', () => {
    * @param force - Force refresh from API
    */
   async function fetchVersion(force = false): Promise<VersionInfo | null> {
-    // Return cached data if available and not forcing refresh
+    // Frontend intentionally hides update checks/version upgrade UI.
+    // Keep a stable local result so existing callers do not break.
     if (versionLoaded.value && !force) {
       return {
         current_version: currentVersion.value,
@@ -247,26 +247,20 @@ export const useAppStore = defineStore('app', () => {
       }
     }
 
-    // Prevent duplicate requests
-    if (versionLoading.value) {
-      return null
-    }
+    const version = siteVersion.value || ''
+    currentVersion.value = version
+    latestVersion.value = version
+    hasUpdate.value = false
+    buildType.value = 'release'
+    releaseInfo.value = null
+    versionLoaded.value = true
 
-    versionLoading.value = true
-    try {
-      const data = await checkUpdatesAPI(force)
-      currentVersion.value = data.current_version
-      latestVersion.value = data.latest_version
-      hasUpdate.value = data.has_update
-      buildType.value = data.build_type || 'source'
-      releaseInfo.value = data.release_info || null
-      versionLoaded.value = true
-      return data
-    } catch (error) {
-      console.error('Failed to fetch version:', error)
-      return null
-    } finally {
-      versionLoading.value = false
+    return {
+      current_version: version,
+      latest_version: version,
+      has_update: false,
+      build_type: 'release',
+      cached: true
     }
   }
 
