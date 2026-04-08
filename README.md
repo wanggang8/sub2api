@@ -1,3 +1,12 @@
+---
+title: Sub2API
+emoji: "\U0001F680"
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+---
+
 # Sub2API
 
 <div align="center">
@@ -33,6 +42,38 @@ Demo credentials (shared demo environment; **not** created automatically for sel
 ## Overview
 
 Sub2API is an AI API gateway platform designed to distribute and manage API quotas from AI product subscriptions. Users can access upstream AI services through platform-generated API Keys, while the platform handles authentication, billing, load balancing, and request forwarding.
+
+## Hugging Face Spaces
+
+This repository can be deployed to a Hugging Face Docker Space with:
+
+- external PostgreSQL, such as Supabase
+- embedded Redis inside the same container
+- a single internal app port: `7860`
+
+### Recommended Space settings
+
+- Space SDK: `Docker`
+- `app_port`: `7860`
+- Docker image defaults already enable:
+  - `AUTO_SETUP=true`
+  - `EMBEDDED_REDIS_ENABLED=true`
+  - app binding on `0.0.0.0:7860`
+- In Hugging Face, you only need to configure:
+  - `DATABASE_HOST=...`
+  - `DATABASE_PORT=...`
+  - `DATABASE_USER=...`
+  - `DATABASE_PASSWORD=...`
+  - `DATABASE_DBNAME=...`
+  - `DATABASE_SSLMODE=require`
+  - `JWT_SECRET=...`
+
+### Notes for Hugging Face deployment
+
+- Embedded Redis binds only to `127.0.0.1` inside the container.
+- Redis state is ephemeral in this deployment mode. Rate limits, locks, and cache entries reset after container restart/rebuild.
+- For Supabase, set `DATABASE_DBNAME` to an existing database and use `DATABASE_SSLMODE=require`.
+- If `JWT_SECRET` is omitted, the app will auto-generate one, but all login sessions will be invalidated after restart.
 
 ## Features
 

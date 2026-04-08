@@ -6,6 +6,36 @@ import (
 	"testing"
 )
 
+func TestBuildSetupConfigFromEnv_EmbeddedRedisDefaultsHostPort(t *testing.T) {
+	t.Setenv("EMBEDDED_REDIS_ENABLED", "true")
+	t.Setenv("REDIS_HOST", "")
+	t.Setenv("REDIS_PORT", "")
+
+	cfg := buildSetupConfigFromEnv()
+
+	if cfg.Redis.Host != "127.0.0.1" {
+		t.Fatalf("Redis.Host=%q, want %q", cfg.Redis.Host, "127.0.0.1")
+	}
+	if cfg.Redis.Port != 6379 {
+		t.Fatalf("Redis.Port=%d, want %d", cfg.Redis.Port, 6379)
+	}
+}
+
+func TestBuildSetupConfigFromEnv_ExplicitRedisHostWinsInEmbeddedMode(t *testing.T) {
+	t.Setenv("EMBEDDED_REDIS_ENABLED", "true")
+	t.Setenv("REDIS_HOST", "redis.internal")
+	t.Setenv("REDIS_PORT", "6380")
+
+	cfg := buildSetupConfigFromEnv()
+
+	if cfg.Redis.Host != "redis.internal" {
+		t.Fatalf("Redis.Host=%q, want %q", cfg.Redis.Host, "redis.internal")
+	}
+	if cfg.Redis.Port != 6380 {
+		t.Fatalf("Redis.Port=%d, want %d", cfg.Redis.Port, 6380)
+	}
+}
+
 func TestDecideAdminBootstrap(t *testing.T) {
 	t.Parallel()
 
