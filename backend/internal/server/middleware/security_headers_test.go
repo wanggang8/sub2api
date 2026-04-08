@@ -253,6 +253,28 @@ func TestSecurityHeaders(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
 
+	t.Run("hugging face runtime allows iframe embedding", func(t *testing.T) {
+		t.Setenv("SPACE_ID", "Vick888888/VickGateway888888")
+		t.Setenv("SPACE_HOST", "vick888888-vickgateway888888.hf.space")
+
+		cfg := config.CSPConfig{
+			Enabled: true,
+			Policy:  config.DefaultCSPPolicy,
+		}
+		middleware := SecurityHeaders(cfg, nil)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+
+		middleware(c)
+
+		assert.Empty(t, w.Header().Get("X-Frame-Options"))
+		csp := w.Header().Get("Content-Security-Policy")
+		assert.Contains(t, csp, "frame-ancestors 'self' https://huggingface.co https://*.huggingface.co")
+		assert.NotContains(t, csp, "frame-ancestors 'none'")
+	})
+
 	t.Run("nonce_unique_per_request", func(t *testing.T) {
 		cfg := config.CSPConfig{
 			Enabled: true,
