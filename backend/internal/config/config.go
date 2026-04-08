@@ -20,10 +20,10 @@ const (
 )
 
 const (
-	hfDBMaxOpenConnsDefault         = 8
-	hfDBMaxIdleConnsDefault         = 4
-	hfDBConnMaxLifetimeMinutes      = 10
-	hfDBConnMaxIdleTimeMinutes      = 2
+	hfDBMaxOpenConnsDefault         = 3
+	hfDBMaxIdleConnsDefault         = 1
+	hfDBConnMaxLifetimeMinutes      = 5
+	hfDBConnMaxIdleTimeMinutes      = 1
 )
 
 // 使用量记录队列溢出策略
