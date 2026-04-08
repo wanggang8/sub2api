@@ -14,9 +14,11 @@ import (
 	cursorcompat "github.com/Wei-Shaw/sub2api/internal/compat/cursor"
 	executorcompat "github.com/Wei-Shaw/sub2api/internal/compat/executor"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 type CursorCompatHandler struct {
@@ -61,17 +63,26 @@ func (h *CursorCompatHandler) Responses(c *gin.Context) {
 		return
 	}
 
+	stream := isCursorResponsesStream(body)
+	compatLog := logger.FromContext(c.Request.Context()).With(
+		zap.String("compat_endpoint", "responses"),
+		zap.Bool("stream", stream),
+		zap.String("group_platform", getCompatGroupPlatform(c)),
+	)
+
 	action := h.responsesAction
 	if getCompatGroupPlatform(c) == service.PlatformOpenAI {
 		action = h.openaiResponsesAction
 	}
 	if action == nil {
+		compatLog.Warn("cursor compat responses: action unavailable")
 		cursorCompatError(c, http.StatusBadGateway, "Compat gateway is unavailable")
 		return
 	}
 
-	if isCursorResponsesStream(body) {
+	if stream {
 		if err := h.streamCursorResponses(c, body, action); err != nil {
+			compatLog.Warn("cursor compat responses: stream execution failed", zap.Error(err))
 			cursorCompatError(c, http.StatusBadGateway, "Compat gateway execution failed")
 		}
 		return
@@ -79,10 +90,16 @@ func (h *CursorCompatHandler) Responses(c *gin.Context) {
 
 	result, err := h.compatFacade().ExecuteMessages(c, body, action)
 	if err != nil || result == nil {
+		if err != nil {
+			compatLog.Warn("cursor compat responses: execution failed", zap.Error(err))
+		} else {
+			compatLog.Warn("cursor compat responses: execution returned nil result")
+		}
 		cursorCompatError(c, http.StatusBadGateway, "Compat gateway execution failed")
 		return
 	}
 	if result.BodyTruncated {
+		compatLog.Warn("cursor compat responses: captured body truncated", zap.Int("status_code", result.StatusCode))
 		cursorCompatError(c, http.StatusBadGateway, buildCompatCaptureTooLargeMessage(result))
 		return
 	}
@@ -91,6 +108,10 @@ func (h *CursorCompatHandler) Responses(c *gin.Context) {
 	contentType := strings.ToLower(strings.TrimSpace(result.Header.Get("Content-Type")))
 	if result.StatusCode >= http.StatusBadRequest {
 		status, message := normalizeCursorResponsesError(result)
+		compatLog.Warn("cursor compat responses: upstream returned error",
+			zap.Int("upstream_status_code", result.StatusCode),
+			zap.Int("normalized_status_code", status),
+		)
 		cursorCompatError(c, status, message)
 		return
 	}
@@ -110,9 +131,15 @@ func (h *CursorCompatHandler) ChatCompletions(c *gin.Context) {
 	if !ok {
 		return
 	}
+	compatLog := logger.FromContext(c.Request.Context()).With(
+		zap.String("compat_endpoint", "chat_completions"),
+		zap.String("group_platform", getCompatGroupPlatform(c)),
+		zap.Bool("stream", isCursorMessagesStream(body)),
+	)
 	_ = body
 	if getCompatGroupPlatform(c) == service.PlatformOpenAI {
 		if h.openaiChatCompletionsAction == nil {
+			compatLog.Warn("cursor compat chat_completions: openai action unavailable")
 			cursorCompatError(c, http.StatusBadGateway, "Compat gateway is unavailable")
 			return
 		}
@@ -120,6 +147,7 @@ func (h *CursorCompatHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 	if h.chatCompletionsAction == nil {
+		compatLog.Warn("cursor compat chat_completions: action unavailable")
 		cursorCompatError(c, http.StatusBadGateway, "Compat gateway is unavailable")
 		return
 	}
@@ -132,16 +160,25 @@ func (h *CursorCompatHandler) Messages(c *gin.Context) {
 	if !ok {
 		return
 	}
+	stream := isCursorMessagesStream(body)
+	compatLog := logger.FromContext(c.Request.Context()).With(
+		zap.String("compat_endpoint", "messages"),
+		zap.Bool("stream", stream),
+		zap.String("group_platform", getCompatGroupPlatform(c)),
+	)
 	if getCompatGroupPlatform(c) != service.PlatformAnthropic {
+		compatLog.Warn("cursor compat messages: unsupported platform")
 		cursorCompatError(c, http.StatusBadRequest, "Cursor messages only supports Anthropic-compatible groups")
 		return
 	}
 	if h.messagesAction == nil {
+		compatLog.Warn("cursor compat messages: action unavailable")
 		cursorCompatError(c, http.StatusBadGateway, "Compat gateway is unavailable")
 		return
 	}
-	if isCursorMessagesStream(body) {
+	if stream {
 		if err := h.streamCursorMessages(c, body, h.messagesAction); err != nil {
+			compatLog.Warn("cursor compat messages: stream execution failed", zap.Error(err))
 			cursorCompatError(c, http.StatusBadGateway, "Compat gateway execution failed")
 		}
 		return
@@ -149,14 +186,21 @@ func (h *CursorCompatHandler) Messages(c *gin.Context) {
 
 	result, err := h.compatFacade().ExecuteMessages(c, body, h.messagesAction)
 	if err != nil || result == nil {
+		if err != nil {
+			compatLog.Warn("cursor compat messages: execution failed", zap.Error(err))
+		} else {
+			compatLog.Warn("cursor compat messages: execution returned nil result")
+		}
 		cursorCompatError(c, http.StatusBadGateway, "Compat gateway execution failed")
 		return
 	}
 	if result.BodyTruncated {
+		compatLog.Warn("cursor compat messages: captured body truncated", zap.Int("status_code", result.StatusCode))
 		cursorCompatError(c, http.StatusBadGateway, buildCompatCaptureTooLargeMessage(result))
 		return
 	}
 	if result.StatusCode >= http.StatusBadRequest {
+		compatLog.Warn("cursor compat messages: upstream returned error", zap.Int("upstream_status_code", result.StatusCode))
 		writeCursorCompatAnthropicError(c, result)
 		return
 	}

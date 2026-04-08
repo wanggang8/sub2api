@@ -36,6 +36,11 @@ func (s *GatewayService) ForwardAsResponses(
 	parsed *ParsedRequest,
 ) (*ForwardResult, error) {
 	startTime := time.Now()
+	gatewayLog := logger.FromContext(ctx).With(
+		zap.String("gateway_flow", "responses"),
+		zap.Int64("account_id", account.ID),
+		zap.String("account_platform", account.Platform),
+	)
 
 	// 1. Parse Responses request
 	var responsesReq apicompat.ResponsesRequest
@@ -117,12 +122,25 @@ func (s *GatewayService) ForwardAsResponses(
 	}
 
 	// 11. Send request
+	gatewayLog.Debug("gateway responses: upstream request started",
+		zap.String("original_model", originalModel),
+		zap.String("mapped_model", mappedModel),
+		zap.Bool("stream", clientStream),
+		zap.Bool("proxy_enabled", proxyURL != ""),
+	)
 	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, UpstreamTLSOptionsFromAccount(account, s.tlsFPProfileService.ResolveTLSProfile(account)))
 	if err != nil {
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()
 		}
 		safeErr := sanitizeUpstreamErrorMessage(err.Error())
+		gatewayLog.Warn("gateway responses: upstream request failed",
+			zap.Error(err),
+			zap.String("original_model", originalModel),
+			zap.String("mapped_model", mappedModel),
+			zap.Bool("stream", clientStream),
+			zap.Duration("elapsed", time.Since(startTime)),
+		)
 		setOpsUpstreamError(c, 0, safeErr, "")
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 			Platform:           account.Platform,
@@ -139,6 +157,13 @@ func (s *GatewayService) ForwardAsResponses(
 
 	// 12. Handle error response with failover
 	if resp.StatusCode >= 400 {
+		gatewayLog.Warn("gateway responses: upstream returned error status",
+			zap.Int("upstream_status_code", resp.StatusCode),
+			zap.String("upstream_request_id", strings.TrimSpace(resp.Header.Get("x-request-id"))),
+			zap.String("original_model", originalModel),
+			zap.String("mapped_model", mappedModel),
+			zap.Duration("elapsed", time.Since(startTime)),
+		)
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 		_ = resp.Body.Close()
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
@@ -177,6 +202,22 @@ func (s *GatewayService) ForwardAsResponses(
 		result, handleErr = s.handleResponsesStreamingResponse(resp, c, originalModel, mappedModel, reasoningEffort, startTime)
 	} else {
 		result, handleErr = s.handleResponsesBufferedStreamingResponse(resp, c, originalModel, mappedModel, reasoningEffort, startTime)
+	}
+	if handleErr != nil {
+		gatewayLog.Warn("gateway responses: downstream handling failed",
+			zap.Error(handleErr),
+			zap.String("original_model", originalModel),
+			zap.String("mapped_model", mappedModel),
+			zap.Bool("stream", clientStream),
+			zap.Duration("elapsed", time.Since(startTime)),
+		)
+	} else if elapsed := time.Since(startTime); elapsed >= 3*time.Second {
+		gatewayLog.Warn("gateway responses: slow request",
+			zap.String("original_model", originalModel),
+			zap.String("mapped_model", mappedModel),
+			zap.Bool("stream", clientStream),
+			zap.Duration("elapsed", elapsed),
+		)
 	}
 
 	return result, handleErr
@@ -397,6 +438,14 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 			firstChunk = false
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
+			if ms >= 3000 {
+				logger.FromContext(c.Request.Context()).Warn("forward_as_responses stream: slow first chunk",
+					zap.String("request_id", requestID),
+					zap.String("model", originalModel),
+					zap.String("upstream_model", mappedModel),
+					zap.Int("first_token_ms", ms),
+				)
+			}
 		}
 
 		// Extract usage from message_delta
@@ -422,6 +471,9 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 			if _, err := fmt.Fprint(c.Writer, sse); err != nil {
 				logger.L().Info("forward_as_responses stream: client disconnected",
 					zap.String("request_id", requestID),
+					zap.String("model", originalModel),
+					zap.String("upstream_model", mappedModel),
+					zap.Duration("elapsed", time.Since(startTime)),
 				)
 				return true // client disconnected
 			}
@@ -484,6 +536,9 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 			logger.L().Warn("forward_as_responses stream: read error",
 				zap.Error(err),
 				zap.String("request_id", requestID),
+				zap.String("model", originalModel),
+				zap.String("upstream_model", mappedModel),
+				zap.Duration("elapsed", time.Since(startTime)),
 			)
 		}
 	}

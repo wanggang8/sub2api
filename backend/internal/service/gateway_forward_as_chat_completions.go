@@ -34,6 +34,11 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	parsed *ParsedRequest,
 ) (*ForwardResult, error) {
 	startTime := time.Now()
+	gatewayLog := logger.FromContext(ctx).With(
+		zap.String("gateway_flow", "chat_completions"),
+		zap.Int64("account_id", account.ID),
+		zap.String("account_platform", account.Platform),
+	)
 
 	// 1. Parse Chat Completions request
 	var ccReq apicompat.ChatCompletionsRequest
@@ -120,12 +125,25 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	}
 
 	// 11. Send request
+	gatewayLog.Debug("gateway chat_completions: upstream request started",
+		zap.String("original_model", originalModel),
+		zap.String("mapped_model", mappedModel),
+		zap.Bool("stream", clientStream),
+		zap.Bool("proxy_enabled", proxyURL != ""),
+	)
 	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, UpstreamTLSOptionsFromAccount(account, s.tlsFPProfileService.ResolveTLSProfile(account)))
 	if err != nil {
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()
 		}
 		safeErr := sanitizeUpstreamErrorMessage(err.Error())
+		gatewayLog.Warn("gateway chat_completions: upstream request failed",
+			zap.Error(err),
+			zap.String("original_model", originalModel),
+			zap.String("mapped_model", mappedModel),
+			zap.Bool("stream", clientStream),
+			zap.Duration("elapsed", time.Since(startTime)),
+		)
 		setOpsUpstreamError(c, 0, safeErr, "")
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 			Platform:           account.Platform,
@@ -142,6 +160,13 @@ func (s *GatewayService) ForwardAsChatCompletions(
 
 	// 12. Handle error response with failover
 	if resp.StatusCode >= 400 {
+		gatewayLog.Warn("gateway chat_completions: upstream returned error status",
+			zap.Int("upstream_status_code", resp.StatusCode),
+			zap.String("upstream_request_id", strings.TrimSpace(resp.Header.Get("x-request-id"))),
+			zap.String("original_model", originalModel),
+			zap.String("mapped_model", mappedModel),
+			zap.Duration("elapsed", time.Since(startTime)),
+		)
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 		_ = resp.Body.Close()
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
@@ -183,6 +208,22 @@ func (s *GatewayService) ForwardAsChatCompletions(
 		result, handleErr = s.handleCCStreamingFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime, includeUsage)
 	} else {
 		result, handleErr = s.handleCCBufferedFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime)
+	}
+	if handleErr != nil {
+		gatewayLog.Warn("gateway chat_completions: downstream handling failed",
+			zap.Error(handleErr),
+			zap.String("original_model", originalModel),
+			zap.String("mapped_model", mappedModel),
+			zap.Bool("stream", clientStream),
+			zap.Duration("elapsed", time.Since(startTime)),
+		)
+	} else if elapsed := time.Since(startTime); elapsed >= 3*time.Second {
+		gatewayLog.Warn("gateway chat_completions: slow request",
+			zap.String("original_model", originalModel),
+			zap.String("mapped_model", mappedModel),
+			zap.Bool("stream", clientStream),
+			zap.Duration("elapsed", elapsed),
+		)
 	}
 
 	return result, handleErr
@@ -384,6 +425,12 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 			return false
 		}
 		if _, err := fmt.Fprint(c.Writer, sse); err != nil {
+			logger.L().Info("forward_as_cc stream: client disconnected",
+				zap.String("request_id", requestID),
+				zap.String("model", originalModel),
+				zap.String("upstream_model", mappedModel),
+				zap.Duration("elapsed", time.Since(startTime)),
+			)
 			return true // client disconnected
 		}
 		return false
@@ -394,6 +441,14 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 			firstChunk = false
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
+			if ms >= 3000 {
+				logger.FromContext(c.Request.Context()).Warn("forward_as_cc stream: slow first chunk",
+					zap.String("request_id", requestID),
+					zap.String("model", originalModel),
+					zap.String("upstream_model", mappedModel),
+					zap.Int("first_token_ms", ms),
+				)
+			}
 		}
 
 		// Extract usage from message_delta
@@ -449,6 +504,9 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 			logger.L().Warn("forward_as_cc stream: read error",
 				zap.Error(err),
 				zap.String("request_id", requestID),
+				zap.String("model", originalModel),
+				zap.String("upstream_model", mappedModel),
+				zap.Duration("elapsed", time.Since(startTime)),
 			)
 		}
 	}
