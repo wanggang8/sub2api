@@ -36,6 +36,37 @@ func TestBuildSetupConfigFromEnv_ExplicitRedisHostWinsInEmbeddedMode(t *testing.
 	}
 }
 
+func TestDataDirCandidatesPreferHFMountedDataDir(t *testing.T) {
+	t.Setenv("DATA_DIR", "")
+	t.Setenv("SPACE_ID", "Vick888888/VickGateway888888")
+	t.Setenv("SPACE_HOST", "vick888888-vickgateway888888.hf.space")
+
+	candidates := dataDirCandidates()
+	if len(candidates) < 2 {
+		t.Fatalf("dataDirCandidates()=%v, want at least hf and docker candidates", candidates)
+	}
+	if candidates[0] != "/data" {
+		t.Fatalf("dataDirCandidates()[0]=%q, want %q", candidates[0], "/data")
+	}
+	if candidates[1] != "/app/data" {
+		t.Fatalf("dataDirCandidates()[1]=%q, want %q", candidates[1], "/app/data")
+	}
+}
+
+func TestDataDirCandidatesExplicitEnvWins(t *testing.T) {
+	custom := t.TempDir()
+	t.Setenv("DATA_DIR", custom)
+	t.Setenv("SPACE_ID", "Vick888888/VickGateway888888")
+
+	candidates := dataDirCandidates()
+	if len(candidates) < 1 {
+		t.Fatalf("dataDirCandidates()=%v, want custom candidate", candidates)
+	}
+	if candidates[0] != custom {
+		t.Fatalf("dataDirCandidates()[0]=%q, want %q", candidates[0], custom)
+	}
+}
+
 func TestDecideAdminBootstrap(t *testing.T) {
 	t.Parallel()
 

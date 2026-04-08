@@ -641,6 +641,28 @@ func TestLoadUsesConservativeDBPoolDefaultsOnHuggingFace(t *testing.T) {
 	}
 }
 
+func TestConfigSearchPathsPreferHFMountedDataDir(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("DATA_DIR", "")
+	t.Setenv("SPACE_ID", "Vick888888/VickGateway888888")
+	t.Setenv("SPACE_HOST", "vick888888-vickgateway888888.hf.space")
+
+	paths := configSearchPaths()
+	require.NotEmpty(t, paths)
+	require.Equal(t, "/data", paths[0])
+	require.Equal(t, "/app/data", paths[1])
+}
+
+func TestConfigSearchPathsExplicitDataDirWins(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("DATA_DIR", "/custom/data")
+	t.Setenv("SPACE_ID", "Vick888888/VickGateway888888")
+
+	paths := configSearchPaths()
+	require.NotEmpty(t, paths)
+	require.Equal(t, "/custom/data", paths[0])
+}
+
 func TestLoadAllowsHFDBPoolEnvOverride(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	t.Setenv("SPACE_ID", "Vick888888/VickGateway888888")
