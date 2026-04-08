@@ -200,7 +200,9 @@ func (s *SchedulerSnapshotService) runInitialRebuild() {
 	}
 	if err := s.rebuildBuckets(ctx, buckets, "startup"); err != nil {
 		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] rebuild startup failed: %v", err)
+		return
 	}
+	s.bootstrapOutboxWatermark(ctx)
 }
 
 func (s *SchedulerSnapshotService) runOutboxWorker(interval time.Duration) {
@@ -294,6 +296,33 @@ func (s *SchedulerSnapshotService) writeOutboxWatermark(_ context.Context, id in
 	ctx, cancel := context.WithTimeout(context.Background(), outboxWatermarkWriteTimeout)
 	defer cancel()
 	return s.cache.SetOutboxWatermark(ctx, id)
+}
+
+func (s *SchedulerSnapshotService) bootstrapOutboxWatermark(ctx context.Context) {
+	if s == nil || s.cache == nil || s.outboxRepo == nil {
+		return
+	}
+	watermark, err := s.cache.GetOutboxWatermark(ctx)
+	if err != nil {
+		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] outbox watermark bootstrap read failed: %v", err)
+		return
+	}
+	if watermark > 0 {
+		return
+	}
+	maxID, err := s.outboxRepo.MaxID(ctx)
+	if err != nil {
+		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] outbox watermark bootstrap max id failed: %v", err)
+		return
+	}
+	if maxID <= 0 {
+		return
+	}
+	if err := s.writeOutboxWatermark(ctx, maxID); err != nil {
+		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] outbox watermark bootstrap write failed: %v", err)
+		return
+	}
+	logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] outbox watermark bootstrapped to latest id=%d", maxID)
 }
 
 func (s *SchedulerSnapshotService) handleOutboxEvent(ctx context.Context, event SchedulerOutboxEvent) error {

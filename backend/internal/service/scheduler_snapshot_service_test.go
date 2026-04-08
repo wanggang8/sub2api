@@ -12,6 +12,9 @@ import (
 type schedulerSnapshotCacheStub struct {
 	watermark               int64
 	setWatermarkCtxCanceled bool
+	buckets                 []SchedulerBucket
+	listBucketsErr          error
+	tryLockResult           bool
 }
 
 func (s *schedulerSnapshotCacheStub) GetSnapshot(ctx context.Context, bucket SchedulerBucket) ([]*Account, bool, error) {
@@ -39,11 +42,14 @@ func (s *schedulerSnapshotCacheStub) UpdateLastUsed(ctx context.Context, updates
 }
 
 func (s *schedulerSnapshotCacheStub) TryLockBucket(ctx context.Context, bucket SchedulerBucket, ttl time.Duration) (bool, error) {
-	return false, nil
+	return s.tryLockResult, nil
 }
 
 func (s *schedulerSnapshotCacheStub) ListBuckets(ctx context.Context) ([]SchedulerBucket, error) {
-	return nil, nil
+	if s.listBucketsErr != nil {
+		return nil, s.listBucketsErr
+	}
+	return s.buckets, nil
 }
 
 func (s *schedulerSnapshotCacheStub) GetOutboxWatermark(ctx context.Context) (int64, error) {
@@ -59,6 +65,8 @@ func (s *schedulerSnapshotCacheStub) SetOutboxWatermark(ctx context.Context, id 
 type schedulerOutboxRepoStub struct {
 	listAfterCalls int
 	listAfterErr   error
+	maxID          int64
+	maxIDErr       error
 }
 
 func (s *schedulerOutboxRepoStub) ListAfter(ctx context.Context, afterID int64, limit int) ([]SchedulerOutboxEvent, error) {
@@ -70,7 +78,10 @@ func (s *schedulerOutboxRepoStub) ListAfter(ctx context.Context, afterID int64, 
 }
 
 func (s *schedulerOutboxRepoStub) MaxID(ctx context.Context) (int64, error) {
-	return 0, nil
+	if s.maxIDErr != nil {
+		return 0, s.maxIDErr
+	}
+	return s.maxID, nil
 }
 
 func TestSchedulerSnapshotServicePollOutboxTransientDBErrorBacksOff(t *testing.T) {
@@ -103,4 +114,34 @@ func TestSchedulerSnapshotServiceWriteOutboxWatermarkUsesFreshContext(t *testing
 	require.NoError(t, err)
 	require.Equal(t, int64(42), cache.watermark)
 	require.False(t, cache.setWatermarkCtxCanceled)
+}
+
+func TestSchedulerSnapshotServiceRunInitialRebuildBootstrapsOutboxWatermarkWhenMissing(t *testing.T) {
+	cache := &schedulerSnapshotCacheStub{
+		buckets: []SchedulerBucket{
+			{GroupID: 0, Platform: PlatformOpenAI, Mode: SchedulerModeSingle},
+		},
+	}
+	outbox := &schedulerOutboxRepoStub{maxID: 99}
+	svc := &SchedulerSnapshotService{
+		cache:      cache,
+		outboxRepo: outbox,
+	}
+
+	svc.runInitialRebuild()
+
+	require.Equal(t, int64(99), cache.watermark)
+}
+
+func TestSchedulerSnapshotServiceBootstrapOutboxWatermarkDoesNotOverrideExisting(t *testing.T) {
+	cache := &schedulerSnapshotCacheStub{watermark: 12}
+	outbox := &schedulerOutboxRepoStub{maxID: 99}
+	svc := &SchedulerSnapshotService{
+		cache:      cache,
+		outboxRepo: outbox,
+	}
+
+	svc.bootstrapOutboxWatermark(context.Background())
+
+	require.Equal(t, int64(12), cache.watermark)
 }
