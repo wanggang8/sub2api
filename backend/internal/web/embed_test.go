@@ -640,6 +640,8 @@ func TestServeEmbeddedFrontend(t *testing.T) {
 			"/api/users",
 			"/v1/models",
 			"/v1beta/chat",
+			"/cursor/v1/models",
+			"/cursor/v1/responses",
 			"/antigravity/test",
 			"/chat-stream",
 			"/setup/init",
