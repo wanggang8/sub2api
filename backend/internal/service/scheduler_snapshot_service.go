@@ -19,6 +19,7 @@ var (
 )
 
 const outboxEventTimeout = 2 * time.Minute
+const outboxWatermarkWriteTimeout = 5 * time.Second
 
 type SchedulerSnapshotService struct {
 	cache         SchedulerCache
@@ -277,13 +278,22 @@ func (s *SchedulerSnapshotService) pollOutbox() {
 	}
 
 	lastID := events[len(events)-1].ID
-	if err := s.cache.SetOutboxWatermark(ctx, lastID); err != nil {
+	if err := s.writeOutboxWatermark(ctx, lastID); err != nil {
 		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] outbox watermark write failed: %v", err)
 	} else {
 		watermarkForCheck = lastID
 	}
 
 	s.checkOutboxLag(ctx, events[0], watermarkForCheck)
+}
+
+func (s *SchedulerSnapshotService) writeOutboxWatermark(_ context.Context, id int64) error {
+	if s == nil || s.cache == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), outboxWatermarkWriteTimeout)
+	defer cancel()
+	return s.cache.SetOutboxWatermark(ctx, id)
 }
 
 func (s *SchedulerSnapshotService) handleOutboxEvent(ctx context.Context, event SchedulerOutboxEvent) error {

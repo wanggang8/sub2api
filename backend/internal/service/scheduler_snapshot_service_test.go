@@ -10,7 +10,8 @@ import (
 )
 
 type schedulerSnapshotCacheStub struct {
-	watermark int64
+	watermark               int64
+	setWatermarkCtxCanceled bool
 }
 
 func (s *schedulerSnapshotCacheStub) GetSnapshot(ctx context.Context, bucket SchedulerBucket) ([]*Account, bool, error) {
@@ -50,6 +51,7 @@ func (s *schedulerSnapshotCacheStub) GetOutboxWatermark(ctx context.Context) (in
 }
 
 func (s *schedulerSnapshotCacheStub) SetOutboxWatermark(ctx context.Context, id int64) error {
+	s.setWatermarkCtxCanceled = ctx.Err() != nil
 	s.watermark = id
 	return nil
 }
@@ -86,4 +88,19 @@ func TestSchedulerSnapshotServicePollOutboxTransientDBErrorBacksOff(t *testing.T
 	svc.pollOutbox()
 
 	require.Equal(t, 1, outbox.listAfterCalls)
+}
+
+func TestSchedulerSnapshotServiceWriteOutboxWatermarkUsesFreshContext(t *testing.T) {
+	cache := &schedulerSnapshotCacheStub{}
+	svc := &SchedulerSnapshotService{
+		cache: cache,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := svc.writeOutboxWatermark(ctx, 42)
+	require.NoError(t, err)
+	require.Equal(t, int64(42), cache.watermark)
+	require.False(t, cache.setWatermarkCtxCanceled)
 }

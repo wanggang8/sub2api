@@ -618,6 +618,56 @@ func TestGetServerAddressFromEnv(t *testing.T) {
 	}
 }
 
+func TestLoadUsesConservativeDBPoolDefaultsOnHuggingFace(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("SPACE_ID", "Vick888888/VickGateway888888")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.Database.MaxOpenConns != 5 {
+		t.Fatalf("Database.MaxOpenConns = %d, want 5", cfg.Database.MaxOpenConns)
+	}
+	if cfg.Database.MaxIdleConns != 2 {
+		t.Fatalf("Database.MaxIdleConns = %d, want 2", cfg.Database.MaxIdleConns)
+	}
+	if cfg.Database.ConnMaxLifetimeMinutes != 10 {
+		t.Fatalf("Database.ConnMaxLifetimeMinutes = %d, want 10", cfg.Database.ConnMaxLifetimeMinutes)
+	}
+	if cfg.Database.ConnMaxIdleTimeMinutes != 2 {
+		t.Fatalf("Database.ConnMaxIdleTimeMinutes = %d, want 2", cfg.Database.ConnMaxIdleTimeMinutes)
+	}
+}
+
+func TestLoadAllowsHFDBPoolEnvOverride(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("SPACE_ID", "Vick888888/VickGateway888888")
+	t.Setenv("DATABASE_MAX_OPEN_CONNS", "9")
+	t.Setenv("DATABASE_MAX_IDLE_CONNS", "4")
+	t.Setenv("DATABASE_CONN_MAX_LIFETIME_MINUTES", "22")
+	t.Setenv("DATABASE_CONN_MAX_IDLE_TIME_MINUTES", "7")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.Database.MaxOpenConns != 9 {
+		t.Fatalf("Database.MaxOpenConns = %d, want 9", cfg.Database.MaxOpenConns)
+	}
+	if cfg.Database.MaxIdleConns != 4 {
+		t.Fatalf("Database.MaxIdleConns = %d, want 4", cfg.Database.MaxIdleConns)
+	}
+	if cfg.Database.ConnMaxLifetimeMinutes != 22 {
+		t.Fatalf("Database.ConnMaxLifetimeMinutes = %d, want 22", cfg.Database.ConnMaxLifetimeMinutes)
+	}
+	if cfg.Database.ConnMaxIdleTimeMinutes != 7 {
+		t.Fatalf("Database.ConnMaxIdleTimeMinutes = %d, want 7", cfg.Database.ConnMaxIdleTimeMinutes)
+	}
+}
+
 func TestValidateAbsoluteHTTPURL(t *testing.T) {
 	if err := ValidateAbsoluteHTTPURL("https://example.com/path"); err != nil {
 		t.Fatalf("ValidateAbsoluteHTTPURL valid url error: %v", err)

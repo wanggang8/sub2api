@@ -19,6 +19,13 @@ const (
 	RunModeSimple   = "simple"
 )
 
+const (
+	hfDBMaxOpenConnsDefault         = 5
+	hfDBMaxIdleConnsDefault         = 2
+	hfDBConnMaxLifetimeMinutes      = 10
+	hfDBConnMaxIdleTimeMinutes      = 2
+)
+
 // 使用量记录队列溢出策略
 const (
 	UsageRecordOverflowPolicyDrop   = "drop"
@@ -1139,16 +1146,26 @@ func setDefaults() {
 	viper.SetDefault("linuxdo_connect.userinfo_username_path", "")
 
 	// Database
+	dbMaxOpenConnsDefault := 256
+	dbMaxIdleConnsDefault := 128
+	dbConnMaxLifetimeDefault := 30
+	dbConnMaxIdleTimeDefault := 5
+	if isHuggingFaceSpaceRuntime() {
+		dbMaxOpenConnsDefault = hfDBMaxOpenConnsDefault
+		dbMaxIdleConnsDefault = hfDBMaxIdleConnsDefault
+		dbConnMaxLifetimeDefault = hfDBConnMaxLifetimeMinutes
+		dbConnMaxIdleTimeDefault = hfDBConnMaxIdleTimeMinutes
+	}
 	viper.SetDefault("database.host", "localhost")
 	viper.SetDefault("database.port", 5432)
 	viper.SetDefault("database.user", "postgres")
 	viper.SetDefault("database.password", "postgres")
 	viper.SetDefault("database.dbname", "sub2api")
 	viper.SetDefault("database.sslmode", "prefer")
-	viper.SetDefault("database.max_open_conns", 256)
-	viper.SetDefault("database.max_idle_conns", 128)
-	viper.SetDefault("database.conn_max_lifetime_minutes", 30)
-	viper.SetDefault("database.conn_max_idle_time_minutes", 5)
+	viper.SetDefault("database.max_open_conns", dbMaxOpenConnsDefault)
+	viper.SetDefault("database.max_idle_conns", dbMaxIdleConnsDefault)
+	viper.SetDefault("database.conn_max_lifetime_minutes", dbConnMaxLifetimeDefault)
+	viper.SetDefault("database.conn_max_idle_time_minutes", dbConnMaxIdleTimeDefault)
 
 	// Redis
 	viper.SetDefault("redis.host", "localhost")
@@ -2097,6 +2114,10 @@ func generateJWTSecret(byteLength int) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(buf), nil
+}
+
+func isHuggingFaceSpaceRuntime() bool {
+	return strings.TrimSpace(os.Getenv("SPACE_ID")) != "" || strings.TrimSpace(os.Getenv("SPACE_HOST")) != ""
 }
 
 // GetServerAddress returns the server address (host:port) from config file or environment variable.
