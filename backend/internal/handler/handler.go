@@ -47,8 +47,6 @@ type Handlers struct {
 	OpenAIGateway *OpenAIGatewayHandler
 	CursorCompat  *CursorCompatHandler
 	AugmentCompat *AugmentCompatHandler
-	SoraGateway   *SoraGatewayHandler
-	SoraClient    *SoraClientHandler
 	Setting       *SettingHandler
 	Totp          *TotpHandler
 }

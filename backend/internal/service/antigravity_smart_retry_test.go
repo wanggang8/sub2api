@@ -5,12 +5,12 @@ package service
 import (
 	"bytes"
 	"context"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
+	"github.com/stretchr/testify/require"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
-
-	"github.com/stretchr/testify/require"
 )
 
 // stubSmartRetryCache 用于 handleSmartRetry 测试的 GatewayCache mock
@@ -80,17 +80,12 @@ func (m *mockSmartRetryUpstream) Do(req *http.Request, proxyURL string, accountI
 		m.responseBodies[respIdx] = bodyBytes
 	}
 
-	// 用缓存的 body 字节重建新的 reader
-	var body io.ReadCloser
+	// 用缓存的 body 重建 reader（支持重试场景多次读取）
+	cloned := *resp
 	if m.responseBodies[respIdx] != nil {
-		body = io.NopCloser(bytes.NewReader(m.responseBodies[respIdx]))
+		cloned.Body = io.NopCloser(bytes.NewReader(m.responseBodies[respIdx]))
 	}
-
-	return &http.Response{
-		StatusCode: resp.StatusCode,
-		Header:     resp.Header.Clone(),
-		Body:       body,
-	}, respErr
+	return &cloned, respErr
 }
 
 func (m *mockSmartRetryUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, opts *UpstreamTLSOptions) (*http.Response, error) {

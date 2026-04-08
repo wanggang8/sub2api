@@ -88,8 +88,6 @@ func ProvideHandlers(
 	openaiGatewayHandler *OpenAIGatewayHandler,
 	cursorCompatHandler *CursorCompatHandler,
 	augmentCompatHandler *AugmentCompatHandler,
-	soraGatewayHandler *SoraGatewayHandler,
-	soraClientHandler *SoraClientHandler,
 	settingHandler *SettingHandler,
 	totpHandler *TotpHandler,
 	_ *service.IdempotencyCoordinator,
@@ -108,8 +106,6 @@ func ProvideHandlers(
 		OpenAIGateway: openaiGatewayHandler,
 		CursorCompat:  cursorCompatHandler,
 		AugmentCompat: augmentCompatHandler,
-		SoraGateway:   soraGatewayHandler,
-		SoraClient:    soraClientHandler,
 		Setting:       settingHandler,
 		Totp:          totpHandler,
 	}
@@ -129,7 +125,6 @@ var ProviderSet = wire.NewSet(
 	NewOpenAIGatewayHandler,
 	NewCursorCompatHandler,
 	NewAugmentCompatHandler,
-	NewSoraGatewayHandler,
 	NewTotpHandler,
 	ProvideSettingHandler,
 
