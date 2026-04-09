@@ -428,12 +428,33 @@ export async function setSchedulable(id: number, schedulable: boolean): Promise<
 }
 
 /**
- * Get available models for an account
+ * Get available models for an account (default/cached list)
  * @param id - Account ID
  * @returns List of available models for this account
  */
 export async function getAvailableModels(id: number): Promise<ClaudeModel[]> {
   const { data } = await apiClient.get<ClaudeModel[]>(`/admin/accounts/${id}/models`)
+  return data
+}
+
+/**
+ * Fetch models preview from temporary form credentials (real-time)
+ * @param accountId - Account ID, kept for compatibility/analytics
+ * @param payload - Temporary platform/type/credentials from current form
+ * @returns List of models fetched from the actual base_url
+ */
+export async function fetchModelsPreview(
+  accountId: number,
+  payload: {
+    platform: string
+    type: string
+    credentials: Record<string, unknown>
+  }
+): Promise<ClaudeModel[]> {
+  const { data } = await apiClient.post<ClaudeModel[]>('/admin/accounts/fetch-models-preview', {
+    account_id: accountId,
+    ...payload
+  })
   return data
 }
 

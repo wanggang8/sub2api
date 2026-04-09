@@ -146,7 +146,7 @@
 
             <!-- Mapping Mode -->
             <div v-else>
-              <div class="mb-3 rounded-lg bg-purple-50 p-3 dark:bg-purple-900/20">
+              <div class="mb-3 flex items-center justify-between gap-3 rounded-lg bg-purple-50 p-3 dark:bg-purple-900/20">
                 <p class="text-xs text-purple-700 dark:text-purple-400">
                   <svg
                     class="mr-1 inline h-4 w-4"
@@ -163,6 +163,57 @@
                   </svg>
                   {{ t('admin.accounts.mapRequestModels') }}
                 </p>
+                <button
+                  type="button"
+                  @click="fetchAccountModels(false)"
+                  :disabled="fetchingModels"
+                  class="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors"
+                  :class="
+                    fetchingModels
+                      ? 'cursor-not-allowed bg-gray-100 text-gray-400 dark:bg-dark-700 dark:text-dark-400'
+                      : 'bg-purple-100 text-purple-700 hover:bg-purple-200 dark:bg-purple-900/40 dark:text-purple-300 dark:hover:bg-purple-900/60'
+                  "
+                >
+                  <svg
+                    v-if="fetchingModels"
+                    class="h-3.5 w-3.5 animate-spin"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      class="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      stroke-width="4"
+                    ></circle>
+                    <path
+                      class="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    ></path>
+                  </svg>
+                  <svg
+                    v-else
+                    class="h-3.5 w-3.5"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                    />
+                  </svg>
+                  <span v-if="fetchingModels">{{ t('admin.accounts.fetchingModels') }}</span>
+                  <span v-else-if="availableModels.length > 0">
+                    {{ t('admin.accounts.refreshModels') }} ({{ availableModels.length }})
+                  </span>
+                  <span v-else>{{ t('admin.accounts.fetchModels') }}</span>
+                </button>
               </div>
 
             <!-- Model Mapping List -->
@@ -172,11 +223,14 @@
                 :key="getModelMappingKey(mapping)"
                 class="flex items-center gap-2"
               >
-                <input
+                <Select
                   v-model="mapping.from"
-                  type="text"
-                  class="input flex-1"
+                  :options="availableModelsOptions"
+                  searchable
+                  creatable
+                  :creatable-prefix="t('admin.accounts.useCustomModel')"
                   :placeholder="t('admin.accounts.requestModel')"
+                  class="flex-1"
                 />
                 <svg
                   class="h-4 w-4 flex-shrink-0 text-gray-400"
@@ -191,11 +245,14 @@
                     d="M14 5l7 7m0 0l-7 7m7-7H3"
                   />
                 </svg>
-                <input
+                <Select
                   v-model="mapping.to"
-                  type="text"
-                  class="input flex-1"
+                  :options="availableModelsOptions"
+                  searchable
+                  creatable
+                  :creatable-prefix="t('admin.accounts.useCustomModel')"
                   :placeholder="t('admin.accounts.actualModel')"
+                  class="flex-1"
                 />
                 <button
                   type="button"
@@ -461,10 +518,61 @@
 
           <!-- Mapping Mode -->
           <div v-else>
-            <div class="mb-3 rounded-lg bg-purple-50 p-3 dark:bg-purple-900/20">
+            <div class="mb-3 flex items-center justify-between gap-3 rounded-lg bg-purple-50 p-3 dark:bg-purple-900/20">
               <p class="text-xs text-purple-700 dark:text-purple-400">
                 {{ t('admin.accounts.mapRequestModels') }}
               </p>
+              <button
+                type="button"
+                @click="fetchAccountModels(false)"
+                :disabled="fetchingModels"
+                class="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors"
+                :class="
+                  fetchingModels
+                    ? 'cursor-not-allowed bg-gray-100 text-gray-400 dark:bg-dark-700 dark:text-dark-400'
+                    : 'bg-purple-100 text-purple-700 hover:bg-purple-200 dark:bg-purple-900/40 dark:text-purple-300 dark:hover:bg-purple-900/60'
+                "
+              >
+                <svg
+                  v-if="fetchingModels"
+                  class="h-3.5 w-3.5 animate-spin"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
+                  <circle
+                    class="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    stroke-width="4"
+                  ></circle>
+                  <path
+                    class="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                  ></path>
+                </svg>
+                <svg
+                  v-else
+                  class="h-3.5 w-3.5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                  />
+                </svg>
+                <span v-if="fetchingModels">{{ t('admin.accounts.fetchingModels') }}</span>
+                <span v-else-if="availableModels.length > 0">
+                  {{ t('admin.accounts.refreshModels') }} ({{ availableModels.length }})
+                </span>
+                <span v-else>{{ t('admin.accounts.fetchModels') }}</span>
+              </button>
             </div>
 
             <div v-if="modelMappings.length > 0" class="mb-3 space-y-2">
@@ -473,11 +581,14 @@
                 :key="'oauth-' + getModelMappingKey(mapping)"
                 class="flex items-center gap-2"
               >
-                <input
+                <Select
                   v-model="mapping.from"
-                  type="text"
-                  class="input flex-1"
+                  :options="availableModelsOptions"
+                  searchable
+                  creatable
+                  :creatable-prefix="t('admin.accounts.useCustomModel')"
                   :placeholder="t('admin.accounts.requestModel')"
+                  class="flex-1"
                 />
                 <svg
                   class="h-4 w-4 flex-shrink-0 text-gray-400"
@@ -492,11 +603,14 @@
                     d="M14 5l7 7m0 0l-7 7m7-7H3"
                   />
                 </svg>
-                <input
+                <Select
                   v-model="mapping.to"
-                  type="text"
-                  class="input flex-1"
+                  :options="availableModelsOptions"
+                  searchable
+                  creatable
+                  :creatable-prefix="t('admin.accounts.useCustomModel')"
                   :placeholder="t('admin.accounts.actualModel')"
+                  class="flex-1"
                 />
                 <button
                   type="button"
@@ -678,10 +792,83 @@
 
           <!-- Mapping Mode -->
           <div v-else class="space-y-3">
+            <div class="mb-3 flex items-center justify-between gap-3 rounded-lg bg-purple-50 p-3 dark:bg-purple-900/20">
+              <p class="text-xs text-purple-700 dark:text-purple-400">
+                {{ t('admin.accounts.mapRequestModels') }}
+              </p>
+              <button
+                type="button"
+                @click="fetchAccountModels(false)"
+                :disabled="fetchingModels"
+                class="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors"
+                :class="
+                  fetchingModels
+                    ? 'cursor-not-allowed bg-gray-100 text-gray-400 dark:bg-dark-700 dark:text-dark-400'
+                    : 'bg-purple-100 text-purple-700 hover:bg-purple-200 dark:bg-purple-900/40 dark:text-purple-300 dark:hover:bg-purple-900/60'
+                "
+              >
+                <svg
+                  v-if="fetchingModels"
+                  class="h-3.5 w-3.5 animate-spin"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
+                  <circle
+                    class="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    stroke-width="4"
+                  ></circle>
+                  <path
+                    class="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                  ></path>
+                </svg>
+                <svg
+                  v-else
+                  class="h-3.5 w-3.5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                  />
+                </svg>
+                <span v-if="fetchingModels">{{ t('admin.accounts.fetchingModels') }}</span>
+                <span v-else-if="availableModels.length > 0">
+                  {{ t('admin.accounts.refreshModels') }} ({{ availableModels.length }})
+                </span>
+                <span v-else>{{ t('admin.accounts.fetchModels') }}</span>
+              </button>
+            </div>
+
             <div v-for="(mapping, index) in modelMappings" :key="getModelMappingKey(mapping)" class="flex items-center gap-2">
-              <input v-model="mapping.from" type="text" class="input flex-1" :placeholder="t('admin.accounts.fromModel')" />
+              <Select
+                v-model="mapping.from"
+                :options="availableModelsOptions"
+                searchable
+                creatable
+                :creatable-prefix="t('admin.accounts.useCustomModel')"
+                :placeholder="t('admin.accounts.fromModel')"
+                class="flex-1"
+              />
               <span class="text-gray-400">→</span>
-              <input v-model="mapping.to" type="text" class="input flex-1" :placeholder="t('admin.accounts.toModel')" />
+              <Select
+                v-model="mapping.to"
+                :options="availableModelsOptions"
+                searchable
+                creatable
+                :creatable-prefix="t('admin.accounts.useCustomModel')"
+                :placeholder="t('admin.accounts.toModel')"
+                class="flex-1"
+              />
               <button type="button" @click="modelMappings.splice(index, 1)" class="text-red-500 hover:text-red-700">
                 <Icon name="trash" size="sm" />
               </button>
@@ -1779,6 +1966,7 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { adminAPI } from '@/api/admin'
+import { getAvailableModels, fetchModelsPreview } from '@/api/admin/accounts'
 import type { Account, Proxy, AdminGroup, CheckMixedChannelResponse } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
@@ -1866,6 +2054,8 @@ const isBedrockAPIKeyMode = computed(() =>
 const modelMappings = ref<ModelMapping[]>([])
 const modelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
 const allowedModels = ref<string[]>([])
+const availableModels = ref<string[]>([])
+const fetchingModels = ref(false)
 const DEFAULT_POOL_MODE_RETRY_COUNT = 3
 const MAX_POOL_MODE_RETRY_COUNT = 10
 const poolModeEnabled = ref(false)
@@ -2332,6 +2522,8 @@ watch(
       return
     }
     if (!wasShow || newAccount !== previousAccount) {
+      availableModels.value = []
+      fetchingModels.value = false
       syncFormFromAccount(newAccount)
       loadTLSProfiles()
     }
@@ -2348,6 +2540,13 @@ async function loadTLSProfiles() {
   }
 }
 
+// Watch for model restriction mode changes and silently fetch models when switching to mapping mode
+watch(modelRestrictionMode, (mode) => {
+  if (mode === 'mapping' && props.account && availableModels.value.length === 0) {
+    fetchAccountModels(true) // Silent fetch only if no models loaded yet
+  }
+})
+
 function withTLSInsecureSkipVerifyExtra(baseExtra?: Record<string, unknown>): Record<string, unknown> | undefined {
   const extra: Record<string, unknown> = { ...(baseExtra || {}) }
 
@@ -2358,6 +2557,54 @@ function withTLSInsecureSkipVerifyExtra(baseExtra?: Record<string, unknown>): Re
   }
 
   return Object.keys(extra).length > 0 ? extra : undefined
+}
+
+// Available models options for Select component
+const availableModelsOptions = computed(() =>
+  availableModels.value.map((model) => ({ value: model, label: model }))
+)
+
+// Fetch available models using current edit form values first, then fallback to stored defaults
+const fetchAccountModels = async (silent = false) => {
+  if (!props.account) {
+    return
+  }
+
+  if (!silent) {
+    fetchingModels.value = true
+  }
+
+  const previewPayload = {
+    platform: props.account.platform,
+    type: props.account.type,
+    credentials: {
+      ...(props.account.credentials as Record<string, unknown> | undefined),
+      base_url: editBaseUrl.value,
+      api_key: editApiKey.value || (props.account.credentials as Record<string, unknown> | undefined)?.api_key || ''
+    }
+  }
+
+  try {
+    const models = await fetchModelsPreview(props.account.id, previewPayload)
+    availableModels.value = models.map((m) => m.id)
+    if (!silent) {
+      appStore.showSuccess(t('admin.accounts.modelsLoaded', { count: models.length }))
+    }
+  } catch (err: any) {
+    try {
+      const models = await getAvailableModels(props.account.id)
+      availableModels.value = models.map((m) => m.id)
+      if (!silent) {
+        appStore.showWarning(t('admin.accounts.modelsLoadedFromDefault', { count: models.length }))
+      }
+    } catch (fallbackErr: any) {
+      if (!silent) {
+        appStore.showError(t('admin.accounts.modelsLoadFailed') + ': ' + (err.message || fallbackErr.message || err))
+      }
+    }
+  } finally {
+    fetchingModels.value = false
+  }
 }
 
 // Model mapping helpers

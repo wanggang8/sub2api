@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 
-const { updateAccountMock, checkMixedChannelRiskMock, listTLSFingerprintProfilesMock } = vi.hoisted(() => ({
+const { updateAccountMock, checkMixedChannelRiskMock, listTLSFingerprintProfilesMock, fetchModelsPreviewMock, getAvailableModelsMock } = vi.hoisted(() => ({
   updateAccountMock: vi.fn(),
   checkMixedChannelRiskMock: vi.fn(),
-  listTLSFingerprintProfilesMock: vi.fn()
+  listTLSFingerprintProfilesMock: vi.fn(),
+  fetchModelsPreviewMock: vi.fn(),
+  getAvailableModelsMock: vi.fn()
 }))
 
 vi.hoisted(() => {
@@ -23,7 +25,8 @@ vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
     showError: vi.fn(),
     showSuccess: vi.fn(),
-    showInfo: vi.fn()
+    showInfo: vi.fn(),
+    showWarning: vi.fn()
   })
 }))
 
@@ -46,7 +49,9 @@ vi.mock('@/api/admin', () => ({
 }))
 
 vi.mock('@/api/admin/accounts', () => ({
-  getAntigravityDefaultModelMapping: vi.fn()
+  getAntigravityDefaultModelMapping: vi.fn(),
+  fetchModelsPreview: fetchModelsPreviewMock,
+  getAvailableModels: getAvailableModelsMock
 }))
 
 vi.mock('vue-i18n', async () => {
@@ -221,5 +226,45 @@ describe('EditAccountModal', () => {
 
     expect(updateAccountMock).toHaveBeenCalledTimes(2)
     expect(updateAccountMock.mock.calls[1]?.[1]?.extra?.tls_insecure_skip_verify).toBeUndefined()
+  })
+
+  it('clears fetched model cache when switching to another account', async () => {
+    const accountA = buildAccount()
+    const accountB = {
+      ...buildAccount(),
+      id: 9,
+      name: 'Other OpenAI Key',
+      credentials: {
+        api_key: 'sk-test-b',
+        base_url: 'https://example.com/v1',
+        model_mapping: {
+          'gpt-4.1': 'gpt-4.1'
+        }
+      }
+    }
+
+    fetchModelsPreviewMock.mockReset()
+    getAvailableModelsMock.mockReset()
+    listTLSFingerprintProfilesMock.mockReset()
+    listTLSFingerprintProfilesMock.mockResolvedValue([])
+    fetchModelsPreviewMock.mockResolvedValue([{ id: 'gpt-a' }])
+
+    const wrapper = mountModal(accountA)
+    await wrapper.setData?.({})
+    await wrapper.setProps({ account: accountA })
+    await flushPromises()
+
+    await wrapper.setProps({ account: accountB })
+    await flushPromises()
+
+    fetchModelsPreviewMock.mockResolvedValue([{ id: 'gpt-b' }])
+    const vm = wrapper.vm as any
+    await vm.fetchAccountModels(false)
+
+    expect(fetchModelsPreviewMock).toHaveBeenLastCalledWith(accountB.id, expect.objectContaining({
+      credentials: expect.objectContaining({
+        base_url: 'https://example.com/v1'
+      })
+    }))
   })
 })

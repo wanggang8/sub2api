@@ -1777,6 +1777,212 @@ func (h *AccountHandler) SetSchedulable(c *gin.Context) {
 	response.Success(c, h.buildAccountResponseWithRuntime(c.Request.Context(), account))
 }
 
+type FetchModelsPreviewRequest struct {
+	Platform    string         `json:"platform" binding:"required"`
+	Type        string         `json:"type" binding:"required"`
+	Credentials map[string]any `json:"credentials" binding:"required"`
+}
+
+func normalizeOpenAIModelsURL(baseURL string) string {
+	trimmed := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if strings.HasSuffix(trimmed, "/v1") {
+		return trimmed + "/models"
+	}
+	return trimmed + "/v1/models"
+}
+
+func normalizeGeminiModelsURL(baseURL, apiKey string) string {
+	trimmed := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if strings.HasSuffix(trimmed, "/v1beta") {
+		return trimmed + "/models?key=" + apiKey
+	}
+	return trimmed + "/v1beta/models?key=" + apiKey
+}
+
+// FetchModelsPreview handles fetching models from temporary form credentials without saving account first.
+// POST /api/v1/admin/accounts/fetch-models-preview
+func (h *AccountHandler) FetchModelsPreview(c *gin.Context) {
+	var req FetchModelsPreviewRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	if req.Type != service.AccountTypeAPIKey {
+		response.BadRequest(c, "Only API Key accounts support fetching models from upstream")
+		return
+	}
+
+	baseURL, _ := req.Credentials["base_url"].(string)
+	apiKey, _ := req.Credentials["api_key"].(string)
+	if strings.TrimSpace(baseURL) == "" || strings.TrimSpace(apiKey) == "" {
+		response.BadRequest(c, "Missing base_url or api_key in request credentials")
+		return
+	}
+
+	var models interface{}
+	var fetchErr error
+	switch req.Platform {
+	case service.PlatformOpenAI:
+		models, fetchErr = h.fetchOpenAIModels(c.Request.Context(), baseURL, apiKey)
+	case service.PlatformGemini:
+		models, fetchErr = h.fetchGeminiModels(c.Request.Context(), baseURL, apiKey)
+	case service.PlatformAnthropic:
+		response.BadRequest(c, "Anthropic accounts don't support fetching models from upstream")
+		return
+	default:
+		response.BadRequest(c, "Unsupported platform for model fetching")
+		return
+	}
+	if fetchErr != nil {
+		response.InternalError(c, "Failed to fetch models from upstream: "+fetchErr.Error())
+		return
+	}
+	response.Success(c, models)
+}
+
+// FetchModelsFromUpstream handles fetching models from the account's actual API endpoint
+// GET /api/v1/admin/accounts/:id/models/fetch
+func (h *AccountHandler) FetchModelsFromUpstream(c *gin.Context) {
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+
+	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
+	if err != nil {
+		response.NotFound(c, "Account not found")
+		return
+	}
+
+	// Only support API Key accounts
+	if account.Type != service.AccountTypeAPIKey {
+		response.BadRequest(c, "Only API Key accounts support fetching models from upstream")
+		return
+	}
+
+	// Get base URL and API key from credentials
+	baseURL := account.GetCredential("base_url")
+	apiKey := account.GetCredential("api_key")
+
+	if baseURL == "" || apiKey == "" {
+		response.BadRequest(c, "Missing base_url or api_key in account credentials")
+		return
+	}
+
+	// Fetch models from upstream based on platform
+	var models interface{}
+	var fetchErr error
+
+	switch account.Platform {
+	case service.PlatformOpenAI:
+		models, fetchErr = h.fetchOpenAIModels(c.Request.Context(), baseURL, apiKey)
+	case service.PlatformAnthropic:
+		// Anthropic doesn't have a /v1/models endpoint, return default
+		response.BadRequest(c, "Anthropic accounts don't support fetching models from upstream")
+		return
+	case service.PlatformGemini:
+		models, fetchErr = h.fetchGeminiModels(c.Request.Context(), baseURL, apiKey)
+	default:
+		response.BadRequest(c, "Unsupported platform for model fetching")
+		return
+	}
+
+	if fetchErr != nil {
+		response.InternalError(c, "Failed to fetch models from upstream: "+fetchErr.Error())
+		return
+	}
+
+	response.Success(c, models)
+}
+
+// fetchOpenAIModels fetches models from OpenAI-compatible API
+func (h *AccountHandler) fetchOpenAIModels(ctx context.Context, baseURL, apiKey string) ([]openai.Model, error) {
+	modelsURL := normalizeOpenAIModelsURL(baseURL)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", modelsURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("upstream returned status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Data []openai.Model `json:"data"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	return result.Data, nil
+}
+
+// fetchGeminiModels fetches models from Gemini API
+func (h *AccountHandler) fetchGeminiModels(ctx context.Context, baseURL, apiKey string) ([]geminicli.Model, error) {
+	modelsURL := normalizeGeminiModelsURL(baseURL, apiKey)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", modelsURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("upstream returned status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Models []struct {
+			Name        string `json:"name"`
+			DisplayName string `json:"displayName"`
+		} `json:"models"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	models := make([]geminicli.Model, 0, len(result.Models))
+	for _, model := range result.Models {
+		id := strings.TrimPrefix(strings.TrimSpace(model.Name), "models/")
+		if id == "" {
+			continue
+		}
+		displayName := strings.TrimSpace(model.DisplayName)
+		if displayName == "" {
+			displayName = id
+		}
+		models = append(models, geminicli.Model{
+			ID:          id,
+			Type:        "model",
+			DisplayName: displayName,
+			CreatedAt:   "",
+		})
+	}
+
+	return models, nil
+}
+
 // GetAvailableModels handles getting available models for an account
 // GET /api/v1/admin/accounts/:id/models
 func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
