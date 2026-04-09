@@ -79,6 +79,9 @@ func ChatCompletionsToResponses(req *ChatCompletionsRequest) (*ResponsesRequest,
 		}
 		out.ToolChoice = tc
 	}
+	if len(out.ToolChoice) > 0 && len(out.Tools) == 0 && toolChoiceRequiresTools(out.ToolChoice) {
+		return nil, fmt.Errorf("tool_choice was provided, but no valid function tools could be normalized from the request")
+	}
 
 	return out, nil
 }
@@ -438,4 +441,21 @@ func convertChatFunctionCallToToolChoice(raw json.RawMessage) (json.RawMessage, 
 		"type":     "function",
 		"function": map[string]string{"name": obj.Name},
 	})
+}
+
+func toolChoiceRequiresTools(raw json.RawMessage) bool {
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		s = strings.TrimSpace(strings.ToLower(s))
+		return s != "" && s != "none"
+	}
+
+	var obj struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(raw, &obj); err == nil {
+		return strings.TrimSpace(strings.ToLower(obj.Type)) != "none"
+	}
+
+	return true
 }

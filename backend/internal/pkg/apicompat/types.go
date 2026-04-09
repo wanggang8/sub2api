@@ -396,6 +396,58 @@ type ChatTool struct {
 	Function *ChatFunction `json:"function,omitempty"`
 }
 
+// UnmarshalJSON accepts both standard OpenAI function tools and shorthand
+// tool definitions used by Cursor/Codex-style clients.
+func (t *ChatTool) UnmarshalJSON(data []byte) error {
+	type rawChatTool ChatTool
+
+	var raw rawChatTool
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if raw.Function != nil {
+		if raw.Type == "" {
+			raw.Type = "function"
+		}
+		*t = ChatTool(raw)
+		return nil
+	}
+	if raw.Type != "" {
+		*t = ChatTool(raw)
+		return nil
+	}
+
+	var shorthand struct {
+		Name        string          `json:"name"`
+		Description string          `json:"description,omitempty"`
+		Parameters  json.RawMessage `json:"parameters,omitempty"`
+		Strict      *bool           `json:"strict,omitempty"`
+	}
+	if err := json.Unmarshal(data, &shorthand); err != nil {
+		return err
+	}
+	if shorthand.Name == "" {
+		*t = ChatTool(raw)
+		return nil
+	}
+
+	params := shorthand.Parameters
+	if len(params) == 0 {
+		params = json.RawMessage(`{"type":"object","properties":{}}`)
+	}
+
+	*t = ChatTool{
+		Type: "function",
+		Function: &ChatFunction{
+			Name:        shorthand.Name,
+			Description: shorthand.Description,
+			Parameters:  params,
+			Strict:      shorthand.Strict,
+		},
+	}
+	return nil
+}
+
 // ChatFunction describes a function tool definition.
 type ChatFunction struct {
 	Name        string          `json:"name"`

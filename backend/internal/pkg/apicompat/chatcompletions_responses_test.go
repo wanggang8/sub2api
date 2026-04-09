@@ -113,6 +113,66 @@ func TestChatCompletionsToResponses_ToolCalls(t *testing.T) {
 	assert.Equal(t, "ping", resp.Tools[0].Name)
 }
 
+func TestChatCompletionsToResponses_ShorthandToolsJSON(t *testing.T) {
+	var req ChatCompletionsRequest
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"model": "CM-opus4.5",
+		"tools": [
+			{
+				"name": "Shell",
+				"description": "Executes shell commands."
+			}
+		],
+		"messages": [
+			{
+				"role": "user",
+				"content": "whoami"
+			}
+		],
+		"tool_choice": {
+			"type": "auto"
+		}
+	}`), &req))
+
+	resp, err := ChatCompletionsToResponses(&req)
+	require.NoError(t, err)
+	require.Len(t, resp.Tools, 1)
+	assert.Equal(t, "function", resp.Tools[0].Type)
+	assert.Equal(t, "Shell", resp.Tools[0].Name)
+	assert.Equal(t, "Executes shell commands.", resp.Tools[0].Description)
+	assert.JSONEq(t, `{"type":"object","properties":{}}`, string(resp.Tools[0].Parameters))
+
+	var tc map[string]any
+	require.NoError(t, json.Unmarshal(resp.ToolChoice, &tc))
+	assert.Equal(t, "auto", tc["type"])
+}
+
+func TestChatCompletionsToResponses_ToolChoiceWithoutValidToolsReturnsError(t *testing.T) {
+	var req ChatCompletionsRequest
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"model": "CM-opus4.5",
+		"tools": [
+			{
+				"type": "web_search"
+			}
+		],
+		"messages": [
+			{
+				"role": "user",
+				"content": "whoami"
+			}
+		],
+		"tool_choice": {
+			"type": "auto"
+		}
+	}`), &req))
+
+	resp, err := ChatCompletionsToResponses(&req)
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Contains(t, err.Error(), "tool_choice was provided")
+}
+
 func TestChatCompletionsToResponses_MaxTokens(t *testing.T) {
 	t.Run("max_tokens", func(t *testing.T) {
 		maxTokens := 100
