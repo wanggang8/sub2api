@@ -1285,6 +1285,43 @@ func TestOpenAIStreamingPassthroughResponseDoneWithoutDoneMarkerStillSucceeds(t 
 	require.Equal(t, 1, result.usage.CacheReadInputTokens)
 }
 
+func TestOpenAIStreamingPassthroughChatCompletionsFinalChunkExtractsUsage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			MaxLineSize: defaultMaxLineSize,
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	pr, pw := io.Pipe()
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       pr,
+		Header:     http.Header{},
+	}
+
+	go func() {
+		defer func() { _ = pw.Close() }()
+		_, _ = pw.Write([]byte("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}\n\n"))
+		_, _ = pw.Write([]byte("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":6,\"prompt_tokens_details\":{\"cached_tokens\":2}}}\n\n"))
+		_, _ = pw.Write([]byte("data: [DONE]\n\n"))
+	}()
+
+	result, err := svc.handleStreamingResponsePassthrough(c.Request.Context(), resp, c, &Account{ID: 1}, time.Now())
+	_ = pr.Close()
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.usage)
+	require.Equal(t, 12, result.usage.InputTokens)
+	require.Equal(t, 6, result.usage.OutputTokens)
+	require.Equal(t, 2, result.usage.CacheReadInputTokens)
+}
+
 func TestOpenAIStreamingTooLong(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{
@@ -2156,6 +2193,20 @@ func TestParseSSEUsage_SelectiveParsing(t *testing.T) {
 	require.Equal(t, 13, usage.InputTokens)
 	require.Equal(t, 15, usage.OutputTokens)
 	require.Equal(t, 4, usage.CacheReadInputTokens)
+
+	// 直连 chat.completions 的最终 chunk 可能在顶层 usage 里返回 prompt/completion tokens
+	svc.parseSSEUsage(`{"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":21,"completion_tokens":34,"prompt_tokens_details":{"cached_tokens":5}}}`, usage)
+	require.Equal(t, 21, usage.InputTokens)
+	require.Equal(t, 34, usage.OutputTokens)
+	require.Equal(t, 5, usage.CacheReadInputTokens)
+}
+
+func TestExtractOpenAIUsageFromJSONBytes_SupportsChatCompletionsUsage(t *testing.T) {
+	usage, ok := extractOpenAIUsageFromJSONBytes([]byte(`{"id":"chatcmpl-1","object":"chat.completion","usage":{"prompt_tokens":11,"completion_tokens":17,"prompt_tokens_details":{"cached_tokens":3}}}`))
+	require.True(t, ok)
+	require.Equal(t, 11, usage.InputTokens)
+	require.Equal(t, 17, usage.OutputTokens)
+	require.Equal(t, 3, usage.CacheReadInputTokens)
 }
 
 func TestExtractCodexFinalResponse_SampleReplay(t *testing.T) {

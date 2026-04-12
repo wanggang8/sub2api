@@ -3956,35 +3956,44 @@ func (s *OpenAIGatewayService) parseSSEUsageBytes(data []byte, usage *OpenAIUsag
 	if usage == nil || len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
 		return
 	}
-	// 选择性解析：仅在数据中包含终止事件标识时才进入字段提取。
-	if len(data) < 72 {
-		return
-	}
 	eventType := gjson.GetBytes(data, "type").String()
-	if eventType != "response.completed" && eventType != "response.done" {
+	if eventType == "response.completed" || eventType == "response.done" {
+		if parsed, ok := extractOpenAIUsageFromJSONBytes(data); ok {
+			*usage = parsed
+		}
 		return
 	}
-
-	usage.InputTokens = int(gjson.GetBytes(data, "response.usage.input_tokens").Int())
-	usage.OutputTokens = int(gjson.GetBytes(data, "response.usage.output_tokens").Int())
-	usage.CacheReadInputTokens = int(gjson.GetBytes(data, "response.usage.input_tokens_details.cached_tokens").Int())
+	if !gjson.GetBytes(data, "usage").Exists() {
+		return
+	}
+	if parsed, ok := extractOpenAIUsageFromJSONBytes(data); ok {
+		*usage = parsed
+	}
 }
 
 func extractOpenAIUsageFromJSONBytes(body []byte) (OpenAIUsage, bool) {
 	if len(body) == 0 || !gjson.ValidBytes(body) {
 		return OpenAIUsage{}, false
 	}
-	values := gjson.GetManyBytes(
-		body,
-		"usage.input_tokens",
-		"usage.output_tokens",
-		"usage.input_tokens_details.cached_tokens",
-	)
-	return OpenAIUsage{
-		InputTokens:          int(values[0].Int()),
-		OutputTokens:         int(values[1].Int()),
-		CacheReadInputTokens: int(values[2].Int()),
-	}, true
+	for _, paths := range [][]string{
+		{"response.usage.input_tokens", "response.usage.output_tokens", "response.usage.input_tokens_details.cached_tokens"},
+		{"usage.input_tokens", "usage.output_tokens", "usage.input_tokens_details.cached_tokens"},
+		{"usage.prompt_tokens", "usage.completion_tokens", "usage.prompt_tokens_details.cached_tokens"},
+	} {
+		values := gjson.GetManyBytes(body, paths...)
+		if len(values) != 3 {
+			continue
+		}
+		if !values[0].Exists() && !values[1].Exists() && !values[2].Exists() {
+			continue
+		}
+		return OpenAIUsage{
+			InputTokens:          int(values[0].Int()),
+			OutputTokens:         int(values[1].Int()),
+			CacheReadInputTokens: int(values[2].Int()),
+		}, true
+	}
+	return OpenAIUsage{}, false
 }
 
 func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, originalModel, mappedModel string) (*OpenAIUsage, error) {
