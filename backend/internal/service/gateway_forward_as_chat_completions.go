@@ -21,6 +21,94 @@ import (
 	"go.uber.org/zap"
 )
 
+func isCursorAnthropicChatCompletionsPath(path string) bool {
+	normalized := strings.TrimRight(strings.TrimSpace(path), "/")
+	return normalized == "/cursor/v1/chat/completions"
+}
+
+func injectCursorAnthropicHistoryCacheControl(body []byte) []byte {
+	if len(body) == 0 {
+		return body
+	}
+
+	out := body
+	system := gjson.GetBytes(out, "system")
+	switch {
+	case system.Type == gjson.String:
+		if text := strings.TrimSpace(system.String()); text != "" {
+			raw, err := json.Marshal([]anthropicSystemTextBlockPayload{{
+				Type:         "text",
+				Text:         text,
+				CacheControl: &anthropicCacheControlPayload{Type: "ephemeral"},
+			}})
+			if err == nil {
+				if next, ok := setJSONRawBytes(out, "system", raw); ok {
+					out = next
+				}
+			}
+		}
+	case system.IsArray():
+		index := 0
+		system.ForEach(func(_, item gjson.Result) bool {
+			if item.Get("type").String() == "text" && !item.Get("cache_control").Exists() {
+				if next, ok := setJSONValueBytes(out, fmt.Sprintf("system.%d.cache_control", index), map[string]string{"type": "ephemeral"}); ok {
+					out = next
+				}
+			}
+			index++
+			return true
+		})
+	}
+
+	messages := gjson.GetBytes(out, "messages")
+	msgArray := messages.Array()
+	for msgIndex, msg := range msgArray {
+		content := msg.Get("content")
+		switch {
+		case content.Type == gjson.String:
+			if msgIndex >= len(msgArray)-1 {
+				continue
+			}
+			if text := strings.TrimSpace(content.String()); text != "" {
+				raw, err := json.Marshal([]map[string]any{{
+					"type":          "text",
+					"text":          text,
+					"cache_control": map[string]string{"type": "ephemeral"},
+				}})
+				if err == nil {
+					if next, ok := setJSONRawBytes(out, fmt.Sprintf("messages.%d.content", msgIndex), raw); ok {
+						out = next
+					}
+				}
+			}
+		case content.IsArray():
+			contentArray := content.Array()
+			lastTextIndex := -1
+			for idx, item := range contentArray {
+				if item.Get("type").String() == "text" {
+					lastTextIndex = idx
+				}
+			}
+			contentIndex := 0
+			content.ForEach(func(_, item gjson.Result) bool {
+				if msgIndex >= len(msgArray)-1 && contentIndex == lastTextIndex {
+					contentIndex++
+					return true
+				}
+				if item.Get("type").String() == "text" && !item.Get("cache_control").Exists() {
+					if next, ok := setJSONValueBytes(out, fmt.Sprintf("messages.%d.content.%d.cache_control", msgIndex, contentIndex), map[string]string{"type": "ephemeral"}); ok {
+						out = next
+					}
+				}
+				contentIndex++
+				return true
+			})
+		}
+	}
+
+	return enforceCacheControlLimit(out)
+}
+
 // ForwardAsChatCompletions accepts an OpenAI Chat Completions API request body,
 // converts it to Anthropic Messages format (chained via Responses format),
 // forwards to the Anthropic upstream, and converts the response back to Chat
@@ -99,6 +187,10 @@ func (s *GatewayService) ForwardAsChatCompletions(
 			!systemIncludesClaudeCodePrompt(anthropicReq.System) {
 			anthropicBody = injectClaudeCodePrompt(anthropicBody, anthropicReq.System)
 		}
+	}
+
+	if c != nil && c.Request != nil && isCursorAnthropicChatCompletionsPath(c.Request.URL.Path) {
+		anthropicBody = injectCursorAnthropicHistoryCacheControl(anthropicBody)
 	}
 
 	// 7. Enforce cache_control block limit

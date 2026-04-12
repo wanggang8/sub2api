@@ -3891,7 +3891,8 @@ func enforceCacheControlLimit(body []byte) []byte {
 
 	// 超限：优先从 messages 中移除，再从 system 中移除
 	remaining := count - maxCacheControlBlocks
-	for _, path := range messagePaths {
+	for i := len(messagePaths) - 1; i >= 0; i-- {
+		path := messagePaths[i]
 		if remaining <= 0 {
 			break
 		}
