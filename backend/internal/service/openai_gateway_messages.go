@@ -17,13 +17,28 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 	"go.uber.org/zap"
 )
 
-// ForwardAsAnthropic accepts an Anthropic Messages request body, converts it
-// to OpenAI Responses API format, forwards to the OpenAI upstream, and converts
-// the response back to Anthropic Messages format. This enables Claude Code
-// clients to access OpenAI models through the standard /v1/messages endpoint.
+func claudeUsageToOpenAIUsage(usage *ClaudeUsage) OpenAIUsage {
+	if usage == nil {
+		return OpenAIUsage{}
+	}
+	return OpenAIUsage{
+		InputTokens:              usage.InputTokens,
+		OutputTokens:             usage.OutputTokens,
+		CacheCreationInputTokens: usage.CacheCreationInputTokens,
+		CacheReadInputTokens:     usage.CacheReadInputTokens,
+		ImageOutputTokens:        usage.ImageOutputTokens,
+	}
+}
+
+// ForwardAsAnthropic accepts an Anthropic Messages request body and forwards it
+// to an OpenAI-compatible upstream. Depending on the selected account's
+// declared upstream capabilities, it either uses the legacy Responses API
+// conversion path or a direct /v1/messages upstream path.
 func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	ctx context.Context,
 	c *gin.Context,
@@ -60,6 +75,12 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		responsesReq.ServiceTier = "priority"
 	}
 
+	if strings.TrimSpace(promptCacheKey) == "" {
+		if userID := strings.TrimSpace(gjson.GetBytes(body, "metadata.user_id").String()); userID != "" {
+			promptCacheKey = GenerateSessionUUID(normalizedModel + "-" + userID)
+		}
+	}
+
 	// 3. Model mapping
 	billingModel := resolveOpenAIForwardModel(account, normalizedModel, defaultMappedModel)
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
@@ -73,6 +94,14 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		zap.String("upstream_model", upstreamModel),
 		zap.Bool("stream", isStream),
 	)
+	normalizedModelForTemplate := normalizedModel
+
+	if account.IsOpenAIApiKey() && account.SupportsOpenAIMessagesUpstream() {
+		if c != nil {
+			c.Set("openai_upstream_endpoint_override", "/v1/messages")
+		}
+		return s.forwardOpenAIMessagesDirect(ctx, c, account, body, originalModel, billingModel, upstreamModel, promptCacheKey, startTime)
+	}
 
 	// 4. Marshal Responses request body, then apply OAuth codex transform
 	responsesBody, err := json.Marshal(responsesReq)
@@ -86,31 +115,26 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 			return nil, fmt.Errorf("unmarshal for codex transform: %w", err)
 		}
 		codexResult := applyCodexOAuthTransform(reqBody, false, false)
-		forcedTemplateText := ""
-		if s.cfg != nil {
-			forcedTemplateText = s.cfg.Gateway.ForcedCodexInstructionsTemplate
-		}
-		templateUpstreamModel := upstreamModel
-		if codexResult.NormalizedModel != "" {
-			templateUpstreamModel = codexResult.NormalizedModel
-		}
-		existingInstructions, _ := reqBody["instructions"].(string)
-		if _, err := applyForcedCodexInstructionsTemplate(reqBody, forcedTemplateText, forcedCodexInstructionsTemplateData{
-			ExistingInstructions: strings.TrimSpace(existingInstructions),
-			OriginalModel:        originalModel,
-			NormalizedModel:      normalizedModel,
-			BillingModel:         billingModel,
-			UpstreamModel:        templateUpstreamModel,
-		}); err != nil {
-			return nil, err
-		}
 		if codexResult.NormalizedModel != "" {
 			upstreamModel = codexResult.NormalizedModel
+			normalizedModelForTemplate = codexResult.NormalizedModel
 		}
 		if codexResult.PromptCacheKey != "" {
 			promptCacheKey = codexResult.PromptCacheKey
 		} else if promptCacheKey != "" {
 			reqBody["prompt_cache_key"] = promptCacheKey
+		}
+		forcedTemplateText := ""
+		if s.cfg != nil {
+			forcedTemplateText = s.cfg.Gateway.ForcedCodexInstructionsTemplate
+		}
+		if _, err := applyForcedCodexInstructionsTemplateIfNeeded(c, reqBody, forcedTemplateText, forcedCodexInstructionsTemplateData{
+			OriginalModel:   originalModel,
+			NormalizedModel: normalizedModelForTemplate,
+			BillingModel:    billingModel,
+			UpstreamModel:   upstreamModel,
+		}); err != nil {
+			return nil, err
 		}
 		// OAuth codex transform forces stream=true upstream, so always use
 		// the streaming response handler regardless of what the client asked.
@@ -118,6 +142,28 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		responsesBody, err = json.Marshal(reqBody)
 		if err != nil {
 			return nil, fmt.Errorf("remarshal after codex transform: %w", err)
+		}
+	}
+	if account.Type != AccountTypeOAuth {
+		var reqBody map[string]any
+		if err := json.Unmarshal(responsesBody, &reqBody); err != nil {
+			return nil, fmt.Errorf("unmarshal for responses template patch: %w", err)
+		}
+		forcedTemplateText := ""
+		if s.cfg != nil {
+			forcedTemplateText = s.cfg.Gateway.ForcedCodexInstructionsTemplate
+		}
+		if _, err := applyForcedCodexInstructionsTemplateIfNeeded(c, reqBody, forcedTemplateText, forcedCodexInstructionsTemplateData{
+			OriginalModel:   originalModel,
+			NormalizedModel: normalizedModelForTemplate,
+			BillingModel:    billingModel,
+			UpstreamModel:   upstreamModel,
+		}); err != nil {
+			return nil, err
+		}
+		responsesBody, err = json.Marshal(reqBody)
+		if err != nil {
+			return nil, fmt.Errorf("remarshal after responses template patch: %w", err)
 		}
 	}
 
@@ -233,6 +279,236 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	}
 
 	return result, handleErr
+}
+
+func (s *OpenAIGatewayService) forwardOpenAIMessagesDirect(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	body []byte,
+	originalModel string,
+	billingModel string,
+	upstreamModel string,
+	promptCacheKey string,
+	startTime time.Time,
+) (*OpenAIForwardResult, error) {
+	forwardBody := body
+	if upstreamModel != "" && upstreamModel != originalModel {
+		if patched, err := sjson.SetBytes(forwardBody, "model", upstreamModel); err == nil {
+			forwardBody = patched
+		}
+	}
+	if strings.TrimSpace(promptCacheKey) != "" {
+		if patched, err := sjson.SetBytes(forwardBody, "prompt_cache_key", promptCacheKey); err == nil {
+			forwardBody = patched
+		}
+	}
+
+	token, _, err := s.GetAccessToken(ctx, account)
+	if err != nil {
+		return nil, fmt.Errorf("get access token: %w", err)
+	}
+
+	upstreamReq, err := s.buildUpstreamRequestOpenAIPassthrough(ctx, c, account, forwardBody, token, OpenAIUpstreamAPIMessages)
+	if err != nil {
+		return nil, fmt.Errorf("build upstream request: %w", err)
+	}
+
+	proxyURL := ""
+	if account.Proxy != nil {
+		proxyURL = account.Proxy.URL()
+	}
+
+	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, UpstreamTLSOptionsFromAccount(account, nil))
+	if err != nil {
+		safeErr := sanitizeUpstreamErrorMessage(err.Error())
+		setOpsUpstreamError(c, 0, safeErr, "")
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			Platform:           account.Platform,
+			AccountID:          account.ID,
+			AccountName:        account.Name,
+			UpstreamStatusCode: 0,
+			Kind:               "request_error",
+			Message:            safeErr,
+		})
+		writeAnthropicError(c, http.StatusBadGateway, "api_error", "Upstream request failed")
+		return nil, fmt.Errorf("upstream request failed: %s", safeErr)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= 400 {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+		_ = resp.Body.Close()
+		resp.Body = io.NopCloser(bytes.NewReader(respBody))
+
+		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
+		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
+			upstreamDetail := ""
+			if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+				maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
+				if maxBytes <= 0 {
+					maxBytes = 2048
+				}
+				upstreamDetail = truncateString(string(respBody), maxBytes)
+			}
+			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				Platform:           account.Platform,
+				AccountID:          account.ID,
+				AccountName:        account.Name,
+				UpstreamStatusCode: resp.StatusCode,
+				UpstreamRequestID:  resp.Header.Get("x-request-id"),
+				Kind:               "failover",
+				Message:            upstreamMsg,
+				Detail:             upstreamDetail,
+			})
+			if s.rateLimitService != nil {
+				s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
+			}
+			return nil, &UpstreamFailoverError{
+				StatusCode:             resp.StatusCode,
+				ResponseBody:           respBody,
+				RetryableOnSameAccount: account.IsPoolMode() && (isPoolModeRetryableStatus(resp.StatusCode) || isOpenAITransientProcessingError(resp.StatusCode, upstreamMsg, respBody)),
+			}
+		}
+		return s.handleAnthropicErrorResponse(resp, c, account)
+	}
+
+	var usage *ClaudeUsage
+	var firstTokenMs *int
+	if gjson.GetBytes(forwardBody, "stream").Bool() {
+		streamResult, err := s.handleStreamingResponseAnthropicDirect(ctx, resp, c, account, startTime)
+		if err != nil {
+			return nil, err
+		}
+		usage = streamResult.usage
+		firstTokenMs = streamResult.firstTokenMs
+	} else {
+		usage, err = s.handleNonStreamingResponseAnthropicDirect(ctx, resp, c, account)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &OpenAIForwardResult{
+		RequestID:       resp.Header.Get("x-request-id"),
+		Usage:           claudeUsageToOpenAIUsage(usage),
+		Model:           originalModel,
+		BillingModel:    billingModel,
+		UpstreamModel:   upstreamModel,
+		Stream:          gjson.GetBytes(forwardBody, "stream").Bool(),
+		OpenAIWSMode:    false,
+		Duration:        time.Since(startTime),
+		FirstTokenMs:    firstTokenMs,
+		ResponseHeaders: resp.Header.Clone(),
+	}, nil
+}
+
+func (s *OpenAIGatewayService) handleStreamingResponseAnthropicDirect(
+	ctx context.Context,
+	resp *http.Response,
+	c *gin.Context,
+	account *Account,
+	startTime time.Time,
+) (*streamingResult, error) {
+	writeAnthropicPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+
+	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
+	if contentType == "" {
+		contentType = "text/event-stream"
+	}
+	c.Header("Content-Type", contentType)
+	if c.Writer.Header().Get("Cache-Control") == "" {
+		c.Header("Cache-Control", "no-cache")
+	}
+	if c.Writer.Header().Get("Connection") == "" {
+		c.Header("Connection", "keep-alive")
+	}
+	c.Header("X-Accel-Buffering", "no")
+	if v := resp.Header.Get("x-request-id"); v != "" {
+		c.Header("x-request-id", v)
+	}
+
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		return nil, errors.New("streaming not supported")
+	}
+
+	usage := &ClaudeUsage{}
+	var firstTokenMs *int
+	scanner := bufio.NewScanner(resp.Body)
+	maxLineSize := defaultMaxLineSize
+	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
+		maxLineSize = s.cfg.Gateway.MaxLineSize
+	}
+	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
+
+	clientDisconnected := false
+	sawTerminalEvent := false
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "data: ") {
+			data := strings.TrimSpace(strings.TrimPrefix(line, "data: "))
+			if firstTokenMs == nil && data != "" && data != "[DONE]" {
+				ms := int(time.Since(startTime).Milliseconds())
+				firstTokenMs = &ms
+			}
+			var event apicompat.AnthropicStreamEvent
+			if err := json.Unmarshal([]byte(data), &event); err == nil {
+				if event.Type == "message_start" && event.Message != nil {
+					mergeAnthropicUsage(usage, event.Message.Usage)
+				}
+				if event.Type == "message_delta" && event.Usage != nil {
+					mergeAnthropicUsage(usage, *event.Usage)
+				}
+			}
+			if strings.Contains(data, `"type":"message_stop"`) || data == "[DONE]" {
+				sawTerminalEvent = true
+			}
+		}
+		if !clientDisconnected {
+			if _, err := fmt.Fprintln(c.Writer, line); err != nil {
+				clientDisconnected = true
+			} else {
+				flusher.Flush()
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil && !clientDisconnected {
+		return nil, err
+	}
+	if !clientDisconnected && !sawTerminalEvent && ctx.Err() == nil {
+		return nil, errors.New("stream usage incomplete: missing terminal event")
+	}
+	return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, nil
+}
+
+func (s *OpenAIGatewayService) handleNonStreamingResponseAnthropicDirect(
+	ctx context.Context,
+	resp *http.Response,
+	c *gin.Context,
+	account *Account,
+) (*ClaudeUsage, error) {
+	_ = ctx
+	_ = account
+	maxBytes := resolveUpstreamResponseReadLimit(s.cfg)
+	body, err := readUpstreamResponseBodyLimited(resp.Body, maxBytes)
+	if err != nil {
+		if errors.Is(err, ErrUpstreamResponseBodyTooLarge) {
+			setOpsUpstreamError(c, http.StatusBadGateway, "upstream response too large", "")
+			writeAnthropicError(c, http.StatusBadGateway, "api_error", "Upstream response too large")
+		}
+		return nil, err
+	}
+
+	usage := parseClaudeUsageFromResponseBody(body)
+	writeAnthropicPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	c.Data(resp.StatusCode, contentType, body)
+	return usage, nil
 }
 
 // handleAnthropicErrorResponse reads an upstream error and returns it in

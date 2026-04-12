@@ -2296,6 +2296,16 @@ export default {
           'Only applies to OpenAI API Key. This account can use OpenAI WebSocket Mode only when enabled.',
         responsesWebsocketsV2PassthroughHint:
           'Automatic passthrough is currently enabled: it only affects HTTP passthrough and does not disable WS mode.',
+        upstreamCapabilities: 'Upstream API Capabilities',
+        upstreamCapabilitiesDesc:
+          'Declare which upstream APIs this OpenAI account actually supports so routing can select a compatible endpoint.',
+        upstreamPresetStandard: 'Standard OpenAI',
+        upstreamPresetChatOnly: 'Chat Only',
+        upstreamPresetChatMessages: 'Chat + Messages',
+        supportsResponsesApi: 'Supports Responses API',
+        supportsChatCompletionsApi: 'Supports Chat Completions API',
+        supportsMessagesApi: 'Supports Messages API',
+        upstreamCapabilityRequired: 'Enable at least one OpenAI upstream API capability.',
         codexCLIOnly: 'Codex official clients only',
         codexCLIOnlyDesc:
           'Only applies to OpenAI OAuth. When enabled, only Codex official client families are allowed; when disabled, the gateway bypasses this restriction and keeps existing behavior.',

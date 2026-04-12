@@ -2436,6 +2436,43 @@
         </div>
       </div>
 
+      <div
+        v-if="form.platform === 'openai' && accountCategory === 'apikey' && hasOpenAICustomBaseURLConfigured"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600 space-y-3"
+      >
+        <div>
+          <label class="input-label mb-0">{{ t('admin.accounts.openai.upstreamCapabilities') }}</label>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            {{ t('admin.accounts.openai.upstreamCapabilitiesDesc') }}
+          </p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <button
+            v-for="preset in openAIUpstreamCapabilityPresets"
+            :key="preset.value"
+            type="button"
+            class="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 dark:border-dark-600 dark:text-gray-300 dark:hover:bg-dark-700"
+            @click="preset.apply()"
+          >
+            {{ preset.label }}
+          </button>
+        </div>
+        <div class="grid gap-3 sm:grid-cols-3">
+          <label class="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm dark:border-dark-600">
+            <input v-model="openaiUpstreamSupportsResponses" type="checkbox" class="rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500" />
+            <span>{{ t('admin.accounts.openai.supportsResponsesApi') }}</span>
+          </label>
+          <label class="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm dark:border-dark-600">
+            <input v-model="openaiUpstreamSupportsChatCompletions" type="checkbox" class="rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500" />
+            <span>{{ t('admin.accounts.openai.supportsChatCompletionsApi') }}</span>
+          </label>
+          <label class="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm dark:border-dark-600">
+            <input v-model="openaiUpstreamSupportsMessages" type="checkbox" class="rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500" />
+            <span>{{ t('admin.accounts.openai.supportsMessagesApi') }}</span>
+          </label>
+        </div>
+      </div>
+
       <!-- Anthropic API Key 自动透传开关 -->
       <div
         v-if="form.platform === 'anthropic' && accountCategory === 'apikey'"
@@ -3151,6 +3188,9 @@ const openaiPassthroughEnabled = ref(false)
 const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const codexCLIOnlyEnabled = ref(false)
+const openaiUpstreamSupportsResponses = ref(true)
+const openaiUpstreamSupportsChatCompletions = ref(true)
+const openaiUpstreamSupportsMessages = ref(false)
 const anthropicPassthroughEnabled = ref(false)
 const mixedScheduling = ref(false) // For antigravity accounts: enable mixed scheduling
 const allowOverages = ref(false) // For antigravity accounts: enable AI Credits overages
@@ -3266,6 +3306,57 @@ const openaiResponsesWebSocketV2Mode = computed({
 const openAIWSModeConcurrencyHintKey = computed(() =>
   resolveOpenAIWSModeConcurrencyHintKey(openaiResponsesWebSocketV2Mode.value)
 )
+
+const isOfficialOpenAIBaseURL = (value: string): boolean => {
+  const trimmed = value.trim()
+  if (!trimmed) {
+    return false
+  }
+  try {
+    const parsed = new URL(trimmed)
+    return parsed.protocol === 'https:' && parsed.hostname.toLowerCase() === 'api.openai.com'
+  } catch {
+    const normalized = trimmed.toLowerCase().replace(/\/+$/, '')
+    return normalized === 'https://api.openai.com' || normalized === 'https://api.openai.com/v1'
+  }
+}
+
+const hasOpenAICustomBaseURLConfigured = computed(() =>
+  form.platform === 'openai' &&
+  accountCategory.value === 'apikey' &&
+  apiKeyBaseUrl.value.trim().length > 0 &&
+  !isOfficialOpenAIBaseURL(apiKeyBaseUrl.value)
+)
+
+const openAIUpstreamCapabilityPresets = computed(() => [
+  {
+    value: 'standard',
+    label: t('admin.accounts.openai.upstreamPresetStandard'),
+    apply: () => {
+      openaiUpstreamSupportsResponses.value = true
+      openaiUpstreamSupportsChatCompletions.value = true
+      openaiUpstreamSupportsMessages.value = false
+    }
+  },
+  {
+    value: 'chat_only',
+    label: t('admin.accounts.openai.upstreamPresetChatOnly'),
+    apply: () => {
+      openaiUpstreamSupportsResponses.value = false
+      openaiUpstreamSupportsChatCompletions.value = true
+      openaiUpstreamSupportsMessages.value = false
+    }
+  },
+  {
+    value: 'chat_messages',
+    label: t('admin.accounts.openai.upstreamPresetChatMessages'),
+    apply: () => {
+      openaiUpstreamSupportsResponses.value = false
+      openaiUpstreamSupportsChatCompletions.value = true
+      openaiUpstreamSupportsMessages.value = true
+    }
+  }
+])
 
 const isOpenAIModelRestrictionDisabled = computed(() =>
   form.platform === 'openai' && openaiPassthroughEnabled.value
@@ -3478,6 +3569,9 @@ watch(
       openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
       openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
       codexCLIOnlyEnabled.value = false
+      openaiUpstreamSupportsResponses.value = true
+      openaiUpstreamSupportsChatCompletions.value = true
+      openaiUpstreamSupportsMessages.value = false
     }
     if (newPlatform !== 'anthropic') {
       anthropicPassthroughEnabled.value = false
@@ -3955,6 +4049,9 @@ const resetForm = () => {
   openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   codexCLIOnlyEnabled.value = false
+  openaiUpstreamSupportsResponses.value = true
+  openaiUpstreamSupportsChatCompletions.value = true
+  openaiUpstreamSupportsMessages.value = false
   anthropicPassthroughEnabled.value = false
   // Reset quota control state
   windowCostEnabled.value = false
@@ -4022,6 +4119,15 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
   } else {
     delete extra.openai_passthrough
     delete extra.openai_oauth_passthrough
+  }
+  if (hasOpenAICustomBaseURLConfigured.value) {
+    extra.openai_upstream_supports_responses = openaiUpstreamSupportsResponses.value
+    extra.openai_upstream_supports_chat_completions = openaiUpstreamSupportsChatCompletions.value
+    extra.openai_upstream_supports_messages = openaiUpstreamSupportsMessages.value
+  } else {
+    delete extra.openai_upstream_supports_responses
+    delete extra.openai_upstream_supports_chat_completions
+    delete extra.openai_upstream_supports_messages
   }
 
   if (accountCategory.value === 'oauth-based' && codexCLIOnlyEnabled.value) {
@@ -4106,6 +4212,14 @@ const normalizePoolModeRetryCount = (value: number) => {
 }
 
 const handleSubmit = async () => {
+  if (hasOpenAICustomBaseURLConfigured.value &&
+    !openaiUpstreamSupportsResponses.value &&
+    !openaiUpstreamSupportsChatCompletions.value &&
+    !openaiUpstreamSupportsMessages.value) {
+    appStore.showError(t('admin.accounts.openai.upstreamCapabilityRequired'))
+    return
+  }
+
   // For OAuth-based type, handle OAuth flow (goes to step 2)
   if (isOAuthFlow.value) {
     if (!form.name.trim()) {

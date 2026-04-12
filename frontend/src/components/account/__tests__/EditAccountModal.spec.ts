@@ -114,12 +114,23 @@ function buildAccount() {
     type: 'apikey',
     credentials: {
       api_key: 'sk-test',
-      base_url: 'https://api.openai.com',
+      base_url: 'https://relay.example.com',
       model_mapping: {
         'gpt-5.2': 'gpt-5.2'
       }
     },
-    extra: {},
+    extra: {
+      custom_base_url_enabled: true,
+      custom_base_url: 'https://relay.example.com',
+      openai_upstream_supports_responses: true,
+      openai_upstream_supports_chat_completions: true,
+      openai_upstream_supports_messages: false
+    },
+    openai_upstream_supports_responses: true,
+    openai_upstream_supports_chat_completions: true,
+    openai_upstream_supports_messages: false,
+    custom_base_url_enabled: true,
+    custom_base_url: 'https://relay.example.com',
     proxy_id: null,
     concurrency: 1,
     priority: 1,
@@ -151,6 +162,58 @@ function buildAnthropicOAuthAccount() {
     group_ids: [],
     expires_at: null,
     auto_pause_on_expired: false
+  } as any
+}
+
+function buildOpenAIOAuthAccount() {
+  return {
+    id: 3,
+    name: 'OpenAI OAuth',
+    notes: '',
+    platform: 'openai',
+    type: 'oauth',
+    credentials: {},
+    extra: {},
+    proxy_id: null,
+    concurrency: 1,
+    priority: 1,
+    rate_multiplier: 1,
+    status: 'active',
+    group_ids: [],
+    expires_at: null,
+    auto_pause_on_expired: false
+  } as any
+}
+
+function buildOfficialOpenAIApiKeyAccount() {
+  return {
+    ...buildAccount(),
+    credentials: {
+      api_key: 'sk-test',
+      base_url: 'https://api.openai.com',
+      model_mapping: {
+        'gpt-5.2': 'gpt-5.2'
+      }
+    },
+    extra: {},
+    openai_upstream_supports_responses: true,
+    openai_upstream_supports_chat_completions: false,
+    openai_upstream_supports_messages: false,
+    custom_base_url_enabled: false,
+    custom_base_url: null
+  } as any
+}
+
+function buildOfficialOpenAIV1ApiKeyAccount() {
+  return {
+    ...buildOfficialOpenAIApiKeyAccount(),
+    credentials: {
+      api_key: 'sk-test',
+      base_url: 'https://api.openai.com/v1',
+      model_mapping: {
+        'gpt-5.2': 'gpt-5.2'
+      }
+    }
   } as any
 }
 
@@ -333,5 +396,105 @@ describe('EditAccountModal', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-testid="cursor-session-compat-toggle"]').exists()).toBe(false)
+  })
+
+  it('does not render OpenAI upstream capabilities for oauth accounts', async () => {
+    const account = buildOpenAIOAuthAccount()
+    listTLSFingerprintProfilesMock.mockResolvedValue([])
+
+    const wrapper = mountModal(account)
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('admin.accounts.openai.upstreamCapabilities')
+  })
+
+  it('does not render OpenAI upstream capabilities for official OpenAI api-key accounts', async () => {
+    const account = buildOfficialOpenAIApiKeyAccount()
+    listTLSFingerprintProfilesMock.mockResolvedValue([])
+
+    const wrapper = mountModal(account)
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('admin.accounts.openai.upstreamCapabilities')
+  })
+
+  it('does not render OpenAI upstream capabilities for official OpenAI v1 api-key accounts', async () => {
+    const account = buildOfficialOpenAIV1ApiKeyAccount()
+    listTLSFingerprintProfilesMock.mockResolvedValue([])
+
+    const wrapper = mountModal(account)
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('admin.accounts.openai.upstreamCapabilities')
+  })
+
+  it('persists updated OpenAI upstream capabilities', async () => {
+    const account = buildAccount()
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    listTLSFingerprintProfilesMock.mockReset()
+    listTLSFingerprintProfilesMock.mockResolvedValue([])
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const vm = wrapper.vm as any
+    await flushPromises()
+
+    vm.editBaseUrl = 'https://relay.example.com'
+    vm.openAIUpstreamCapabilityPresets[2].apply()
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_upstream_supports_responses).toBe(false)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_upstream_supports_chat_completions).toBe(true)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_upstream_supports_messages).toBe(true)
+  })
+
+  it('rejects saving when all OpenAI upstream capabilities are disabled', async () => {
+    const account = buildAccount()
+    updateAccountMock.mockReset()
+    showErrorMock.mockReset()
+    listTLSFingerprintProfilesMock.mockResolvedValue([])
+
+    const wrapper = mountModal(account)
+    const vm = wrapper.vm as any
+    await flushPromises()
+
+    vm.editBaseUrl = 'https://relay.example.com'
+    vm.openaiUpstreamSupportsResponses = false
+    vm.openaiUpstreamSupportsChatCompletions = false
+    vm.openaiUpstreamSupportsMessages = false
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).not.toHaveBeenCalled()
+    expect(showErrorMock).toHaveBeenCalled()
+  })
+
+  it('clears OpenAI upstream capabilities when custom base url is disabled', async () => {
+    const account = buildAccount()
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    listTLSFingerprintProfilesMock.mockReset()
+    listTLSFingerprintProfilesMock.mockResolvedValue([])
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const vm = wrapper.vm as any
+    await flushPromises()
+
+    vm.customBaseUrlEnabled = false
+    vm.customBaseUrl = ''
+    vm.editBaseUrl = 'https://api.openai.com'
+    vm.openaiUpstreamSupportsResponses = false
+    vm.openaiUpstreamSupportsChatCompletions = true
+    vm.openaiUpstreamSupportsMessages = true
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_upstream_supports_responses).toBeUndefined()
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_upstream_supports_chat_completions).toBeUndefined()
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_upstream_supports_messages).toBeUndefined()
   })
 })

@@ -1852,7 +1852,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	if passthroughEnabled {
 		// 透传分支只需要轻量提取字段，避免热路径全量 Unmarshal。
 		reasoningEffort := extractOpenAIReasoningEffortFromBody(body, reqModel)
-		return s.forwardOpenAIPassthrough(ctx, c, account, originalBody, reqModel, reasoningEffort, reqStream, startTime)
+		return s.forwardOpenAIPassthrough(ctx, c, account, originalBody, reqModel, reasoningEffort, reqStream, startTime, OpenAIUpstreamAPIResponses)
 	}
 
 	reqBody, err := getOpenAIRequestBodyMap(c, body)
@@ -1962,6 +1962,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 		}
 	}
+	normalizedModelForTemplate := upstreamModel
 
 	// 规范化 reasoning.effort 参数（minimal -> none），与上游允许值对齐。
 	if reasoning, ok := reqBody["reasoning"].(map[string]any); ok {
@@ -1981,10 +1982,26 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 		if codexResult.NormalizedModel != "" {
 			upstreamModel = codexResult.NormalizedModel
+			normalizedModelForTemplate = codexResult.NormalizedModel
 		}
 		if codexResult.PromptCacheKey != "" {
 			promptCacheKey = codexResult.PromptCacheKey
 		}
+	}
+	forcedTemplateText := ""
+	if s.cfg != nil {
+		forcedTemplateText = s.cfg.Gateway.ForcedCodexInstructionsTemplate
+	}
+	if changed, err := applyForcedCodexInstructionsTemplateIfNeeded(c, reqBody, forcedTemplateText, forcedCodexInstructionsTemplateData{
+		OriginalModel:   reqModel,
+		NormalizedModel: normalizedModelForTemplate,
+		BillingModel:    billingModel,
+		UpstreamModel:   upstreamModel,
+	}); err != nil {
+		return nil, err
+	} else if changed {
+		bodyModified = true
+		disablePatch()
 	}
 
 	// Handle max_output_tokens based on platform and account type
@@ -2448,6 +2465,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	reasoningEffort *string,
 	reqStream bool,
 	startTime time.Time,
+	targetAPI OpenAIUpstreamAPI,
 ) (*OpenAIForwardResult, error) {
 	if account != nil && account.Type == AccountTypeOAuth {
 		if rejectReason := detectOpenAIPassthroughInstructionsRejectReason(reqModel, body); rejectReason != "" {
@@ -2490,6 +2508,22 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	if sanitized {
 		body = sanitizedBody
 	}
+	if targetAPI == OpenAIUpstreamAPIResponses || targetAPI == OpenAIUpstreamAPIAny {
+		forcedTemplateText := ""
+		if s.cfg != nil {
+			forcedTemplateText = s.cfg.Gateway.ForcedCodexInstructionsTemplate
+		}
+		if patchedBody, _, err := applyForcedCodexInstructionsTemplateToBodyIfNeeded(c, body, forcedTemplateText, forcedCodexInstructionsTemplateData{
+			OriginalModel:   reqModel,
+			NormalizedModel: reqModel,
+			BillingModel:    reqModel,
+			UpstreamModel:   reqModel,
+		}); err != nil {
+			return nil, err
+		} else {
+			body = patchedBody
+		}
+	}
 
 	logger.LegacyPrintf("service.openai_gateway",
 		"[OpenAI 自动透传] 命中自动透传分支: account=%d name=%s type=%s model=%s stream=%v",
@@ -2521,7 +2555,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	}
 
 	upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, reqStream)
-	upstreamReq, err := s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token)
+	upstreamReq, err := s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token, targetAPI)
 	releaseUpstreamCtx()
 	if err != nil {
 		return nil, err
@@ -2645,6 +2679,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	account *Account,
 	body []byte,
 	token string,
+	targetAPI OpenAIUpstreamAPI,
 ) (*http.Request, error) {
 	targetURL := openaiPlatformAPIURL
 	switch account.Type {
@@ -2657,10 +2692,19 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 			if err != nil {
 				return nil, err
 			}
-			targetURL = buildOpenAIResponsesURL(validatedURL)
+			switch targetAPI {
+			case OpenAIUpstreamAPIChatCompletions:
+				targetURL = buildOpenAIChatCompletionsURL(validatedURL)
+			case OpenAIUpstreamAPIMessages:
+				targetURL = buildOpenAIMessagesURL(validatedURL)
+			default:
+				targetURL = buildOpenAIResponsesURL(validatedURL)
+			}
 		}
 	}
-	targetURL = appendOpenAIResponsesRequestPathSuffix(targetURL, openAIResponsesRequestPathSuffix(c))
+	if targetAPI == OpenAIUpstreamAPIResponses || targetAPI == OpenAIUpstreamAPIAny {
+		targetURL = appendOpenAIResponsesRequestPathSuffix(targetURL, openAIResponsesRequestPathSuffix(c))
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
@@ -2672,7 +2716,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	if c != nil && c.Request != nil {
 		for key, values := range c.Request.Header {
 			lower := strings.ToLower(strings.TrimSpace(key))
-			if !isOpenAIPassthroughAllowedRequestHeader(lower, allowTimeoutHeaders) {
+			if !isOpenAIPassthroughAllowedRequestHeaderForAPI(lower, allowTimeoutHeaders, targetAPI) {
 				continue
 			}
 			for _, v := range values {
@@ -2745,6 +2789,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 
 	if req.Header.Get("content-type") == "" {
 		req.Header.Set("content-type", "application/json")
+	}
+	if targetAPI == OpenAIUpstreamAPIMessages && req.Header.Get("anthropic-version") == "" {
+		req.Header.Set("anthropic-version", "2023-06-01")
 	}
 
 	return req, nil
@@ -2863,6 +2910,20 @@ func isOpenAIPassthroughAllowedRequestHeader(lowerKey string, allowTimeoutHeader
 		return allowTimeoutHeaders
 	}
 	return openaiPassthroughAllowedHeaders[lowerKey]
+}
+
+func isOpenAIPassthroughAllowedRequestHeaderForAPI(lowerKey string, allowTimeoutHeaders bool, targetAPI OpenAIUpstreamAPI) bool {
+	if !isOpenAIPassthroughAllowedRequestHeader(lowerKey, allowTimeoutHeaders) {
+		switch targetAPI {
+		case OpenAIUpstreamAPIMessages:
+			switch lowerKey {
+			case "anthropic-version", "anthropic-beta", "anthropic-dangerous-direct-browser-access", "x-claude-code-session-id":
+				return true
+			}
+		}
+		return false
+	}
+	return true
 }
 
 func isOpenAIPassthroughTimeoutHeader(lowerKey string) bool {
@@ -4199,6 +4260,28 @@ func buildOpenAIResponsesURL(base string) string {
 		return normalized + "/responses"
 	}
 	return normalized + "/v1/responses"
+}
+
+func buildOpenAIChatCompletionsURL(base string) string {
+	normalized := strings.TrimRight(strings.TrimSpace(base), "/")
+	if strings.HasSuffix(normalized, "/chat/completions") {
+		return normalized
+	}
+	if strings.HasSuffix(normalized, "/v1") {
+		return normalized + "/chat/completions"
+	}
+	return normalized + "/v1/chat/completions"
+}
+
+func buildOpenAIMessagesURL(base string) string {
+	normalized := strings.TrimRight(strings.TrimSpace(base), "/")
+	if strings.HasSuffix(normalized, "/messages") {
+		return normalized
+	}
+	if strings.HasSuffix(normalized, "/v1") {
+		return normalized + "/messages"
+	}
+	return normalized + "/v1/messages"
 }
 
 func trimOpenAIEncryptedReasoningItems(reqBody map[string]any) bool {

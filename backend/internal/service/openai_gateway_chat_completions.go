@@ -16,14 +16,14 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/sjson"
 	"go.uber.org/zap"
 )
 
-// ForwardAsChatCompletions accepts a Chat Completions request body, converts it
-// to OpenAI Responses API format, forwards to the OpenAI upstream, and converts
-// the response back to Chat Completions format. All account types (OAuth and API
-// Key) go through the Responses API conversion path since the upstream only
-// exposes the /v1/responses endpoint.
+// ForwardAsChatCompletions accepts a Chat Completions request body and forwards
+// it to an OpenAI-compatible upstream. Depending on the selected account's
+// declared upstream capabilities, it either uses the legacy Responses API
+// conversion path or a direct /v1/chat/completions upstream path.
 func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	ctx context.Context,
 	c *gin.Context,
@@ -77,6 +77,14 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		)
 	}
 	logger.L().Debug("openai chat_completions: model mapping applied", logFields...)
+	normalizedModelForTemplate := upstreamModel
+
+	if account.IsOpenAIApiKey() && !account.SupportsOpenAIResponsesUpstream() && account.SupportsOpenAIChatCompletionsUpstream() {
+		if c != nil {
+			c.Set("openai_upstream_endpoint_override", "/v1/chat/completions")
+		}
+		return s.forwardOpenAIChatCompletionsDirect(ctx, c, account, body, originalModel, billingModel, upstreamModel, promptCacheKey, clientStream, startTime)
+	}
 
 	// 4. Marshal Responses request body, then apply prompt_cache_key patch /
 	// OAuth codex transform when needed.
@@ -97,12 +105,25 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 			codexResult := applyCodexOAuthTransform(reqBody, false, false)
 			if codexResult.NormalizedModel != "" {
 				upstreamModel = codexResult.NormalizedModel
+				normalizedModelForTemplate = codexResult.NormalizedModel
 			}
 			if codexResult.PromptCacheKey != "" {
 				promptCacheKey = codexResult.PromptCacheKey
 			} else if promptCacheKey != "" {
 				reqBody["prompt_cache_key"] = promptCacheKey
 			}
+		}
+		forcedTemplateText := ""
+		if s.cfg != nil {
+			forcedTemplateText = s.cfg.Gateway.ForcedCodexInstructionsTemplate
+		}
+		if _, err := applyForcedCodexInstructionsTemplateIfNeeded(c, reqBody, forcedTemplateText, forcedCodexInstructionsTemplateData{
+			OriginalModel:   originalModel,
+			NormalizedModel: normalizedModelForTemplate,
+			BillingModel:    billingModel,
+			UpstreamModel:   upstreamModel,
+		}); err != nil {
+			return nil, err
 		}
 		responsesBody, err = json.Marshal(reqBody)
 		if err != nil {
@@ -216,6 +237,39 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	}
 
 	return result, handleErr
+}
+
+func (s *OpenAIGatewayService) forwardOpenAIChatCompletionsDirect(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	body []byte,
+	originalModel string,
+	billingModel string,
+	upstreamModel string,
+	promptCacheKey string,
+	reqStream bool,
+	startTime time.Time,
+) (*OpenAIForwardResult, error) {
+	forwardBody := body
+	if upstreamModel != "" && upstreamModel != originalModel {
+		if patched, err := sjson.SetBytes(forwardBody, "model", upstreamModel); err == nil {
+			forwardBody = patched
+		}
+	}
+	if strings.TrimSpace(promptCacheKey) != "" {
+		if patched, err := sjson.SetBytes(forwardBody, "prompt_cache_key", promptCacheKey); err == nil {
+			forwardBody = patched
+		}
+	}
+
+	reasoningEffort := extractOpenAIReasoningEffortFromBody(body, originalModel)
+	result, err := s.forwardOpenAIPassthrough(ctx, c, account, forwardBody, originalModel, reasoningEffort, reqStream, startTime, OpenAIUpstreamAPIChatCompletions)
+	if result != nil {
+		result.BillingModel = billingModel
+		result.UpstreamModel = upstreamModel
+	}
+	return result, err
 }
 
 // handleChatCompletionsErrorResponse reads an upstream error and returns it in

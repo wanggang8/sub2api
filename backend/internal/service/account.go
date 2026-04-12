@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"hash/fnv"
+	"net/url"
 	"reflect"
 	"sort"
 	"strconv"
@@ -853,6 +854,63 @@ func (a *Account) IsOpenAIApiKey() bool {
 	return a.IsOpenAI() && a.Type == AccountTypeAPIKey
 }
 
+func (a *Account) SupportsOpenAIResponsesUpstream() bool {
+	if a == nil || !a.IsOpenAI() {
+		return false
+	}
+	if a.IsOpenAIOAuth() {
+		return true
+	}
+	if !a.hasCustomOpenAIBaseURL() {
+		return true
+	}
+	if a.Extra == nil {
+		return true
+	}
+	if enabled, ok := a.getExtraBool("openai_upstream_supports_responses"); ok {
+		return enabled
+	}
+	return true
+}
+
+func (a *Account) SupportsOpenAIChatCompletionsUpstream() bool {
+	if a == nil || !a.IsOpenAI() {
+		return false
+	}
+	if a.IsOpenAIOAuth() {
+		return true
+	}
+	if !a.hasCustomOpenAIBaseURL() {
+		return false
+	}
+	if a.Extra == nil {
+		return true
+	}
+	if enabled, ok := a.getExtraBool("openai_upstream_supports_chat_completions"); ok {
+		return enabled
+	}
+	return true
+}
+
+func (a *Account) SupportsOpenAIMessagesUpstream() bool {
+	if a == nil || !a.IsOpenAI() {
+		return false
+	}
+	if a.IsOpenAIOAuth() {
+		return false
+	}
+	if !a.hasCustomOpenAIBaseURL() {
+		return false
+	}
+	if a.Extra == nil {
+		return false
+	}
+	if enabled, ok := a.getExtraBool("openai_upstream_supports_messages"); ok {
+		return enabled
+	}
+	return false
+}
+
 func (a *Account) GetOpenAIBaseURL() string {
 	if !a.IsOpenAI() {
 		return ""
@@ -864,6 +922,23 @@ func (a *Account) GetOpenAIBaseURL() string {
 		}
 	}
 	return "https://api.openai.com"
+}
+
+func (a *Account) hasCustomOpenAIBaseURL() bool {
+	if a == nil || !a.IsOpenAIApiKey() {
+		return false
+	}
+	baseURL := strings.TrimSpace(a.GetCredential("base_url"))
+	if baseURL == "" {
+		return false
+	}
+	if parsed, err := url.Parse(baseURL); err == nil {
+		if strings.EqualFold(parsed.Scheme, "https") && strings.EqualFold(parsed.Hostname(), "api.openai.com") {
+			return false
+		}
+	}
+	normalized := strings.TrimRight(strings.ToLower(baseURL), "/")
+	return normalized != "" && normalized != "https://api.openai.com" && normalized != "https://api.openai.com/v1"
 }
 
 func (a *Account) GetOpenAIAccessToken() string {
@@ -1431,6 +1506,21 @@ func (a *Account) getExtraString(key string) string {
 		}
 	}
 	return ""
+}
+
+func (a *Account) getExtraBool(key string) (bool, bool) {
+	if a.Extra == nil {
+		return false, false
+	}
+	v, ok := a.Extra[key]
+	if !ok {
+		return false, false
+	}
+	b, ok := v.(bool)
+	if !ok {
+		return false, false
+	}
+	return b, true
 }
 
 // getExtraInt 从 Extra 中读取指定 key 的 int 值

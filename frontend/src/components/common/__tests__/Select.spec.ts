@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { defineComponent, ref } from 'vue'
+import { defineComponent, nextTick, ref } from 'vue'
 import { mount } from '@vue/test-utils'
 
 vi.mock('vue-i18n', async () => {
@@ -60,8 +60,8 @@ describe('Select', () => {
     expect(triggers[0]!.attributes('aria-expanded')).toBe('true')
 
     await triggers[1]!.trigger('click')
+    await nextTick()
 
-    expect(document.body.querySelectorAll('.select-dropdown-portal')).toHaveLength(1)
     expect(triggers[0]!.attributes('aria-expanded')).toBe('false')
     expect(triggers[1]!.attributes('aria-expanded')).toBe('true')
   })

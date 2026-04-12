@@ -250,6 +250,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			sessionHash,
 			reqModel,
 			failedAccountIDs,
+			service.OpenAIUpstreamAPIResponses,
 			service.OpenAIUpstreamTransportAny,
 		)
 		if err != nil {
@@ -258,6 +259,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
 			if len(failedAccountIDs) == 0 {
+				if errors.Is(err, service.ErrNoCompatibleOpenAIUpstreamAPI) {
+					h.handleStreamingAwareError(c, http.StatusBadRequest, "invalid_request_error", "No available accounts in this group support the Responses API upstream path", streamStarted)
+					return
+				}
 				h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "Service temporarily unavailable", streamStarted)
 				return
 			}
@@ -396,22 +401,22 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		upstreamResponseBody, upstreamResponseBodyBytes, upstreamResponseBodyTruncated := usageDebugUpstreamResponseSnapshot(c)
 
 		// 使用量记录通过有界 worker 池提交，避免请求热路径创建无界 goroutine。
-			h.submitUsageRecordTask(func(ctx context.Context) {
-				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
-					Result:             result,
-					APIKey:             apiKey,
-					User:               apiKey.User,
-					Account:            account,
-					Subscription:       subscription,
-					InboundEndpoint:    GetInboundEndpoint(c),
-					UpstreamEndpoint:   GetUpstreamEndpoint(c, account.Platform),
-					UserAgent:          userAgent,
-					IPAddress:          clientIP,
-					RequestPayloadHash: requestPayloadHash,
-					ResolvedRequestID:  debugRequestID,
-					APIKeyService:      h.apiKeyService,
-					ChannelUsageFields: channelMapping.ToUsageFields(reqModel, result.UpstreamModel),
-				}); err != nil {
+		h.submitUsageRecordTask(func(ctx context.Context) {
+			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
+				Result:             result,
+				APIKey:             apiKey,
+				User:               apiKey.User,
+				Account:            account,
+				Subscription:       subscription,
+				InboundEndpoint:    GetInboundEndpoint(c),
+				UpstreamEndpoint:   GetUpstreamEndpoint(c, account.Platform),
+				UserAgent:          userAgent,
+				IPAddress:          clientIP,
+				RequestPayloadHash: requestPayloadHash,
+				ResolvedRequestID:  debugRequestID,
+				APIKeyService:      h.apiKeyService,
+				ChannelUsageFields: channelMapping.ToUsageFields(reqModel, result.UpstreamModel),
+			}); err != nil {
 				logger.L().With(
 					zap.String("component", "handler.openai_gateway.responses"),
 					zap.Int64("user_id", subject.UserID),
@@ -664,6 +669,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			sessionHash,
 			currentRoutingModel,
 			failedAccountIDs,
+			service.OpenAIUpstreamAPIMessages,
 			service.OpenAIUpstreamTransportAny,
 		)
 		if err != nil {
@@ -672,6 +678,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
 			if len(failedAccountIDs) == 0 {
+				if errors.Is(err, service.ErrNoCompatibleOpenAIUpstreamAPI) {
+					h.anthropicStreamingAwareError(c, http.StatusBadRequest, "invalid_request_error", "No available accounts in this group support the Messages API upstream path", streamStarted)
+					return
+				}
 				if err != nil {
 					h.anthropicStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "Service temporarily unavailable", streamStarted)
 					return
@@ -1209,6 +1219,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		sessionHash,
 		reqModel,
 		nil,
+		service.OpenAIUpstreamAPIResponses,
 		service.OpenAIUpstreamTransportResponsesWebsocketV2,
 	)
 	if err != nil {

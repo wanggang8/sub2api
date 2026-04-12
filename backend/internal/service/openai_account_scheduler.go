@@ -21,12 +21,15 @@ const (
 	openAIAccountScheduleLayerLoadBalance      = "load_balance"
 )
 
+var ErrNoCompatibleOpenAIUpstreamAPI = errors.New("no compatible OpenAI upstream api accounts")
+
 type OpenAIAccountScheduleRequest struct {
 	GroupID            *int64
 	SessionHash        string
 	StickyAccountID    int64
 	PreviousResponseID string
 	RequestedModel     string
+	RequiredAPI        OpenAIUpstreamAPI
 	RequiredTransport  OpenAIUpstreamTransport
 	ExcludedIDs        map[int64]struct{}
 }
@@ -246,7 +249,8 @@ func (s *defaultOpenAIAccountScheduler) Select(
 			return nil, decision, err
 		}
 		if selection != nil && selection.Account != nil {
-			if !s.isAccountTransportCompatible(selection.Account, req.RequiredTransport) {
+			if !s.isAccountTransportCompatible(selection.Account, req.RequiredTransport) ||
+				!s.isAccountAPICompatible(selection.Account, req.RequiredAPI) {
 				selection = nil
 			}
 		}
@@ -327,7 +331,8 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 	if req.RequestedModel != "" && !account.IsModelSupported(req.RequestedModel) {
 		return nil, nil
 	}
-	if !s.isAccountTransportCompatible(account, req.RequiredTransport) {
+	if !s.isAccountTransportCompatible(account, req.RequiredTransport) ||
+		!s.isAccountAPICompatible(account, req.RequiredAPI) {
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
 		return nil, nil
 	}
@@ -603,7 +608,8 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		if req.RequestedModel != "" && !account.IsModelSupported(req.RequestedModel) {
 			continue
 		}
-		if !s.isAccountTransportCompatible(account, req.RequiredTransport) {
+		if !s.isAccountTransportCompatible(account, req.RequiredTransport) ||
+			!s.isAccountAPICompatible(account, req.RequiredAPI) {
 			continue
 		}
 		filtered = append(filtered, account)
@@ -613,7 +619,7 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		})
 	}
 	if len(filtered) == 0 {
-		return nil, 0, 0, 0, errors.New("no available OpenAI accounts")
+		return nil, 0, 0, 0, fmt.Errorf("%w: %s", ErrNoCompatibleOpenAIUpstreamAPI, req.RequiredAPI)
 	}
 
 	loadMap := map[int64]*AccountLoadInfo{}
@@ -706,11 +712,13 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 	for i := 0; i < len(selectionOrder); i++ {
 		candidate := selectionOrder[i]
 		fresh := s.service.resolveFreshSchedulableOpenAIAccount(ctx, candidate.account, req.RequestedModel)
-		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) {
+		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) ||
+			!s.isAccountAPICompatible(fresh, req.RequiredAPI) {
 			continue
 		}
 		fresh = s.service.recheckSelectedOpenAIAccountFromDB(ctx, fresh, req.RequestedModel)
-		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) {
+		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) ||
+			!s.isAccountAPICompatible(fresh, req.RequiredAPI) {
 			continue
 		}
 		result, acquireErr := s.service.tryAcquireAccountSlot(ctx, fresh.ID, fresh.Concurrency)
@@ -733,7 +741,8 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 	// WaitPlan.MaxConcurrency 使用 Concurrency（非 EffectiveLoadFactor），因为 WaitPlan 控制的是 Redis 实际并发槽位等待。
 	for _, candidate := range selectionOrder {
 		fresh := s.service.resolveFreshSchedulableOpenAIAccount(ctx, candidate.account, req.RequestedModel)
-		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) {
+		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) ||
+			!s.isAccountAPICompatible(fresh, req.RequiredAPI) {
 			continue
 		}
 		return &AccountSelectionResult{
@@ -759,6 +768,25 @@ func (s *defaultOpenAIAccountScheduler) isAccountTransportCompatible(account *Ac
 		return false
 	}
 	return s.service.getOpenAIWSProtocolResolver().Resolve(account).Transport == requiredTransport
+}
+
+func (s *defaultOpenAIAccountScheduler) isAccountAPICompatible(account *Account, requiredAPI OpenAIUpstreamAPI) bool {
+	if requiredAPI == OpenAIUpstreamAPIAny {
+		return true
+	}
+	if s == nil || s.service == nil || account == nil {
+		return false
+	}
+	switch requiredAPI {
+	case OpenAIUpstreamAPIResponses:
+		return account.SupportsOpenAIResponsesUpstream()
+	case OpenAIUpstreamAPIChatCompletions:
+		return account.SupportsOpenAIChatCompletionsUpstream() || account.SupportsOpenAIResponsesUpstream()
+	case OpenAIUpstreamAPIMessages:
+		return account.SupportsOpenAIMessagesUpstream() || account.SupportsOpenAIResponsesUpstream()
+	default:
+		return false
+	}
 }
 
 func (s *defaultOpenAIAccountScheduler) ReportResult(accountID int64, success bool, firstTokenMs *int) {
@@ -827,6 +855,7 @@ func (s *OpenAIGatewayService) SelectAccountWithScheduler(
 	sessionHash string,
 	requestedModel string,
 	excludedIDs map[int64]struct{},
+	requiredAPI OpenAIUpstreamAPI,
 	requiredTransport OpenAIUpstreamTransport,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
 	decision := OpenAIAccountScheduleDecision{}
@@ -850,6 +879,7 @@ func (s *OpenAIGatewayService) SelectAccountWithScheduler(
 		StickyAccountID:    stickyAccountID,
 		PreviousResponseID: previousResponseID,
 		RequestedModel:     requestedModel,
+		RequiredAPI:        requiredAPI,
 		RequiredTransport:  requiredTransport,
 		ExcludedIDs:        excludedIDs,
 	})

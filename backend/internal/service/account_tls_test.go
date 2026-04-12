@@ -68,3 +68,58 @@ func TestUpstreamTLSOptionsFromAccount(t *testing.T) {
 	opts = UpstreamTLSOptionsFromAccount(&Account{}, nil)
 	require.Nil(t, opts)
 }
+
+func TestOpenAIUpstreamCapabilityDefaults(t *testing.T) {
+	t.Parallel()
+
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+	}
+
+	require.True(t, account.SupportsOpenAIResponsesUpstream())
+	require.False(t, account.SupportsOpenAIChatCompletionsUpstream())
+	require.False(t, account.SupportsOpenAIMessagesUpstream())
+}
+
+func TestOpenAIUpstreamCapabilitiesRespectExplicitFlags(t *testing.T) {
+	t.Parallel()
+
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"base_url": "https://relay.example.com",
+		},
+		Extra: map[string]any{
+			"openai_upstream_supports_responses":        false,
+			"openai_upstream_supports_chat_completions": true,
+			"openai_upstream_supports_messages":         true,
+		},
+	}
+
+	require.False(t, account.SupportsOpenAIResponsesUpstream())
+	require.True(t, account.SupportsOpenAIChatCompletionsUpstream())
+	require.True(t, account.SupportsOpenAIMessagesUpstream())
+}
+
+func TestOpenAIUpstreamCapabilitiesIgnoreExplicitFlagsWithoutCustomBaseURL(t *testing.T) {
+	t.Parallel()
+
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"base_url": "https://api.openai.com/v1",
+		},
+		Extra: map[string]any{
+			"openai_upstream_supports_responses":        false,
+			"openai_upstream_supports_chat_completions": true,
+			"openai_upstream_supports_messages":         true,
+		},
+	}
+
+	require.True(t, account.SupportsOpenAIResponsesUpstream())
+	require.False(t, account.SupportsOpenAIChatCompletionsUpstream())
+	require.False(t, account.SupportsOpenAIMessagesUpstream())
+}

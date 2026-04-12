@@ -58,7 +58,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyRateLimite
 	snapshotService := &SchedulerSnapshotService{cache: snapshotCache}
 	svc := &OpenAIGatewayService{accountRepo: stubOpenAIAccountRepo{accounts: []Account{*freshSticky, *freshBackup}}, cache: cache, cfg: &config.Config{}, schedulerSnapshot: snapshotService, concurrencyService: NewConcurrencyService(stubConcurrencyCache{})}
 
-	selection, decision, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "session_hash_rate_limited", "gpt-5.1", nil, OpenAIUpstreamTransportAny)
+	selection, decision, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "session_hash_rate_limited", "gpt-5.1", nil, OpenAIUpstreamAPIAny, OpenAIUpstreamTransportAny)
 	require.NoError(t, err)
 	require.NotNil(t, selection)
 	require.NotNil(t, selection.Account)
@@ -106,7 +106,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyDBRuntimeR
 		concurrencyService: NewConcurrencyService(stubConcurrencyCache{}),
 	}
 
-	selection, decision, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "session_hash_db_runtime_recheck", "gpt-5.1", nil, OpenAIUpstreamTransportAny)
+	selection, decision, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "session_hash_db_runtime_recheck", "gpt-5.1", nil, OpenAIUpstreamAPIAny, OpenAIUpstreamTransportAny)
 	require.NoError(t, err)
 	require.NotNil(t, selection)
 	require.NotNil(t, selection.Account)
@@ -179,6 +179,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_PreviousResponseSticky(
 		"session_hash_001",
 		"gpt-5.1",
 		nil,
+		OpenAIUpstreamAPIAny,
 		OpenAIUpstreamTransportAny,
 	)
 	require.NoError(t, err)
@@ -224,6 +225,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionSticky(t *testin
 		"session_hash_abc",
 		"gpt-5.1",
 		nil,
+		OpenAIUpstreamAPIAny,
 		OpenAIUpstreamTransportAny,
 	)
 	require.NoError(t, err)
@@ -301,6 +303,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyBusyKeepsS
 		"session_hash_sticky_busy",
 		"gpt-5.1",
 		nil,
+		OpenAIUpstreamAPIAny,
 		OpenAIUpstreamTransportAny,
 	)
 	require.NoError(t, err)
@@ -348,6 +351,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionSticky_ForceHTTP
 		"session_hash_force_http",
 		"gpt-5.1",
 		nil,
+		OpenAIUpstreamAPIAny,
 		OpenAIUpstreamTransportAny,
 	)
 	require.NoError(t, err)
@@ -416,6 +420,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_RequiredWSV2_SkipsStick
 		"session_hash_ws_only",
 		"gpt-5.1",
 		nil,
+		OpenAIUpstreamAPIAny,
 		OpenAIUpstreamTransportResponsesWebsocketV2,
 	)
 	require.NoError(t, err)
@@ -458,6 +463,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_RequiredWSV2_NoAvailabl
 		"",
 		"gpt-5.1",
 		nil,
+		OpenAIUpstreamAPIAny,
 		OpenAIUpstreamTransportResponsesWebsocketV2,
 	)
 	require.Error(t, err)
@@ -533,6 +539,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadBalanceTopKFallback
 		"",
 		"gpt-5.1",
 		nil,
+		OpenAIUpstreamAPIAny,
 		OpenAIUpstreamTransportAny,
 	)
 	require.NoError(t, err)
@@ -546,6 +553,195 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadBalanceTopKFallback
 	if selection.ReleaseFunc != nil {
 		selection.ReleaseFunc()
 	}
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_FiltersByRequiredAPI(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(4001)
+
+	accounts := []Account{
+		{
+			ID:          4101,
+			Name:        "responses-only",
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Credentials: map[string]any{
+				"base_url": "https://relay.example.com",
+			},
+			Extra: map[string]any{
+				"openai_upstream_supports_responses":        true,
+				"openai_upstream_supports_chat_completions": false,
+				"openai_upstream_supports_messages":         false,
+			},
+		},
+		{
+			ID:          4102,
+			Name:        "messages-only",
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Credentials: map[string]any{
+				"base_url": "https://relay.example.com",
+			},
+			Extra: map[string]any{
+				"openai_upstream_supports_responses":        false,
+				"openai_upstream_supports_chat_completions": false,
+				"openai_upstream_supports_messages":         true,
+			},
+		},
+		{
+			ID:          4103,
+			Name:        "chat-only",
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Credentials: map[string]any{
+				"base_url": "https://relay.example.com",
+			},
+			Extra: map[string]any{
+				"openai_upstream_supports_responses":        false,
+				"openai_upstream_supports_chat_completions": true,
+				"openai_upstream_supports_messages":         false,
+			},
+		},
+	}
+
+	svc := &OpenAIGatewayService{
+		accountRepo:        stubOpenAIAccountRepo{accounts: accounts},
+		cache:              &stubGatewayCache{},
+		cfg:                &config.Config{},
+		concurrencyService: NewConcurrencyService(stubConcurrencyCache{}),
+	}
+
+	selection, _, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "session_hash_api_messages", "gpt-5.1", nil, OpenAIUpstreamAPIMessages, OpenAIUpstreamTransportAny)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, int64(4102), selection.Account.ID)
+
+	selection, _, err = svc.SelectAccountWithScheduler(ctx, &groupID, "", "session_hash_api_chat", "gpt-5.1", nil, OpenAIUpstreamAPIChatCompletions, OpenAIUpstreamTransportAny)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, int64(4103), selection.Account.ID)
+
+	selection, _, err = svc.SelectAccountWithScheduler(ctx, &groupID, "", "session_hash_api_responses", "gpt-5.1", nil, OpenAIUpstreamAPIResponses, OpenAIUpstreamTransportAny)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, int64(4101), selection.Account.ID)
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_NoCompatibleAPIAccounts(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(5001)
+
+	accounts := []Account{
+		{
+			ID:          5101,
+			Name:        "chat-only",
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Credentials: map[string]any{
+				"base_url": "https://relay.example.com",
+			},
+			Extra: map[string]any{
+				"openai_upstream_supports_responses":        false,
+				"openai_upstream_supports_chat_completions": true,
+				"openai_upstream_supports_messages":         false,
+			},
+		},
+	}
+
+	svc := &OpenAIGatewayService{
+		accountRepo:        stubOpenAIAccountRepo{accounts: accounts},
+		cache:              &stubGatewayCache{},
+		cfg:                &config.Config{},
+		concurrencyService: NewConcurrencyService(stubConcurrencyCache{}),
+	}
+
+	selection, _, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "session_hash_no_api", "gpt-5.1", nil, OpenAIUpstreamAPIResponses, OpenAIUpstreamTransportAny)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrNoCompatibleOpenAIUpstreamAPI)
+	require.Nil(t, selection)
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_AllowsResponsesBridgeForMessages(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(5002)
+
+	accounts := []Account{
+		{
+			ID:          5201,
+			Name:        "responses-only",
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Credentials: map[string]any{
+				"base_url": "https://relay.example.com",
+			},
+			Extra: map[string]any{
+				"openai_upstream_supports_responses":        true,
+				"openai_upstream_supports_chat_completions": false,
+				"openai_upstream_supports_messages":         false,
+			},
+		},
+	}
+
+	svc := &OpenAIGatewayService{
+		accountRepo:        stubOpenAIAccountRepo{accounts: accounts},
+		cache:              &stubGatewayCache{},
+		cfg:                &config.Config{},
+		concurrencyService: NewConcurrencyService(stubConcurrencyCache{}),
+	}
+
+	selection, _, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "session_hash_messages_fallback", "gpt-5.1", nil, OpenAIUpstreamAPIMessages, OpenAIUpstreamTransportAny)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, int64(5201), selection.Account.ID)
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_AllowsResponsesBridgeForChatCompletions(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(5003)
+
+	accounts := []Account{
+		{
+			ID:          5301,
+			Name:        "responses-only",
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+		},
+	}
+
+	svc := &OpenAIGatewayService{
+		accountRepo:        stubOpenAIAccountRepo{accounts: accounts},
+		cache:              &stubGatewayCache{},
+		cfg:                &config.Config{},
+		concurrencyService: NewConcurrencyService(stubConcurrencyCache{}),
+	}
+
+	selection, _, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "session_hash_chat_bridge", "gpt-5.1", nil, OpenAIUpstreamAPIChatCompletions, OpenAIUpstreamTransportAny)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, int64(5301), selection.Account.ID)
 }
 
 func TestOpenAIGatewayService_OpenAIAccountSchedulerMetrics(t *testing.T) {
@@ -571,7 +767,7 @@ func TestOpenAIGatewayService_OpenAIAccountSchedulerMetrics(t *testing.T) {
 		concurrencyService: NewConcurrencyService(stubConcurrencyCache{}),
 	}
 
-	selection, _, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "session_hash_metrics", "gpt-5.1", nil, OpenAIUpstreamTransportAny)
+	selection, _, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "session_hash_metrics", "gpt-5.1", nil, OpenAIUpstreamAPIAny, OpenAIUpstreamTransportAny)
 	require.NoError(t, err)
 	require.NotNil(t, selection)
 	svc.ReportOpenAIAccountScheduleResult(account.ID, true, intPtrForTest(120))
@@ -773,6 +969,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadBalanceDistributesA
 			sessionHash,
 			"gpt-5.1",
 			nil,
+			OpenAIUpstreamAPIAny,
 			OpenAIUpstreamTransportAny,
 		)
 		require.NoError(t, err)

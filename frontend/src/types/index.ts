@@ -736,6 +736,11 @@ export interface Account {
   custom_base_url_enabled?: boolean | null
   custom_base_url?: string | null
 
+  // OpenAI 上游接口能力（仅 OpenAI 账号有效）
+  openai_upstream_supports_responses?: boolean | null
+  openai_upstream_supports_chat_completions?: boolean | null
+  openai_upstream_supports_messages?: boolean | null
+
   // TLS 证书校验跳过（账号级）
   tls_insecure_skip_verify?: boolean | null
 

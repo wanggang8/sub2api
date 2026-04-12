@@ -188,3 +188,54 @@ func TestAccountFromServiceShallow_DoesNotExposeCursorSessionCompatEnabled(t *te
 	require.NoError(t, err)
 	require.NotContains(t, string(raw), "cursor_session_compat_enabled")
 }
+
+func TestAccountFromServiceShallow_ExposesOpenAIUpstreamCapabilitiesForCustomRelay(t *testing.T) {
+	t.Parallel()
+
+	account := &service.Account{
+		ID:       8,
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"base_url": "https://relay.example.com",
+		},
+		Extra: map[string]any{
+			"openai_upstream_supports_responses":        false,
+			"openai_upstream_supports_chat_completions": true,
+			"openai_upstream_supports_messages":         true,
+		},
+	}
+
+	dtoAccount := AccountFromServiceShallow(account)
+	require.NotNil(t, dtoAccount)
+	require.NotNil(t, dtoAccount.OpenAIUpstreamSupportsResponses)
+	require.NotNil(t, dtoAccount.OpenAIUpstreamSupportsChatCompletions)
+	require.NotNil(t, dtoAccount.OpenAIUpstreamSupportsMessages)
+	require.False(t, *dtoAccount.OpenAIUpstreamSupportsResponses)
+	require.True(t, *dtoAccount.OpenAIUpstreamSupportsChatCompletions)
+	require.True(t, *dtoAccount.OpenAIUpstreamSupportsMessages)
+}
+
+func TestAccountFromServiceShallow_IgnoresOpenAIUpstreamCapabilitiesForOfficialAPI(t *testing.T) {
+	t.Parallel()
+
+	account := &service.Account{
+		ID:       9,
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeAPIKey,
+		Extra: map[string]any{
+			"openai_upstream_supports_responses":        false,
+			"openai_upstream_supports_chat_completions": true,
+			"openai_upstream_supports_messages":         true,
+		},
+	}
+
+	dtoAccount := AccountFromServiceShallow(account)
+	require.NotNil(t, dtoAccount)
+	require.NotNil(t, dtoAccount.OpenAIUpstreamSupportsResponses)
+	require.NotNil(t, dtoAccount.OpenAIUpstreamSupportsChatCompletions)
+	require.NotNil(t, dtoAccount.OpenAIUpstreamSupportsMessages)
+	require.True(t, *dtoAccount.OpenAIUpstreamSupportsResponses)
+	require.False(t, *dtoAccount.OpenAIUpstreamSupportsChatCompletions)
+	require.False(t, *dtoAccount.OpenAIUpstreamSupportsMessages)
+}

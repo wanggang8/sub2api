@@ -12,6 +12,16 @@ const (
 	OpenAIUpstreamTransportResponsesWebsocketV2 OpenAIUpstreamTransport = "responses_websockets_v2"
 )
 
+// OpenAIUpstreamAPI 表示 OpenAI 上游实际支持的 API 接口能力。
+type OpenAIUpstreamAPI string
+
+const (
+	OpenAIUpstreamAPIAny             OpenAIUpstreamAPI = ""
+	OpenAIUpstreamAPIResponses       OpenAIUpstreamAPI = "responses"
+	OpenAIUpstreamAPIChatCompletions OpenAIUpstreamAPI = "chat_completions"
+	OpenAIUpstreamAPIMessages        OpenAIUpstreamAPI = "messages"
+)
+
 // OpenAIWSProtocolDecision 表示协议决策结果。
 type OpenAIWSProtocolDecision struct {
 	Transport OpenAIUpstreamTransport

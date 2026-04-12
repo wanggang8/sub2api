@@ -277,6 +277,14 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 		enabled := true
 		out.TLSInsecureSkipVerify = &enabled
 	}
+	if a.IsOpenAI() {
+		supportsResponses := a.SupportsOpenAIResponsesUpstream()
+		supportsChat := a.SupportsOpenAIChatCompletionsUpstream()
+		supportsMessages := a.SupportsOpenAIMessagesUpstream()
+		out.OpenAIUpstreamSupportsResponses = &supportsResponses
+		out.OpenAIUpstreamSupportsChatCompletions = &supportsChat
+		out.OpenAIUpstreamSupportsMessages = &supportsMessages
+	}
 
 	// 提取账号配额限制（apikey / bedrock 类型有效）
 	if a.IsAPIKeyOrBedrock() {

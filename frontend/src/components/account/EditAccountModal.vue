@@ -1313,6 +1313,43 @@
         </div>
       </div>
 
+      <div
+        v-if="account?.platform === 'openai' && account?.type === 'apikey' && hasOpenAICustomBaseURLConfigured"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600 space-y-3"
+      >
+        <div>
+          <label class="input-label mb-0">{{ t('admin.accounts.openai.upstreamCapabilities') }}</label>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            {{ t('admin.accounts.openai.upstreamCapabilitiesDesc') }}
+          </p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <button
+            v-for="preset in openAIUpstreamCapabilityPresets"
+            :key="preset.value"
+            type="button"
+            class="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 dark:border-dark-600 dark:text-gray-300 dark:hover:bg-dark-700"
+            @click="preset.apply()"
+          >
+            {{ preset.label }}
+          </button>
+        </div>
+        <div class="grid gap-3 sm:grid-cols-3">
+          <label class="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm dark:border-dark-600">
+            <input v-model="openaiUpstreamSupportsResponses" type="checkbox" class="rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500" />
+            <span>{{ t('admin.accounts.openai.supportsResponsesApi') }}</span>
+          </label>
+          <label class="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm dark:border-dark-600">
+            <input v-model="openaiUpstreamSupportsChatCompletions" type="checkbox" class="rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500" />
+            <span>{{ t('admin.accounts.openai.supportsChatCompletionsApi') }}</span>
+          </label>
+          <label class="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm dark:border-dark-600">
+            <input v-model="openaiUpstreamSupportsMessages" type="checkbox" class="rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500" />
+            <span>{{ t('admin.accounts.openai.supportsMessagesApi') }}</span>
+          </label>
+        </div>
+      </div>
+
       <!-- Anthropic API Key 自动透传开关 -->
       <div
         v-if="account?.platform === 'anthropic' && account?.type === 'apikey'"
@@ -2123,6 +2160,9 @@ const openaiPassthroughEnabled = ref(false)
 const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const codexCLIOnlyEnabled = ref(false)
+const openaiUpstreamSupportsResponses = ref(true)
+const openaiUpstreamSupportsChatCompletions = ref(true)
+const openaiUpstreamSupportsMessages = ref(false)
 const anthropicPassthroughEnabled = ref(false)
 const editQuotaLimit = ref<number | null>(null)
 const editQuotaDailyLimit = ref<number | null>(null)
@@ -2157,6 +2197,54 @@ const openaiResponsesWebSocketV2Mode = computed({
 const openAIWSModeConcurrencyHintKey = computed(() =>
   resolveOpenAIWSModeConcurrencyHintKey(openaiResponsesWebSocketV2Mode.value)
 )
+const isOfficialOpenAIBaseURL = (value: string): boolean => {
+  const trimmed = value.trim()
+  if (!trimmed) {
+    return false
+  }
+  try {
+    const parsed = new URL(trimmed)
+    return parsed.protocol === 'https:' && parsed.hostname.toLowerCase() === 'api.openai.com'
+  } catch {
+    const normalized = trimmed.toLowerCase().replace(/\/+$/, '')
+    return normalized === 'https://api.openai.com' || normalized === 'https://api.openai.com/v1'
+  }
+}
+const hasOpenAICustomBaseURLConfigured = computed(() =>
+  props.account?.platform === 'openai' &&
+  props.account?.type === 'apikey' &&
+  editBaseUrl.value.trim().length > 0 &&
+  !isOfficialOpenAIBaseURL(editBaseUrl.value)
+)
+const openAIUpstreamCapabilityPresets = computed(() => [
+  {
+    value: 'standard',
+    label: t('admin.accounts.openai.upstreamPresetStandard'),
+    apply: () => {
+      openaiUpstreamSupportsResponses.value = true
+      openaiUpstreamSupportsChatCompletions.value = true
+      openaiUpstreamSupportsMessages.value = false
+    }
+  },
+  {
+    value: 'chat_only',
+    label: t('admin.accounts.openai.upstreamPresetChatOnly'),
+    apply: () => {
+      openaiUpstreamSupportsResponses.value = false
+      openaiUpstreamSupportsChatCompletions.value = true
+      openaiUpstreamSupportsMessages.value = false
+    }
+  },
+  {
+    value: 'chat_messages',
+    label: t('admin.accounts.openai.upstreamPresetChatMessages'),
+    apply: () => {
+      openaiUpstreamSupportsResponses.value = false
+      openaiUpstreamSupportsChatCompletions.value = true
+      openaiUpstreamSupportsMessages.value = true
+    }
+  }
+])
 const isOpenAIModelRestrictionDisabled = computed(() =>
   props.account?.platform === 'openai' && openaiPassthroughEnabled.value
 )
@@ -2294,6 +2382,9 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   codexCLIOnlyEnabled.value = false
+  openaiUpstreamSupportsResponses.value = true
+  openaiUpstreamSupportsChatCompletions.value = true
+  openaiUpstreamSupportsMessages.value = false
   anthropicPassthroughEnabled.value = false
   if (newAccount.platform === 'openai' && (newAccount.type === 'oauth' || newAccount.type === 'apikey')) {
     openaiPassthroughEnabled.value = extra?.openai_passthrough === true || extra?.openai_oauth_passthrough === true
@@ -2311,6 +2402,11 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     })
     if (newAccount.type === 'oauth') {
       codexCLIOnlyEnabled.value = extra?.codex_cli_only === true
+    }
+    if (newAccount.type === 'apikey') {
+      openaiUpstreamSupportsResponses.value = newAccount.openai_upstream_supports_responses !== false
+      openaiUpstreamSupportsChatCompletions.value = newAccount.openai_upstream_supports_chat_completions !== false
+      openaiUpstreamSupportsMessages.value = newAccount.openai_upstream_supports_messages === true
     }
   }
   if (newAccount.platform === 'anthropic' && newAccount.type === 'apikey') {
@@ -3040,6 +3136,14 @@ const handleSubmit = async () => {
   if (!props.account) return
   const accountID = props.account.id
 
+  if (hasOpenAICustomBaseURLConfigured.value &&
+    !openaiUpstreamSupportsResponses.value &&
+    !openaiUpstreamSupportsChatCompletions.value &&
+    !openaiUpstreamSupportsMessages.value) {
+    appStore.showError(t('admin.accounts.openai.upstreamCapabilityRequired'))
+    return
+  }
+
   if (form.status !== 'active' && form.status !== 'inactive' && form.status !== 'error') {
     appStore.showError(t('admin.accounts.pleaseSelectStatus'))
     return
@@ -3383,6 +3487,15 @@ const handleSubmit = async () => {
       delete newExtra.responses_websockets_v2_enabled
       delete newExtra.openai_ws_enabled
       delete newExtra.cursor_session_compat_enabled
+      if (props.account.type === 'apikey' && hasOpenAICustomBaseURLConfigured.value) {
+        newExtra.openai_upstream_supports_responses = openaiUpstreamSupportsResponses.value
+        newExtra.openai_upstream_supports_chat_completions = openaiUpstreamSupportsChatCompletions.value
+        newExtra.openai_upstream_supports_messages = openaiUpstreamSupportsMessages.value
+      } else {
+        delete newExtra.openai_upstream_supports_responses
+        delete newExtra.openai_upstream_supports_chat_completions
+        delete newExtra.openai_upstream_supports_messages
+      }
       if (openaiPassthroughEnabled.value) {
         newExtra.openai_passthrough = true
       } else {

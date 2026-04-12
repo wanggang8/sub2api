@@ -149,6 +149,56 @@ function mountModal() {
 }
 
 describe('CreateAccountModal', () => {
+  it('does not show OpenAI upstream capabilities for oauth-based accounts', async () => {
+    listTLSFingerprintProfilesMock.mockResolvedValue([])
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    getAntigravityDefaultModelMappingMock.mockResolvedValue({})
+
+    const wrapper = mountModal()
+    const vm = wrapper.vm as any
+
+    vm.form.platform = 'openai'
+    vm.accountCategory = 'oauth-based'
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('admin.accounts.openai.upstreamCapabilities')
+  })
+
+  it('does not show OpenAI upstream capabilities for official OpenAI api-key accounts', async () => {
+    listTLSFingerprintProfilesMock.mockResolvedValue([])
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    getAntigravityDefaultModelMappingMock.mockResolvedValue({})
+
+    const wrapper = mountModal()
+    const vm = wrapper.vm as any
+
+    vm.form.platform = 'openai'
+    vm.accountCategory = 'apikey'
+    vm.form.type = 'apikey'
+    vm.apiKeyBaseUrl = 'https://api.openai.com'
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('admin.accounts.openai.upstreamCapabilities')
+  })
+
+  it('does not show OpenAI upstream capabilities for official OpenAI v1 base url', async () => {
+    listTLSFingerprintProfilesMock.mockResolvedValue([])
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    getAntigravityDefaultModelMappingMock.mockResolvedValue({})
+
+    const wrapper = mountModal()
+    const vm = wrapper.vm as any
+
+    vm.form.platform = 'openai'
+    vm.accountCategory = 'apikey'
+    vm.form.type = 'apikey'
+    await flushPromises()
+    vm.apiKeyBaseUrl = 'https://api.openai.com/v1'
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('admin.accounts.openai.upstreamCapabilities')
+  })
+
   it('shows fetch models button in mapping mode for api-key accounts and previews current form models', async () => {
     fetchModelsPreviewMock.mockReset()
     getAntigravityDefaultModelMappingMock.mockReset()
@@ -222,5 +272,94 @@ describe('CreateAccountModal', () => {
       }
     })
     expect(showWarningMock).toHaveBeenCalled()
+  })
+
+  it('persists OpenAI upstream capabilities for api-key accounts', async () => {
+    createAccountMock.mockReset()
+    listTLSFingerprintProfilesMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    getAntigravityDefaultModelMappingMock.mockReset()
+    listTLSFingerprintProfilesMock.mockResolvedValue([])
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    getAntigravityDefaultModelMappingMock.mockResolvedValue({})
+    createAccountMock.mockResolvedValue({ id: 1 })
+
+    const wrapper = mountModal()
+    const vm = wrapper.vm as any
+
+    vm.form.name = 'OpenAI Relay'
+    vm.form.platform = 'openai'
+    vm.accountCategory = 'apikey'
+    vm.form.type = 'apikey'
+    vm.apiKeyValue = 'sk-openai'
+    vm.openaiUpstreamSupportsResponses = false
+    vm.openaiUpstreamSupportsChatCompletions = true
+    vm.openaiUpstreamSupportsMessages = true
+    await flushPromises()
+    vm.apiKeyBaseUrl = 'https://relay.example.com'
+
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]?.extra?.openai_upstream_supports_responses).toBe(false)
+    expect(createAccountMock.mock.calls[0]?.[0]?.extra?.openai_upstream_supports_chat_completions).toBe(true)
+    expect(createAccountMock.mock.calls[0]?.[0]?.extra?.openai_upstream_supports_messages).toBe(true)
+  })
+
+  it('requires at least one OpenAI upstream capability', async () => {
+    createAccountMock.mockReset()
+    showErrorMock.mockReset()
+    listTLSFingerprintProfilesMock.mockResolvedValue([])
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    getAntigravityDefaultModelMappingMock.mockResolvedValue({})
+
+    const wrapper = mountModal()
+    const vm = wrapper.vm as any
+
+    vm.form.name = 'Broken OpenAI Relay'
+    vm.form.platform = 'openai'
+    vm.accountCategory = 'apikey'
+    vm.form.type = 'apikey'
+    vm.apiKeyValue = 'sk-openai'
+    vm.openaiUpstreamSupportsResponses = false
+    vm.openaiUpstreamSupportsChatCompletions = false
+    vm.openaiUpstreamSupportsMessages = false
+    await flushPromises()
+    vm.apiKeyBaseUrl = 'https://relay.example.com'
+
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+
+    expect(createAccountMock).not.toHaveBeenCalled()
+    expect(showErrorMock).toHaveBeenCalled()
+  })
+
+  it('does not persist OpenAI upstream capabilities without custom base url', async () => {
+    createAccountMock.mockReset()
+    listTLSFingerprintProfilesMock.mockResolvedValue([])
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    getAntigravityDefaultModelMappingMock.mockResolvedValue({})
+    createAccountMock.mockResolvedValue({ id: 1 })
+
+    const wrapper = mountModal()
+    const vm = wrapper.vm as any
+
+    vm.form.name = 'OpenAI Official'
+    vm.form.platform = 'openai'
+    vm.accountCategory = 'apikey'
+    vm.form.type = 'apikey'
+    vm.apiKeyValue = 'sk-openai'
+    vm.customBaseUrlEnabled = false
+    vm.customBaseUrl = ''
+    vm.openaiUpstreamSupportsResponses = false
+    vm.openaiUpstreamSupportsChatCompletions = true
+    vm.openaiUpstreamSupportsMessages = true
+    await flushPromises()
+
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]?.extra?.openai_upstream_supports_responses).toBeUndefined()
+    expect(createAccountMock.mock.calls[0]?.[0]?.extra?.openai_upstream_supports_chat_completions).toBeUndefined()
+    expect(createAccountMock.mock.calls[0]?.[0]?.extra?.openai_upstream_supports_messages).toBeUndefined()
   })
 })

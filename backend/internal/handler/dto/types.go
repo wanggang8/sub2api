@@ -201,6 +201,11 @@ type Account struct {
 	CustomBaseURLEnabled *bool   `json:"custom_base_url_enabled,omitempty"`
 	CustomBaseURL        *string `json:"custom_base_url,omitempty"`
 
+	// OpenAI 上游接口能力（仅 OpenAI 账号有效）
+	OpenAIUpstreamSupportsResponses       *bool `json:"openai_upstream_supports_responses,omitempty"`
+	OpenAIUpstreamSupportsChatCompletions *bool `json:"openai_upstream_supports_chat_completions,omitempty"`
+	OpenAIUpstreamSupportsMessages        *bool `json:"openai_upstream_supports_messages,omitempty"`
+
 	// API Key 账号配额限制
 	QuotaLimit       *float64 `json:"quota_limit,omitempty"`
 	QuotaUsed        *float64 `json:"quota_used,omitempty"`

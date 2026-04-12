@@ -126,6 +126,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			sessionHash,
 			reqModel,
 			failedAccountIDs,
+			service.OpenAIUpstreamAPIChatCompletions,
 			service.OpenAIUpstreamTransportAny,
 		)
 		if err != nil {
@@ -134,6 +135,10 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
 			if len(failedAccountIDs) == 0 {
+				if errors.Is(err, service.ErrNoCompatibleOpenAIUpstreamAPI) {
+					h.handleStreamingAwareError(c, http.StatusBadRequest, "invalid_request_error", "No available accounts in this group support the Chat Completions upstream path", streamStarted)
+					return
+				}
 				defaultModel := ""
 				if apiKey.Group != nil {
 					defaultModel = apiKey.Group.DefaultMappedModel
@@ -149,6 +154,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 						sessionHash,
 						defaultModel,
 						failedAccountIDs,
+						service.OpenAIUpstreamAPIChatCompletions,
 						service.OpenAIUpstreamTransportAny,
 					)
 					if err == nil && selection != nil {

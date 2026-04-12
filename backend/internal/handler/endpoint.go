@@ -23,7 +23,8 @@ const (
 
 // gin.Context keys used by the middleware and helpers below.
 const (
-	ctxKeyInboundEndpoint = "_gateway_inbound_endpoint"
+	ctxKeyInboundEndpoint          = "_gateway_inbound_endpoint"
+	ctxKeyUpstreamEndpointOverride = "_gateway_upstream_endpoint_override"
 )
 
 // ──────────────────────────────────────────────────────────
@@ -162,10 +163,33 @@ func GetInboundEndpoint(c *gin.Context) string {
 // and the account platform. Handlers call this after scheduling an
 // account, passing account.Platform.
 func GetUpstreamEndpoint(c *gin.Context, platform string) string {
+	if c != nil {
+		if v, ok := c.Get("openai_upstream_endpoint_override"); ok {
+			if s, ok := v.(string); ok && s != "" {
+				return s
+			}
+		}
+		if v, ok := c.Get(ctxKeyUpstreamEndpointOverride); ok {
+			if s, ok := v.(string); ok && s != "" {
+				return s
+			}
+		}
+	}
 	inbound := GetInboundEndpoint(c)
 	rawPath := ""
 	if c != nil && c.Request != nil && c.Request.URL != nil {
 		rawPath = c.Request.URL.Path
 	}
 	return DeriveUpstreamEndpoint(inbound, rawPath, platform)
+}
+
+func SetUpstreamEndpointOverride(c *gin.Context, endpoint string) {
+	if c == nil {
+		return
+	}
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" {
+		return
+	}
+	c.Set(ctxKeyUpstreamEndpointOverride, endpoint)
 }
