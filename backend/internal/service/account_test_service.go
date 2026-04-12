@@ -54,6 +54,14 @@ const (
 	defaultGeminiImageTestPrompt = "Generate a cute orange cat astronaut sticker on a clean pastel background."
 )
 
+type openAIAccountTestProtocol string
+
+const (
+	openAIAccountTestProtocolResponses       openAIAccountTestProtocol = "responses"
+	openAIAccountTestProtocolChatCompletions openAIAccountTestProtocol = "chat_completions"
+	openAIAccountTestProtocolMessages        openAIAccountTestProtocol = "messages"
+)
+
 // AccountTestService handles account testing operations
 type AccountTestService struct {
 	accountRepo               AccountRepository
@@ -434,6 +442,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	var apiURL string
 	var isOAuth bool
 	var chatgptAccountID string
+	testProtocol := openAIAccountTestProtocolResponses
 
 	if account.IsOAuth() {
 		isOAuth = true
@@ -461,7 +470,17 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		if err != nil {
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 		}
-		apiURL = strings.TrimSuffix(normalizedBaseURL, "/") + "/responses"
+		switch {
+		case account.hasCustomOpenAIBaseURL() && account.SupportsOpenAIMessagesUpstream():
+			testProtocol = openAIAccountTestProtocolMessages
+			apiURL = buildOpenAIMessagesURL(normalizedBaseURL)
+		case account.hasCustomOpenAIBaseURL() && !account.SupportsOpenAIResponsesUpstream() && account.SupportsOpenAIChatCompletionsUpstream():
+			testProtocol = openAIAccountTestProtocolChatCompletions
+			apiURL = buildOpenAIChatCompletionsURL(normalizedBaseURL)
+		default:
+			testProtocol = openAIAccountTestProtocolResponses
+			apiURL = buildOpenAIResponsesURL(normalizedBaseURL)
+		}
 	} else {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Unsupported account type: %s", account.Type))
 	}
@@ -473,8 +492,20 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
 	c.Writer.Flush()
 
-	// Create OpenAI Responses API payload
+	// Create protocol-appropriate payload
 	payload := createOpenAITestPayload(testModelID, isOAuth)
+	if !isOAuth {
+		switch testProtocol {
+		case openAIAccountTestProtocolChatCompletions:
+			payload = createOpenAIChatCompletionsTestPayload(testModelID)
+		case openAIAccountTestProtocolMessages:
+			anthropicPayload, buildErr := createTestPayload(testModelID)
+			if buildErr != nil {
+				return s.sendErrorAndEnd(c, "Failed to create test payload")
+			}
+			payload = anthropicPayload
+		}
+	}
 	payloadBytes, _ := json.Marshal(payload)
 
 	// Send test_start event
@@ -488,6 +519,9 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	// Set common headers
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+authToken)
+	if testProtocol == openAIAccountTestProtocolMessages {
+		req.Header.Set("anthropic-version", "2023-06-01")
+	}
 
 	// Set OAuth-specific headers for ChatGPT internal API
 	if isOAuth {
@@ -540,7 +574,27 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	}
 
 	// Process SSE stream
-	return s.processOpenAIStream(c, resp.Body)
+	switch testProtocol {
+	case openAIAccountTestProtocolMessages:
+		return s.processClaudeStream(c, resp.Body)
+	case openAIAccountTestProtocolChatCompletions:
+		return s.processOpenAIChatCompletionsStream(c, resp.Body)
+	default:
+		return s.processOpenAIStream(c, resp.Body)
+	}
+}
+
+func createOpenAIChatCompletionsTestPayload(modelID string) map[string]any {
+	return map[string]any{
+		"model": modelID,
+		"messages": []map[string]any{
+			{
+				"role":    "user",
+				"content": "hi",
+			},
+		},
+		"stream": true,
+	}
 }
 
 // testGeminiAccountConnection tests a Gemini account's connection
@@ -1033,6 +1087,61 @@ func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader)
 				}
 			}
 			return s.sendErrorAndEnd(c, errorMsg)
+		}
+	}
+}
+
+func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, body io.Reader) error {
+	reader := bufio.NewReader(body)
+
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+				return nil
+			}
+			return s.sendErrorAndEnd(c, fmt.Sprintf("Stream read error: %s", err.Error()))
+		}
+
+		line = strings.TrimSpace(line)
+		if line == "" || !sseDataPrefix.MatchString(line) {
+			continue
+		}
+
+		jsonStr := sseDataPrefix.ReplaceAllString(line, "")
+		if jsonStr == "[DONE]" {
+			s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+			return nil
+		}
+
+		var data map[string]any
+		if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+			continue
+		}
+
+		if choices, ok := data["choices"].([]any); ok {
+			for _, rawChoice := range choices {
+				choice, ok := rawChoice.(map[string]any)
+				if !ok {
+					continue
+				}
+				if delta, ok := choice["delta"].(map[string]any); ok {
+					if text, ok := delta["content"].(string); ok && text != "" {
+						s.sendEvent(c, TestEvent{Type: "content", Text: text})
+					}
+				}
+				if finishReason, ok := choice["finish_reason"].(string); ok && strings.TrimSpace(finishReason) != "" {
+					s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+					return nil
+				}
+			}
+		}
+
+		if errObj, ok := data["error"].(map[string]any); ok {
+			if msg, ok := errObj["message"].(string); ok && msg != "" {
+				return s.sendErrorAndEnd(c, msg)
+			}
 		}
 	}
 }
