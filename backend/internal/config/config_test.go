@@ -242,6 +242,20 @@ func TestLoadForcedCodexInstructionsTemplate(t *testing.T) {
 	require.Equal(t, "server-prefix\n\n{{ .ExistingInstructions }}", cfg.Gateway.ForcedCodexInstructionsTemplate)
 }
 
+func TestLoadForcedCodexInstructionsTemplateFromEnv(t *testing.T) {
+	resetViperWithJWTSecret(t)
+
+	tempDir := t.TempDir()
+	templatePath := filepath.Join(tempDir, "codex-instructions.md.tmpl")
+	require.NoError(t, os.WriteFile(templatePath, []byte("hf-default-template"), 0o644))
+	t.Setenv("GATEWAY_FORCED_CODEX_INSTRUCTIONS_TEMPLATE_FILE", templatePath)
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, templatePath, cfg.Gateway.ForcedCodexInstructionsTemplateFile)
+	require.Equal(t, "hf-default-template", cfg.Gateway.ForcedCodexInstructionsTemplate)
+}
+
 func TestLoadDefaultSecurityToggles(t *testing.T) {
 	resetViperWithJWTSecret(t)
 

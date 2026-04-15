@@ -55,6 +55,16 @@ resolve_data_dir() {
     echo "/app/data"
 }
 
+apply_hf_runtime_defaults() {
+    if ! { [ -n "${SPACE_ID:-}" ] || [ -n "${SPACE_HOST:-}" ]; }; then
+        return 0
+    fi
+
+    if [ -z "${GATEWAY_FORCED_CODEX_INSTRUCTIONS_TEMPLATE_FILE:-}" ] && [ -f /app/resources/prompts/cursor-gpt5-forced-instructions.tmpl ]; then
+        export GATEWAY_FORCED_CODEX_INSTRUCTIONS_TEMPLATE_FILE="/app/resources/prompts/cursor-gpt5-forced-instructions.tmpl"
+    fi
+}
+
 # Fix data directory permissions when running as root.
 # Docker named volumes / host bind-mounts may be owned by root,
 # preventing the non-root sub2api user from writing files.
@@ -70,6 +80,7 @@ if [ "$(id -u)" = "0" ]; then
 fi
 
 export DATA_DIR="$(resolve_data_dir)"
+apply_hf_runtime_defaults
 
 # Compatibility: if the first arg looks like a flag (e.g. --help),
 # prepend the default binary so it behaves the same as the old
