@@ -10,12 +10,21 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const forcedCodexInstructionsStateKey = "_forced_codex_instructions_state"
+
 type forcedCodexInstructionsTemplateData struct {
 	ExistingInstructions string
 	OriginalModel        string
 	NormalizedModel      string
 	BillingModel         string
 	UpstreamModel        string
+}
+
+type forcedCodexInstructionsState struct {
+	TemplateLoaded bool
+	Eligible       bool
+	Applied        bool
+	DecisionModel  string
 }
 
 func (d forcedCodexInstructionsTemplateData) decisionModel() string {
@@ -49,18 +58,50 @@ func applyForcedCodexInstructionsTemplate(
 	return true, nil
 }
 
+func getForcedCodexInstructionsState(c *gin.Context) (forcedCodexInstructionsState, bool) {
+	if c == nil {
+		return forcedCodexInstructionsState{}, false
+	}
+	value, ok := c.Get(forcedCodexInstructionsStateKey)
+	if !ok {
+		return forcedCodexInstructionsState{}, false
+	}
+	state, ok := value.(forcedCodexInstructionsState)
+	return state, ok
+}
+
+func recordForcedCodexInstructionsState(c *gin.Context, templateText string, decisionModel string, eligible, applied bool) {
+	if c == nil {
+		return
+	}
+
+	state, _ := getForcedCodexInstructionsState(c)
+	state.TemplateLoaded = state.TemplateLoaded || strings.TrimSpace(templateText) != ""
+	state.Eligible = state.Eligible || eligible
+	state.Applied = state.Applied || applied
+	if strings.TrimSpace(decisionModel) != "" {
+		state.DecisionModel = strings.TrimSpace(decisionModel)
+	}
+	c.Set(forcedCodexInstructionsStateKey, state)
+}
+
 func applyForcedCodexInstructionsTemplateIfNeeded(
 	c *gin.Context,
 	reqBody map[string]any,
 	templateText string,
 	data forcedCodexInstructionsTemplateData,
 ) (bool, error) {
-	if reqBody == nil || strings.TrimSpace(templateText) == "" || !shouldApplyForcedCodexInstructionsForRequest(c, data.decisionModel()) {
+	decisionModel := data.decisionModel()
+	eligible := reqBody != nil && strings.TrimSpace(templateText) != "" && shouldApplyForcedCodexInstructionsForRequest(c, decisionModel)
+	if !eligible {
+		recordForcedCodexInstructionsState(c, templateText, decisionModel, false, false)
 		return false, nil
 	}
 	existingInstructions, _ := reqBody["instructions"].(string)
 	data.ExistingInstructions = strings.TrimSpace(existingInstructions)
-	return applyForcedCodexInstructionsTemplate(reqBody, templateText, data)
+	changed, err := applyForcedCodexInstructionsTemplate(reqBody, templateText, data)
+	recordForcedCodexInstructionsState(c, templateText, decisionModel, true, err == nil && changed)
+	return changed, err
 }
 
 func applyForcedCodexInstructionsTemplateToBodyIfNeeded(
@@ -69,11 +110,15 @@ func applyForcedCodexInstructionsTemplateToBodyIfNeeded(
 	templateText string,
 	data forcedCodexInstructionsTemplateData,
 ) ([]byte, bool, error) {
-	if len(body) == 0 || strings.TrimSpace(templateText) == "" || !shouldApplyForcedCodexInstructionsForRequest(c, data.decisionModel()) {
+	decisionModel := data.decisionModel()
+	eligible := len(body) > 0 && strings.TrimSpace(templateText) != "" && shouldApplyForcedCodexInstructionsForRequest(c, decisionModel)
+	if !eligible {
+		recordForcedCodexInstructionsState(c, templateText, decisionModel, false, false)
 		return body, false, nil
 	}
 	var reqBody map[string]any
 	if err := json.Unmarshal(body, &reqBody); err != nil {
+		recordForcedCodexInstructionsState(c, templateText, decisionModel, true, false)
 		return nil, false, fmt.Errorf("unmarshal for forced codex instructions: %w", err)
 	}
 	changed, err := applyForcedCodexInstructionsTemplateIfNeeded(c, reqBody, templateText, data)

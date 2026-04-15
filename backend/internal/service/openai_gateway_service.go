@@ -1010,6 +1010,17 @@ func logOpenAIInstructionsRequiredDebug(
 		zap.String("request_user_agent", userAgent),
 		zap.Bool("codex_official_client_match", openai.IsCodexOfficialClientByHeaders(userAgent, originator)),
 	}
+	if c != nil && c.Request != nil && c.Request.URL != nil {
+		fields = append(fields, zap.String("request_path", strings.TrimSpace(c.Request.URL.Path)))
+	}
+	if state, ok := getForcedCodexInstructionsState(c); ok {
+		fields = append(fields,
+			zap.Bool("forced_template_loaded", state.TemplateLoaded),
+			zap.Bool("forced_template_eligible", state.Eligible),
+			zap.Bool("forced_template_applied", state.Applied),
+			zap.String("forced_template_decision_model", state.DecisionModel),
+		)
+	}
 	fields = appendCodexCLIOnlyRejectedRequestFields(fields, c, requestBody)
 
 	logger.FromContext(ctx).With(fields...).Warn("OpenAI 上游返回 Instructions are required，已记录请求详情用于排查")

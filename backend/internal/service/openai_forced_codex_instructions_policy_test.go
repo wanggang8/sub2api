@@ -22,9 +22,10 @@ func TestShouldApplyForcedCodexInstructionsForRequest(t *testing.T) {
 		{name: "cursor responses gpt5", path: "/cursor/v1/responses", model: "gpt-5.4", want: true},
 		{name: "cursor chat completions gpt5", path: "/cursor/v1/chat/completions", model: "gpt-5.2", want: true},
 		{name: "cursor anthropic compat gpt5", path: "/cursor/v1/messages", model: "gpt-5.1", want: true},
-		{name: "cursor path non gpt5", path: "/cursor/v1/responses", model: "gpt-4o", want: false},
+		{name: "cursor path non gpt5", path: "/cursor/v1/responses", model: "gpt-4o", want: true},
+		{name: "cursor path custom model", path: "/cursor/v1/chat/completions", model: "CustomModel", want: true},
 		{name: "non cursor path gpt5", path: "/v1/responses", model: "gpt-5.4", want: false},
-		{name: "empty model", path: "/cursor/v1/responses", model: "", want: false},
+		{name: "empty model", path: "/cursor/v1/responses", model: "", want: true},
 	}
 
 	for _, tt := range tests {
@@ -37,4 +38,3 @@ func TestShouldApplyForcedCodexInstructionsForRequest(t *testing.T) {
 		})
 	}
 }
-
