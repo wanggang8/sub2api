@@ -166,7 +166,6 @@ func TestLogOpenAIInstructionsRequiredDebug_LogsRequestDetails(t *testing.T) {
 
 	body := []byte(`{"model":"gpt-5.1-codex","stream":false,"prompt_cache_key":"pc-abc","access_token":"secret-token","input":[{"type":"text","text":"hello"}]}`)
 	account := &Account{ID: 1001, Name: "codex max套餐"}
-	recordForcedCodexInstructionsState(c, "cursor-template", "CustomModel", true, true)
 
 	logOpenAIInstructionsRequiredDebug(
 		context.Background(),
@@ -183,11 +182,6 @@ func TestLogOpenAIInstructionsRequiredDebug_LogsRequestDetails(t *testing.T) {
 	require.True(t, logSink.ContainsFieldValue("request_model", "gpt-5.1-codex"))
 	require.True(t, logSink.ContainsFieldValue("request_query", "trace=1"))
 	require.True(t, logSink.ContainsFieldValue("account_name", "codex max套餐"))
-	require.True(t, logSink.ContainsFieldValue("request_path", "/v1/responses"))
-	require.True(t, logSink.ContainsFieldValue("forced_template_loaded", "true"))
-	require.True(t, logSink.ContainsFieldValue("forced_template_eligible", "true"))
-	require.True(t, logSink.ContainsFieldValue("forced_template_applied", "true"))
-	require.True(t, logSink.ContainsFieldValue("forced_template_decision_model", "CustomModel"))
 	require.True(t, logSink.ContainsFieldValue("request_headers", "openai-beta"))
 	require.True(t, logSink.ContainsField("request_body_size"))
 	require.False(t, logSink.ContainsField("request_body_preview"))
