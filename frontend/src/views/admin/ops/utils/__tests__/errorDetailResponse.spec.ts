@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { OpsErrorDetail } from '@/api/admin/ops'
-import { resolvePrimaryResponseBody, resolveUpstreamPayload } from '../errorDetailResponse'
+import { resolvePrimaryResponseBody, resolveUpstreamPayload, resolveUpstreamRequestBody } from '../errorDetailResponse'
 
 function makeDetail(overrides: Partial<OpsErrorDetail>): OpsErrorDetail {
   return {
@@ -134,5 +134,20 @@ describe('errorDetailResponse', () => {
       upstream_errors: '',
       upstream_error_message: 'fallback message'
     }))).toBe('fallback message')
+  })
+
+  it('resolves upstream request body from top-level field first', () => {
+    expect(resolveUpstreamRequestBody(makeDetail({
+      upstream_request_body: '{"model":"gpt-5.4","instructions":"templated"}'
+    }))).toBe('{"model":"gpt-5.4","instructions":"templated"}')
+  })
+
+  it('falls back to the latest upstream event request body', () => {
+    expect(resolveUpstreamRequestBody(makeDetail({
+      upstream_errors: JSON.stringify([
+        { upstream_request_body: '{"model":"gpt-4o"}' },
+        { upstream_request_body: '{"model":"gpt-5.4","instructions":"templated"}' }
+      ])
+    }))).toBe('{"model":"gpt-5.4","instructions":"templated"}')
   })
 })

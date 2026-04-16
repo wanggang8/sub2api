@@ -22,12 +22,80 @@ import (
 	"time"
 
 	executorcompat "github.com/Wei-Shaw/sub2api/internal/compat/executor"
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
+
+type cursorCompatOpenAIHTTPUpstreamRecorder struct {
+	lastReq  *http.Request
+	lastBody []byte
+	resp     *http.Response
+	err      error
+}
+
+func (u *cursorCompatOpenAIHTTPUpstreamRecorder) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+	u.lastReq = req
+	if req != nil && req.Body != nil {
+		body, _ := io.ReadAll(req.Body)
+		u.lastBody = body
+		_ = req.Body.Close()
+		req.Body = io.NopCloser(bytes.NewReader(body))
+	}
+	if u.err != nil {
+		return nil, u.err
+	}
+	return u.resp, nil
+}
+
+func (u *cursorCompatOpenAIHTTPUpstreamRecorder) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, opts *service.UpstreamTLSOptions) (*http.Response, error) {
+	return u.Do(req, proxyURL, accountID, accountConcurrency)
+}
+
+type cursorCompatOpenAIAccountRepoStub struct {
+	service.AccountRepository
+	accounts []service.Account
+}
+
+func (r cursorCompatOpenAIAccountRepoStub) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]service.Account, error) {
+	result := make([]service.Account, 0, len(r.accounts))
+	for _, account := range r.accounts {
+		if account.Platform == platform && account.IsSchedulable() {
+			result = append(result, account)
+		}
+	}
+	return result, nil
+}
+
+func (r cursorCompatOpenAIAccountRepoStub) ListSchedulableByPlatform(ctx context.Context, platform string) ([]service.Account, error) {
+	return r.ListSchedulableByGroupIDAndPlatform(ctx, 0, platform)
+}
+
+func (r cursorCompatOpenAIAccountRepoStub) ListSchedulableUngroupedByPlatform(ctx context.Context, platform string) ([]service.Account, error) {
+	return r.ListSchedulableByGroupIDAndPlatform(ctx, 0, platform)
+}
+
+type cursorCompatGatewayCacheStub struct{}
+
+func (cursorCompatGatewayCacheStub) GetSessionAccountID(ctx context.Context, groupID int64, sessionHash string) (int64, error) {
+	return 0, nil
+}
+
+func (cursorCompatGatewayCacheStub) SetSessionAccountID(ctx context.Context, groupID int64, sessionHash string, accountID int64, ttl time.Duration) error {
+	return nil
+}
+
+func (cursorCompatGatewayCacheStub) RefreshSessionTTL(ctx context.Context, groupID int64, sessionHash string, ttl time.Duration) error {
+	return nil
+}
+
+func (cursorCompatGatewayCacheStub) DeleteSessionAccountID(ctx context.Context, groupID int64, sessionHash string) error {
+	return nil
+}
 
 func TestAugmentCompatHandlerChatStreamTransformsStandardJSONToNDJSON(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -66,6 +134,116 @@ func TestAugmentCompatHandlerChatStreamTransformsStandardJSONToNDJSON(t *testing
 	require.Equal(t, "application/x-ndjson", rec.Header().Get("Content-Type"))
 	require.Contains(t, rec.Body.String(), `"text":"done"`)
 	require.Contains(t, rec.Body.String(), `"stop_reason":1`)
+}
+
+func TestCursorCompatHandlerChatCompletions_OpenAIResponsesBridgeInjectsInstructions(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	groupID := int64(11)
+	apiKey := &service.APIKey{
+		ID:      101,
+		GroupID: &groupID,
+		Group: &service.Group{
+			ID:                 groupID,
+			Platform:           service.PlatformOpenAI,
+			DefaultMappedModel: "gpt-4o",
+		},
+		User: &service.User{
+			ID:      7,
+			Status:  service.StatusActive,
+			Balance: 100,
+		},
+	}
+
+	account := service.Account{
+		ID:          301,
+		Name:        "openai-apikey",
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeAPIKey,
+		Status:      service.StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key": "api-key",
+		},
+	}
+
+	upstreamBody := strings.Join([]string{
+		`data: {"type":"response.completed","response":{"id":"resp_1","object":"response","model":"gpt-4o","status":"completed","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	upstream := &cursorCompatOpenAIHTTPUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_handler_cursor_chat"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+
+	cfg := &config.Config{
+		RunMode: config.RunModeSimple,
+		Gateway: config.GatewayConfig{
+			ForcedCodexInstructionsTemplate: "cursor-handler-template",
+		},
+	}
+	billingCacheService := service.NewBillingCacheService(nil, nil, nil, nil, cfg)
+	defer billingCacheService.Stop()
+
+	gatewayService := service.NewOpenAIGatewayService(
+		cursorCompatOpenAIAccountRepoStub{accounts: []service.Account{account}},
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		cursorCompatGatewayCacheStub{},
+		cfg,
+		nil,
+		nil,
+		service.NewBillingService(cfg, nil),
+		nil,
+		billingCacheService,
+		upstream,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+
+	openAIHandler := &OpenAIGatewayHandler{
+		gatewayService:      gatewayService,
+		billingCacheService: billingCacheService,
+		apiKeyService:       &service.APIKeyService{},
+		concurrencyHelper: NewConcurrencyHelper(service.NewConcurrencyService(&concurrencyCacheMock{
+			acquireUserSlotFn: func(ctx context.Context, userID int64, maxConcurrency int, requestID string) (bool, error) {
+				return true, nil
+			},
+			acquireAccountSlotFn: func(ctx context.Context, accountID int64, maxConcurrency int, requestID string) (bool, error) {
+				return true, nil
+			},
+		}), SSEPingFormatNone, time.Second),
+		maxAccountSwitches:  1,
+		cfg:                 cfg,
+	}
+
+	h := &CursorCompatHandler{
+		openaiGateway:               openAIHandler,
+		openaiChatCompletionsAction: openAIHandler.ChatCompletions,
+	}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{"model":"CustomModel","messages":[{"role":"user","content":"hello"}],"stream":false}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/cursor/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set(string(middleware2.ContextKeyAPIKey), apiKey)
+	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: apiKey.User.ID, Concurrency: 5})
+
+	h.ChatCompletions(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "/v1/responses", upstream.lastReq.URL.Path)
+	require.Equal(t, "cursor-handler-template", gjson.GetBytes(upstream.lastBody, "instructions").String())
 }
 
 func TestAugmentCompatHandlerStreamAugmentChatPropagatesInnerContextToOuter(t *testing.T) {

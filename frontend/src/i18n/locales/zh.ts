@@ -3890,6 +3890,7 @@ export default {
         requestPath: '请求路径',
         inboundEndpoint: '入站端点',
         upstreamEndpoint: '上游端点',
+        upstreamRequestBody: '上游请求体',
         requestedModel: '请求模型',
         upstreamModel: '上游模型',
         requestType: '请求类型',

@@ -81,6 +81,7 @@ type OpsErrorLogDetail struct {
 	UpstreamErrorMessage string `json:"upstream_error_message,omitempty"`
 	UpstreamErrorDetail  string `json:"upstream_error_detail,omitempty"`
 	UpstreamErrors       string `json:"upstream_errors,omitempty"` // JSON array (string) for display/parsing
+	UpstreamRequestBody  string `json:"upstream_request_body,omitempty"`
 
 	// Timings (optional)
 	AuthLatencyMs      *int64 `json:"auth_latency_ms"`

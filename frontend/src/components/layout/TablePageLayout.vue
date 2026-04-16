@@ -1,5 +1,5 @@
 <template>
-  <div class="table-page-layout" :class="{ 'mobile-mode': isMobile }">
+  <div class="table-page-layout" :class="{ 'mobile-mode': isMobile, 'fill-height': fillHeight }">
     <!-- 固定区域：操作按钮 -->
     <div v-if="$slots.actions" class="layout-section-fixed">
       <slot name="actions" />
@@ -11,8 +11,8 @@
     </div>
 
     <!-- 滚动区域：表格 -->
-    <div class="layout-section-scrollable">
-      <div class="card table-scroll-container">
+    <div class="layout-section-scrollable" :class="{ 'layout-section-scrollable--fill': fillHeight && !isMobile }">
+      <div class="card table-scroll-container" :class="{ 'table-scroll-container--fill': fillHeight && !isMobile }">
         <slot name="table" />
       </div>
     </div>
@@ -26,6 +26,12 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
+
+withDefaults(defineProps<{
+  fillHeight?: boolean
+}>(), {
+  fillHeight: true
+})
 
 const isMobile = ref(false)
 
@@ -47,6 +53,9 @@ onUnmounted(() => {
 /* 桌面端：Flexbox 布局 */
 .table-page-layout {
   @apply flex flex-col gap-6;
+}
+
+.table-page-layout.fill-height {
   height: calc(100vh - 64px - 4rem); /* 减去 header + lg:p-8 的上下padding */
 }
 
@@ -55,12 +64,20 @@ onUnmounted(() => {
 }
 
 .layout-section-scrollable {
-  @apply flex-1 min-h-0 flex flex-col;
+  @apply flex flex-col;
+}
+
+.layout-section-scrollable--fill {
+  @apply flex-1 min-h-0;
 }
 
 /* 表格滚动容器 - 增强版表体滚动方案 */
 .table-scroll-container {
-  @apply flex flex-col overflow-hidden h-full bg-white dark:bg-dark-800 rounded-2xl border border-gray-200 dark:border-dark-700 shadow-sm;
+  @apply flex flex-col overflow-hidden bg-white dark:bg-dark-800 rounded-2xl border border-gray-200 dark:border-dark-700 shadow-sm;
+}
+
+.table-scroll-container--fill {
+  @apply h-full;
 }
 
 .table-scroll-container :deep(.table-wrapper) {

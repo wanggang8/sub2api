@@ -64,6 +64,31 @@ export function resolveUpstreamPayload(
   return ''
 }
 
+export function resolveUpstreamRequestBody(
+  detail: Pick<OpsErrorDetail, 'upstream_request_body' | 'upstream_errors'> | null | undefined
+): string {
+  if (!detail) return ''
+
+  const direct = String(detail.upstream_request_body || '').trim()
+  if (direct) return direct
+
+  const raw = String(detail.upstream_errors || '').trim()
+  if (!raw || raw === '[]' || raw === '{}' || raw.toLowerCase() === 'null') return ''
+
+  try {
+    const parsed = JSON.parse(raw) as Array<Record<string, unknown>>
+    if (!Array.isArray(parsed)) return ''
+    for (let i = parsed.length - 1; i >= 0; i -= 1) {
+      const candidate = String(parsed[i]?.upstream_request_body || '').trim()
+      if (candidate) return candidate
+    }
+  } catch {
+    return ''
+  }
+
+  return ''
+}
+
 export function resolvePrimaryResponseBody(
   detail: OpsErrorDetail | null,
   errorType?: 'request' | 'upstream'

@@ -987,6 +987,7 @@ export interface OpsErrorDetail extends OpsErrorLog {
   upstream_error_message?: string
   upstream_error_detail?: string
   upstream_errors?: string
+  upstream_request_body?: string
 
   auth_latency_ms?: number | null
   routing_latency_ms?: number | null

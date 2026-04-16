@@ -3727,6 +3727,7 @@ export default {
         requestPath: 'Request Path',
         inboundEndpoint: 'Inbound Endpoint',
         upstreamEndpoint: 'Upstream Endpoint',
+        upstreamRequestBody: 'Upstream Request Body',
         requestedModel: 'Requested Model',
         upstreamModel: 'Upstream Model',
         requestType: 'Request Type',

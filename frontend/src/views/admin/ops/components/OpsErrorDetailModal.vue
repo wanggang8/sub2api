@@ -226,7 +226,7 @@ import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores'
 import { opsAPI, type OpsErrorDetail } from '@/api/admin/ops'
 import { formatDateTime } from '@/utils/format'
-import { resolveUpstreamPayload } from '../utils/errorDetailResponse'
+import { resolveUpstreamPayload, resolveUpstreamRequestBody } from '../utils/errorDetailResponse'
 
 interface Props {
   show: boolean
@@ -322,6 +322,7 @@ const payloadSections = computed<DetailPayloadSection[]>(() => {
   const sections: DetailPayloadSection[] = []
   const clientResponseBody = trimmed(detail.value.error_body)
   const upstreamPayload = resolveUpstreamPayload(detail.value)
+  const upstreamRequestBody = resolveUpstreamRequestBody(detail.value)
   const requestBody = trimmed(detail.value.request_body)
   const requestHeaders = trimmed(detail.value.request_headers)
 
@@ -337,6 +338,13 @@ const payloadSections = computed<DetailPayloadSection[]>(() => {
       key: 'upstream_payload',
       title: t('admin.ops.errorDetail.upstreamPayload'),
       value: upstreamPayload,
+    })
+  }
+  if (upstreamRequestBody) {
+    sections.push({
+      key: 'upstream_request_body',
+      title: t('admin.ops.errorDetail.upstreamRequestBody'),
+      value: upstreamRequestBody,
     })
   }
   if (requestBody) {
