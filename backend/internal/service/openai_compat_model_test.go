@@ -183,6 +183,11 @@ func TestForwardAsAnthropic_ForcedCodexInstructionsTemplateAppliesForCursorGpt5(
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "server-prefix\n\nclient-system", gjson.GetBytes(upstream.lastBody, "instructions").String())
+	rawBody, ok := c.Get(OpsUpstreamRequestBodyKey)
+	require.True(t, ok)
+	bodyBytes, ok := rawBody.([]byte)
+	require.True(t, ok)
+	require.Equal(t, "server-prefix\n\nclient-system", gjson.GetBytes(bodyBytes, "instructions").String())
 }
 
 func TestForwardAsAnthropic_ForcedCodexInstructionsTemplateUsesCachedTemplateContentForCursorGpt5(t *testing.T) {
@@ -382,6 +387,11 @@ func TestForwardAsChatCompletions_ForcedCodexInstructionsTemplateAppliesForCurso
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "cursor-chat-custom-template", gjson.GetBytes(upstream.lastBody, "instructions").String())
+	rawBody, ok := c.Get(OpsUpstreamRequestBodyKey)
+	require.True(t, ok)
+	bodyBytes, ok := rawBody.([]byte)
+	require.True(t, ok)
+	require.Equal(t, "cursor-chat-custom-template", gjson.GetBytes(bodyBytes, "instructions").String())
 }
 
 func TestOpenAIGatewayService_ForcedCodexInstructionsTemplateAppliesForCursorResponsesGpt5(t *testing.T) {

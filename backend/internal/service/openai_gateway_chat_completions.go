@@ -137,6 +137,8 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		return nil, fmt.Errorf("get access token: %w", err)
 	}
 
+	setOpsUpstreamRequestBody(c, responsesBody)
+
 	// 6. Build upstream request
 	upstreamReq, err := s.buildUpstreamRequest(ctx, c, account, responsesBody, token, true, promptCacheKey, false)
 	if err != nil {
