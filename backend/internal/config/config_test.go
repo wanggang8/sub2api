@@ -714,11 +714,11 @@ func TestLoadUsesConservativeDBPoolDefaultsOnHuggingFace(t *testing.T) {
 		t.Fatalf("Load() error: %v", err)
 	}
 
-	if cfg.Database.MaxOpenConns != 8 {
-		t.Fatalf("Database.MaxOpenConns = %d, want 8", cfg.Database.MaxOpenConns)
+	if cfg.Database.MaxOpenConns != 20 {
+		t.Fatalf("Database.MaxOpenConns = %d, want 20", cfg.Database.MaxOpenConns)
 	}
-	if cfg.Database.MaxIdleConns != 4 {
-		t.Fatalf("Database.MaxIdleConns = %d, want 4", cfg.Database.MaxIdleConns)
+	if cfg.Database.MaxIdleConns != 10 {
+		t.Fatalf("Database.MaxIdleConns = %d, want 10", cfg.Database.MaxIdleConns)
 	}
 	if cfg.Database.ConnMaxLifetimeMinutes != 15 {
 		t.Fatalf("Database.ConnMaxLifetimeMinutes = %d, want 15", cfg.Database.ConnMaxLifetimeMinutes)

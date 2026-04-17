@@ -20,8 +20,8 @@ const (
 )
 
 const (
-	hfDBMaxOpenConnsDefault    = 8
-	hfDBMaxIdleConnsDefault    = 4
+	hfDBMaxOpenConnsDefault    = 20
+	hfDBMaxIdleConnsDefault    = 10
 	hfDBConnMaxLifetimeMinutes = 15
 	hfDBConnMaxIdleTimeMinutes = 3
 )
