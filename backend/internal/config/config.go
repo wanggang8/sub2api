@@ -20,8 +20,8 @@ const (
 )
 
 const (
-	hfDBMaxOpenConnsDefault    = 28
-	hfDBMaxIdleConnsDefault    = 14
+	hfDBMaxOpenConnsDefault    = 20
+	hfDBMaxIdleConnsDefault    = 10
 	hfDBConnMaxLifetimeMinutes = 15
 	hfDBConnMaxIdleTimeMinutes = 3
 )
@@ -967,21 +967,9 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
 
-	// Add config paths in priority order
-	// 1. DATA_DIR environment variable (highest priority)
-	if dataDir := os.Getenv("DATA_DIR"); dataDir != "" {
-		viper.AddConfigPath(dataDir)
-	} else if isHuggingFaceSpaceRuntime() {
-		viper.AddConfigPath("/data")
+	for _, path := range configSearchPaths() {
+		viper.AddConfigPath(path)
 	}
-	// 2. Docker data directory
-	viper.AddConfigPath("/app/data")
-	// 3. Current directory
-	viper.AddConfigPath(".")
-	// 4. Config subdirectory
-	viper.AddConfigPath("./config")
-	// 5. System config directory
-	viper.AddConfigPath("/etc/sub2api")
 
 	// 环境变量支持
 	viper.AutomaticEnv()
@@ -2303,6 +2291,22 @@ func generateJWTSecret(byteLength int) (string, error) {
 
 func isHuggingFaceSpaceRuntime() bool {
 	return strings.TrimSpace(os.Getenv("SPACE_ID")) != "" || strings.TrimSpace(os.Getenv("SPACE_HOST")) != ""
+}
+
+func configSearchPaths() []string {
+	paths := make([]string, 0, 5)
+	if dataDir := strings.TrimSpace(os.Getenv("DATA_DIR")); dataDir != "" {
+		paths = append(paths, dataDir)
+	} else if isHuggingFaceSpaceRuntime() {
+		paths = append(paths, "/data")
+	}
+	paths = append(paths,
+		"/app/data",
+		".",
+		"./config",
+		"/etc/sub2api",
+	)
+	return paths
 }
 
 // GetServerAddress returns the server address (host:port) from config file or environment variable.

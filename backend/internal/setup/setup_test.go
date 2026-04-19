@@ -118,3 +118,35 @@ func TestDataDirCandidatesIncludesHuggingFacePath(t *testing.T) {
 		t.Fatalf("first candidate=%q, want /data", candidates[0])
 	}
 }
+
+func TestEmbeddedRedisEnabled(t *testing.T) {
+	t.Run("enabled when env is true", func(t *testing.T) {
+		t.Setenv("EMBEDDED_REDIS_ENABLED", "true")
+		if !embeddedRedisEnabled() {
+			t.Fatalf("embeddedRedisEnabled() = false, want true")
+		}
+	})
+
+	t.Run("disabled by default", func(t *testing.T) {
+		t.Setenv("EMBEDDED_REDIS_ENABLED", "")
+		if embeddedRedisEnabled() {
+			t.Fatalf("embeddedRedisEnabled() = true, want false")
+		}
+	})
+}
+
+func TestDefaultRedisHostFromEnv(t *testing.T) {
+	t.Run("embedded redis uses loopback ip", func(t *testing.T) {
+		t.Setenv("EMBEDDED_REDIS_ENABLED", "true")
+		if got := defaultRedisHostFromEnv(); got != "127.0.0.1" {
+			t.Fatalf("defaultRedisHostFromEnv()=%q, want %q", got, "127.0.0.1")
+		}
+	})
+
+	t.Run("non embedded redis uses localhost", func(t *testing.T) {
+		t.Setenv("EMBEDDED_REDIS_ENABLED", "false")
+		if got := defaultRedisHostFromEnv(); got != "localhost" {
+			t.Fatalf("defaultRedisHostFromEnv()=%q, want %q", got, "localhost")
+		}
+	})
+}
