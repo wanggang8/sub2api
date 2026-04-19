@@ -963,7 +963,11 @@
 
             <!-- Whitelist Mode -->
             <div v-if="modelRestrictionMode === 'whitelist'">
-              <ModelWhitelistSelector v-model="allowedModels" :platform="form.platform" />
+              <ModelWhitelistSelector
+                v-model="allowedModels"
+                :platform="form.platform"
+                :available-models="form.platform === 'openai' && accountCategory === 'apikey' ? currentOpenAISelectableModels : undefined"
+              />
               <p class="text-xs text-gray-500 dark:text-gray-400">
                 {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
                 <span v-if="allowedModels.length === 0">{{
@@ -3153,10 +3157,6 @@ const interceptWarmupRequests = ref(false)
 const autoPauseOnExpired = ref(true)
 const openaiPassthroughEnabled = ref(false)
 const openaiUpstreamCapability = ref<'responses' | 'chat_completions' | 'messages'>('responses')
-const openaiUpstreamModelsLoading = ref(false)
-const openaiUpstreamModelsSource = ref<'upstream' | 'fallback' | null>(null)
-const openaiUpstreamModelsMessage = ref('')
-const openaiUpstreamModels = ref<Array<{ id: string; display_name?: string }>>([])
 const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const codexCLIOnlyEnabled = ref(false)
@@ -3435,7 +3435,6 @@ watch(
         })
         antigravityWhitelistModels.value = []
     } else {
-      resetOpenAIUpstreamModels()
       antigravityWhitelistModels.value = []
       antigravityModelMappings.value = []
       antigravityModelRestrictionMode.value = 'mapping'
