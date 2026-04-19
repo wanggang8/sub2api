@@ -345,6 +345,9 @@ var (
 // ErrNoAvailableAccounts 表示没有可用的账号
 var ErrNoAvailableAccounts = errors.New("no available accounts")
 
+// ErrNoAvailableOpenAIAccountsForRequestedModel 表示没有任何 OpenAI 账号支持显式请求的模型。
+var ErrNoAvailableOpenAIAccountsForRequestedModel = errors.New("no available OpenAI accounts supporting requested model")
+
 // ErrClaudeCodeOnly 表示分组仅允许 Claude Code 客户端访问
 var ErrClaudeCodeOnly = errors.New("this group only allows Claude Code clients")
 

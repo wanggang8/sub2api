@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,8 +13,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 )
@@ -141,4 +144,177 @@ func TestAccountTestService_OpenAI429PersistsSnapshotWithoutRateLimit(t *testing
 	require.Zero(t, repo.rateLimitedID)
 	require.Nil(t, repo.rateLimitedAt)
 	require.Nil(t, account.RateLimitResetAt)
+}
+
+func TestResolveOpenAIAccountTestProtocol(t *testing.T) {
+	t.Run("responses wins when enabled", func(t *testing.T) {
+		account := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"api_key":  "k",
+				"base_url": "https://gateway.example/v1",
+			},
+			Extra: map[string]any{
+				"openai_upstream_supports_responses":        true,
+				"openai_upstream_supports_chat_completions": false,
+				"openai_upstream_supports_messages":         false,
+			},
+		}
+		require.Equal(t, openAIAccountTestProtocolResponses, resolveOpenAIAccountTestProtocol(account))
+	})
+
+	t.Run("messages preferred over chat for legacy mixed flag", func(t *testing.T) {
+		account := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"api_key":  "k",
+				"base_url": "https://gateway.example/v1",
+			},
+			Extra: map[string]any{
+				"openai_upstream_supports_responses":        false,
+				"openai_upstream_supports_chat_completions": true,
+				"openai_upstream_supports_messages":         true,
+			},
+		}
+		require.Equal(t, openAIAccountTestProtocolMessages, resolveOpenAIAccountTestProtocol(account))
+	})
+
+	t.Run("chat completions selected when only chat enabled", func(t *testing.T) {
+		account := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"api_key":  "k",
+				"base_url": "https://gateway.example/v1",
+			},
+			Extra: map[string]any{
+				"openai_upstream_supports_responses":        false,
+				"openai_upstream_supports_chat_completions": true,
+				"openai_upstream_supports_messages":         false,
+			},
+		}
+		require.Equal(t, openAIAccountTestProtocolChatCompletions, resolveOpenAIAccountTestProtocol(account))
+	})
+}
+
+func TestAccountTestService_OpenAIAPIKeyUsesSelectedUpstreamProtocolForTest(t *testing.T) {
+	t.Run("responses protocol uses responses endpoint and payload", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		ctx, recorder := newTestContext()
+
+		resp := newJSONResponse(http.StatusOK, "")
+		resp.Body = io.NopCloser(strings.NewReader("data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\ndata: {\"type\":\"response.completed\"}\n\n"))
+
+		repo := &openAIAccountTestRepo{}
+		upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
+		svc := &AccountTestService{
+			accountRepo:  repo,
+			httpUpstream: upstream,
+			cfg:          &config.Config{},
+		}
+		account := &Account{
+			ID:          100,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Concurrency: 1,
+			Credentials: map[string]any{"api_key": "test-key", "base_url": "https://gateway.example/v1"},
+			Extra: map[string]any{
+				"openai_upstream_supports_responses":        true,
+				"openai_upstream_supports_chat_completions": false,
+				"openai_upstream_supports_messages":         false,
+			},
+		}
+
+		err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4")
+		require.NoError(t, err)
+		require.Len(t, upstream.requests, 1)
+		require.Equal(t, "https://gateway.example/v1/responses", upstream.requests[0].URL.String())
+
+		body, readErr := io.ReadAll(upstream.requests[0].Body)
+		require.NoError(t, readErr)
+		require.Equal(t, "gpt-5.4", gjson.GetBytes(body, "model").String())
+		require.True(t, gjson.GetBytes(body, "input").Exists())
+		require.Contains(t, recorder.Body.String(), "test_complete")
+	})
+
+	t.Run("chat completions protocol uses chat endpoint and payload", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		ctx, recorder := newTestContext()
+
+		resp := newJSONResponse(http.StatusOK, "")
+		resp.Body = io.NopCloser(strings.NewReader("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: {\"choices\":[{\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"))
+
+		repo := &openAIAccountTestRepo{}
+		upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
+		svc := &AccountTestService{
+			accountRepo:  repo,
+			httpUpstream: upstream,
+			cfg:          &config.Config{},
+		}
+		account := &Account{
+			ID:          101,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Concurrency: 1,
+			Credentials: map[string]any{"api_key": "test-key", "base_url": "https://gateway.example/v1"},
+			Extra: map[string]any{
+				"openai_upstream_supports_responses":        false,
+				"openai_upstream_supports_chat_completions": true,
+				"openai_upstream_supports_messages":         false,
+			},
+		}
+
+		err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4")
+		require.NoError(t, err)
+		require.Len(t, upstream.requests, 1)
+		require.Equal(t, "https://gateway.example/v1/chat/completions", upstream.requests[0].URL.String())
+
+		body, readErr := io.ReadAll(upstream.requests[0].Body)
+		require.NoError(t, readErr)
+		require.Equal(t, "gpt-5.4", gjson.GetBytes(body, "model").String())
+		require.True(t, gjson.GetBytes(body, "messages").Exists())
+		require.Contains(t, recorder.Body.String(), "test_complete")
+	})
+
+	t.Run("messages protocol uses messages endpoint and anthropic payload", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		ctx, recorder := newTestContext()
+
+		resp := newJSONResponse(http.StatusOK, "")
+		resp.Body = io.NopCloser(strings.NewReader("data: {\"type\":\"content_block_delta\",\"delta\":{\"text\":\"ok\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n"))
+
+		repo := &openAIAccountTestRepo{}
+		upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
+		svc := &AccountTestService{
+			accountRepo:  repo,
+			httpUpstream: upstream,
+			cfg:          &config.Config{},
+		}
+		account := &Account{
+			ID:          102,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Concurrency: 1,
+			Credentials: map[string]any{"api_key": "test-key", "base_url": "https://gateway.example/v1"},
+			Extra: map[string]any{
+				"openai_upstream_supports_responses":        false,
+				"openai_upstream_supports_chat_completions": false,
+				"openai_upstream_supports_messages":         true,
+			},
+		}
+
+		err := svc.testOpenAIAccountConnection(ctx, account, "claude-opus-4-1")
+		require.NoError(t, err)
+		require.Len(t, upstream.requests, 1)
+		require.Equal(t, "https://gateway.example/v1/messages", upstream.requests[0].URL.String())
+
+		body, readErr := io.ReadAll(upstream.requests[0].Body)
+		require.NoError(t, readErr)
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal(body, &payload))
+		require.Equal(t, "claude-opus-4-1", payload["model"])
+		require.Contains(t, recorder.Body.String(), "test_complete")
+	})
 }

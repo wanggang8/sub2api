@@ -1245,7 +1245,7 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.C
 
 	if selected == nil {
 		if requestedModel != "" {
-			return nil, fmt.Errorf("no available OpenAI accounts supporting model: %s", requestedModel)
+			return nil, fmt.Errorf("%w: %s", ErrNoAvailableOpenAIAccountsForRequestedModel, requestedModel)
 		}
 		return nil, errors.New("no available OpenAI accounts")
 	}

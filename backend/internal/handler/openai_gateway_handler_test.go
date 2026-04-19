@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -412,6 +413,25 @@ func TestResolveOpenAIMessagesDispatchMappedModel(t *testing.T) {
 		}
 		require.Empty(t, resolveOpenAIMessagesDispatchMappedModel(apiKey, "gpt-5.4"))
 		require.Equal(t, "gpt-5.3-codex", resolveOpenAIMessagesDispatchMappedModel(apiKey, "claude-sonnet-4-5-20250929"))
+	})
+}
+
+func TestOpenAIChatCompletionsSelectionErrorResponse(t *testing.T) {
+	t.Run("returns invalid request when requested model has no supporting account", func(t *testing.T) {
+		err := fmt.Errorf("%w: %s", service.ErrNoAvailableOpenAIAccountsForRequestedModel, "GLM-5.1")
+		status, code, message, handled := openAIChatCompletionsSelectionErrorResponse(err, "GLM-5.1")
+		require.True(t, handled)
+		require.Equal(t, http.StatusBadRequest, status)
+		require.Equal(t, "invalid_request_error", code)
+		require.Equal(t, "No available accounts in this group support model 'GLM-5.1'.", message)
+	})
+
+	t.Run("ignores generic availability errors", func(t *testing.T) {
+		status, code, message, handled := openAIChatCompletionsSelectionErrorResponse(service.ErrNoAvailableAccounts, "GLM-5.1")
+		require.False(t, handled)
+		require.Zero(t, status)
+		require.Empty(t, code)
+		require.Empty(t, message)
 	})
 }
 

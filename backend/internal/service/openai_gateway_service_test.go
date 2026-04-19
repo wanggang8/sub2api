@@ -764,6 +764,40 @@ func TestOpenAISelectAccountForModelWithExclusions_NoAccounts(t *testing.T) {
 	}
 }
 
+func TestOpenAISelectAccountForModelWithExclusions_NoAccountsSupportRequestedModel(t *testing.T) {
+	repo := stubOpenAIAccountRepo{
+		accounts: []Account{
+			{
+				ID:          1,
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeAPIKey,
+				Status:      StatusActive,
+				Schedulable: true,
+				Concurrency: 1,
+				Priority:    1,
+				Credentials: map[string]any{
+					"api_key":  "k1",
+					"base_url": "https://gateway.example/v1",
+					"model_mapping": map[string]any{
+						"gpt-5.4": "gpt-5.4",
+					},
+				},
+			},
+		},
+	}
+	cache := &stubGatewayCache{}
+
+	svc := &OpenAIGatewayService{
+		accountRepo: repo,
+		cache:       cache,
+	}
+
+	acc, err := svc.SelectAccountForModelWithExclusions(context.Background(), nil, "", "GLM-5.1", nil)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrNoAvailableOpenAIAccountsForRequestedModel)
+	require.Nil(t, acc)
+}
+
 func TestOpenAISelectAccountWithLoadAwareness_NoCandidates(t *testing.T) {
 	groupID := int64(1)
 	resetAt := time.Now().Add(1 * time.Hour)

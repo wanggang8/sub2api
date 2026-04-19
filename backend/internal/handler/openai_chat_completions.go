@@ -3,7 +3,9 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
@@ -134,6 +136,10 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
 			if len(failedAccountIDs) == 0 {
+				if status, code, message, handled := openAIChatCompletionsSelectionErrorResponse(err, reqModel); handled {
+					h.handleStreamingAwareError(c, status, code, message, streamStarted)
+					return
+				}
 				defaultModel := ""
 				if apiKey.Group != nil {
 					defaultModel = apiKey.Group.DefaultMappedModel
@@ -294,4 +300,15 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		)
 		return
 	}
+}
+
+func openAIChatCompletionsSelectionErrorResponse(err error, requestedModel string) (status int, code string, message string, handled bool) {
+	if errors.Is(err, service.ErrNoAvailableOpenAIAccountsForRequestedModel) {
+		model := strings.TrimSpace(requestedModel)
+		if model == "" {
+			model = "the requested model"
+		}
+		return http.StatusBadRequest, "invalid_request_error", fmt.Sprintf("No available accounts in this group support model '%s'.", model), true
+	}
+	return 0, "", "", false
 }

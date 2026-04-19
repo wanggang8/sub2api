@@ -202,6 +202,40 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_FiltersByMessagesCompat
 	require.Equal(t, messagesOnly.ID, selection.Account.ID)
 }
 
+func TestOpenAIGatewayService_SelectAccountWithScheduler_ReturnsModelSupportErrorWhenNoAccountSupportsRequestedModel(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(10108)
+	account := Account{
+		ID:          38001,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    0,
+		Credentials: map[string]any{
+			"api_key":  "k1",
+			"base_url": "https://gateway.example/v1",
+			"model_mapping": map[string]any{
+				"gpt-5.4": "gpt-5.4",
+			},
+		},
+		Extra: map[string]any{
+			"openai_upstream_supports_responses": true,
+		},
+	}
+	svc := &OpenAIGatewayService{
+		accountRepo:        stubOpenAIAccountRepo{accounts: []Account{account}},
+		cfg:                &config.Config{},
+		concurrencyService: NewConcurrencyService(stubConcurrencyCache{}),
+	}
+
+	selection, _, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "session_hash_no_model_support", "GLM-5.1", nil, OpenAIUpstreamTransportAny, OpenAIUpstreamCapabilityResponsesCompatibleChatCompletions)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrNoAvailableOpenAIAccountsForRequestedModel)
+	require.Nil(t, selection)
+}
+
 func TestOpenAIGatewayService_SelectAccountForModelWithExclusions_SkipsFreshlyRateLimitedSnapshotCandidate(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10102)

@@ -35,6 +35,14 @@ const (
 	chatgptCodexAPIURL = "https://chatgpt.com/backend-api/codex/responses"
 )
 
+type openAIAccountTestProtocol string
+
+const (
+	openAIAccountTestProtocolResponses       openAIAccountTestProtocol = "responses"
+	openAIAccountTestProtocolChatCompletions openAIAccountTestProtocol = "chat_completions"
+	openAIAccountTestProtocolMessages        openAIAccountTestProtocol = "messages"
+)
+
 // TestEvent represents a SSE event for account testing
 type TestEvent struct {
 	Type     string `json:"type"`
@@ -421,12 +429,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 
 	// For API Key accounts with model mapping, map the model
 	if account.Type == "apikey" {
-		mapping := account.GetModelMapping()
-		if len(mapping) > 0 {
-			if mappedModel, exists := mapping[testModelID]; exists {
-				testModelID = mappedModel
-			}
-		}
+		testModelID = account.GetMappedModel(testModelID)
 	}
 
 	// Determine authentication method and API URL
@@ -434,6 +437,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	var apiURL string
 	var isOAuth bool
 	var chatgptAccountID string
+	protocol := openAIAccountTestProtocolResponses
 
 	if account.IsOAuth() {
 		isOAuth = true
@@ -461,7 +465,15 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		if err != nil {
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 		}
-		apiURL = strings.TrimSuffix(normalizedBaseURL, "/") + "/responses"
+		protocol = resolveOpenAIAccountTestProtocol(account)
+		switch protocol {
+		case openAIAccountTestProtocolMessages:
+			apiURL = buildOpenAIMessagesURL(normalizedBaseURL)
+		case openAIAccountTestProtocolChatCompletions:
+			apiURL = buildOpenAIChatCompletionsURL(normalizedBaseURL)
+		default:
+			apiURL = buildOpenAIResponsesURL(normalizedBaseURL)
+		}
 	} else {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Unsupported account type: %s", account.Type))
 	}
@@ -473,8 +485,10 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
 	c.Writer.Flush()
 
-	// Create OpenAI Responses API payload
-	payload := createOpenAITestPayload(testModelID, isOAuth)
+	payload, err := createOpenAIAccountTestPayload(testModelID, isOAuth, protocol)
+	if err != nil {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to create test payload: %s", err.Error()))
+	}
 	payloadBytes, _ := json.Marshal(payload)
 
 	// Send test_start event
@@ -528,7 +542,14 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	}
 
 	// Process SSE stream
-	return s.processOpenAIStream(c, resp.Body)
+	switch protocol {
+	case openAIAccountTestProtocolMessages:
+		return s.processClaudeStream(c, resp.Body)
+	case openAIAccountTestProtocolChatCompletions:
+		return s.processOpenAIChatCompletionsStream(c, resp.Body)
+	default:
+		return s.processOpenAIStream(c, resp.Body)
+	}
 }
 
 // testGeminiAccountConnection tests a Gemini account's connection
@@ -918,6 +939,52 @@ func createOpenAITestPayload(modelID string, isOAuth bool) map[string]any {
 	return payload
 }
 
+func createOpenAIChatCompletionsTestPayload(modelID string) map[string]any {
+	return map[string]any{
+		"model": modelID,
+		"messages": []map[string]any{
+			{
+				"role":    "system",
+				"content": openai.DefaultInstructions,
+			},
+			{
+				"role":    "user",
+				"content": "hi",
+			},
+		},
+		"stream": true,
+	}
+}
+
+func createOpenAIAccountTestPayload(modelID string, isOAuth bool, protocol openAIAccountTestProtocol) (map[string]any, error) {
+	switch protocol {
+	case openAIAccountTestProtocolMessages:
+		return createTestPayload(modelID)
+	case openAIAccountTestProtocolChatCompletions:
+		return createOpenAIChatCompletionsTestPayload(modelID), nil
+	default:
+		return createOpenAITestPayload(modelID, isOAuth), nil
+	}
+}
+
+func resolveOpenAIAccountTestProtocol(account *Account) openAIAccountTestProtocol {
+	if account == nil {
+		return openAIAccountTestProtocolResponses
+	}
+	if account.SupportsOpenAIResponsesUpstream() {
+		return openAIAccountTestProtocolResponses
+	}
+	// Older UI saved "messages" as chat+messages. Prefer messages when both are true
+	// so account testing matches the visible admin selection as closely as possible.
+	if account.SupportsOpenAIMessagesUpstream() {
+		return openAIAccountTestProtocolMessages
+	}
+	if account.SupportsOpenAIChatCompletionsUpstream() {
+		return openAIAccountTestProtocolChatCompletions
+	}
+	return openAIAccountTestProtocolResponses
+}
+
 // processClaudeStream processes the SSE stream from Claude API
 func (s *AccountTestService) processClaudeStream(c *gin.Context, body io.Reader) error {
 	reader := bufio.NewReader(body)
@@ -1019,6 +1086,59 @@ func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader)
 				if msg, ok := errData["message"].(string); ok {
 					errorMsg = msg
 				}
+			}
+			return s.sendErrorAndEnd(c, errorMsg)
+		}
+	}
+}
+
+func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, body io.Reader) error {
+	reader := bufio.NewReader(body)
+
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+				return nil
+			}
+			return s.sendErrorAndEnd(c, fmt.Sprintf("Stream read error: %s", err.Error()))
+		}
+
+		line = strings.TrimSpace(line)
+		if line == "" || !sseDataPrefix.MatchString(line) {
+			continue
+		}
+
+		jsonStr := sseDataPrefix.ReplaceAllString(line, "")
+		if jsonStr == "[DONE]" {
+			s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+			return nil
+		}
+
+		var data map[string]any
+		if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+			continue
+		}
+
+		if choices, ok := data["choices"].([]any); ok && len(choices) > 0 {
+			if choice, ok := choices[0].(map[string]any); ok {
+				if delta, ok := choice["delta"].(map[string]any); ok {
+					if text, ok := delta["content"].(string); ok && text != "" {
+						s.sendEvent(c, TestEvent{Type: "content", Text: text})
+					}
+				}
+				if finishReason, ok := choice["finish_reason"].(string); ok && finishReason != "" {
+					s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+					return nil
+				}
+			}
+		}
+
+		if errData, ok := data["error"].(map[string]any); ok {
+			errorMsg := "Unknown error"
+			if msg, ok := errData["message"].(string); ok {
+				errorMsg = msg
 			}
 			return s.sendErrorAndEnd(c, errorMsg)
 		}
