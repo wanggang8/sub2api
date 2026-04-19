@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"net/url"
+
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 )
@@ -864,6 +866,80 @@ func (a *Account) GetOpenAIBaseURL() string {
 		}
 	}
 	return "https://api.openai.com"
+}
+
+func (a *Account) SupportsOpenAIResponsesUpstream() bool {
+	if a == nil || !a.IsOpenAI() {
+		return false
+	}
+	if a.IsOpenAIOAuth() {
+		return true
+	}
+	if !a.hasCustomOpenAIBaseURL() {
+		return true
+	}
+	if a.Extra == nil {
+		return true
+	}
+	if enabled, ok := a.Extra["openai_upstream_supports_responses"].(bool); ok {
+		return enabled
+	}
+	return true
+}
+
+func (a *Account) SupportsOpenAIChatCompletionsUpstream() bool {
+	if a == nil || !a.IsOpenAI() {
+		return false
+	}
+	if a.IsOpenAIOAuth() {
+		return true
+	}
+	if !a.hasCustomOpenAIBaseURL() {
+		return false
+	}
+	if a.Extra == nil {
+		return true
+	}
+	if enabled, ok := a.Extra["openai_upstream_supports_chat_completions"].(bool); ok {
+		return enabled
+	}
+	return true
+}
+
+func (a *Account) SupportsOpenAIMessagesUpstream() bool {
+	if a == nil || !a.IsOpenAI() {
+		return false
+	}
+	if a.IsOpenAIOAuth() {
+		return false
+	}
+	if !a.hasCustomOpenAIBaseURL() {
+		return false
+	}
+	if a.Extra == nil {
+		return false
+	}
+	if enabled, ok := a.Extra["openai_upstream_supports_messages"].(bool); ok {
+		return enabled
+	}
+	return false
+}
+
+func (a *Account) hasCustomOpenAIBaseURL() bool {
+	if a == nil || !a.IsOpenAIApiKey() {
+		return false
+	}
+	baseURL := strings.TrimSpace(a.GetCredential("base_url"))
+	if baseURL == "" {
+		return false
+	}
+	if parsed, err := url.Parse(baseURL); err == nil {
+		if strings.EqualFold(parsed.Scheme, "https") && strings.EqualFold(parsed.Hostname(), "api.openai.com") {
+			return false
+		}
+	}
+	normalized := strings.TrimRight(strings.ToLower(baseURL), "/")
+	return normalized != "" && normalized != "https://api.openai.com" && normalized != "https://api.openai.com/v1"
 }
 
 func (a *Account) GetOpenAIAccessToken() string {

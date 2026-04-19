@@ -2348,6 +2348,60 @@
         </div>
       </div>
 
+      <!-- OpenAI 上游协议（仅 API Key） -->
+      <div
+        v-if="form.platform === 'openai' && accountCategory === 'apikey'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="mb-3">
+          <label class="input-label mb-0">OpenAI Upstream Protocol</label>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            为自定义 OpenAI Base URL 指定上游实际支持的接口协议。
+          </p>
+        </div>
+        <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <button
+            type="button"
+            @click="openaiUpstreamCapability = 'responses'"
+            :class="[
+              'rounded-lg border-2 p-3 text-left transition-all',
+              openaiUpstreamCapability === 'responses'
+                ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
+                : 'border-gray-200 hover:border-green-300 dark:border-dark-600 dark:hover:border-green-700'
+            ]"
+          >
+            <div class="text-sm font-medium text-gray-900 dark:text-white">Responses</div>
+            <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">默认 OpenAI 兼容接口</div>
+          </button>
+          <button
+            type="button"
+            @click="openaiUpstreamCapability = 'chat_completions'"
+            :class="[
+              'rounded-lg border-2 p-3 text-left transition-all',
+              openaiUpstreamCapability === 'chat_completions'
+                ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
+                : 'border-gray-200 hover:border-green-300 dark:border-dark-600 dark:hover:border-green-700'
+            ]"
+          >
+            <div class="text-sm font-medium text-gray-900 dark:text-white">Chat Completions</div>
+            <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">兼容 `/v1/chat/completions`</div>
+          </button>
+          <button
+            type="button"
+            @click="openaiUpstreamCapability = 'messages'"
+            :class="[
+              'rounded-lg border-2 p-3 text-left transition-all',
+              openaiUpstreamCapability === 'messages'
+                ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
+                : 'border-gray-200 hover:border-green-300 dark:border-dark-600 dark:hover:border-green-700'
+            ]"
+          >
+            <div class="text-sm font-medium text-gray-900 dark:text-white">Messages</div>
+            <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">兼容 `/v1/messages`</div>
+          </button>
+        </div>
+      </div>
+
       <!-- OpenAI WS Mode 三态（off/ctx_pool/passthrough） -->
       <div
         v-if="form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
@@ -3071,6 +3125,7 @@ const customErrorCodeInput = ref<number | null>(null)
 const interceptWarmupRequests = ref(false)
 const autoPauseOnExpired = ref(true)
 const openaiPassthroughEnabled = ref(false)
+const openaiUpstreamCapability = ref<'responses' | 'chat_completions' | 'messages'>('responses')
 const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const codexCLIOnlyEnabled = ref(false)
@@ -3858,6 +3913,20 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
   } else if (accountCategory.value === 'apikey') {
     extra.openai_apikey_responses_websockets_v2_mode = openaiAPIKeyResponsesWebSocketV2Mode.value
     extra.openai_apikey_responses_websockets_v2_enabled = isOpenAIWSModeEnabled(openaiAPIKeyResponsesWebSocketV2Mode.value)
+
+    if (openaiUpstreamCapability.value === 'responses') {
+      delete extra.openai_upstream_supports_responses
+      delete extra.openai_upstream_supports_chat_completions
+      delete extra.openai_upstream_supports_messages
+    } else if (openaiUpstreamCapability.value === 'chat_completions') {
+      extra.openai_upstream_supports_responses = false
+      extra.openai_upstream_supports_chat_completions = true
+      extra.openai_upstream_supports_messages = false
+    } else {
+      extra.openai_upstream_supports_responses = false
+      extra.openai_upstream_supports_chat_completions = true
+      extra.openai_upstream_supports_messages = true
+    }
   }
   // 清理兼容旧键，统一改用分类型开关。
   delete extra.responses_websockets_v2_enabled

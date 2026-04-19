@@ -193,6 +193,40 @@ func TestAccount_IsOpenAIResponsesWebSocketV2Enabled(t *testing.T) {
 		require.True(t, account.IsOpenAIResponsesWebSocketV2Enabled())
 	})
 
+	t.Run("旧请求能力字段按 custom 逻辑兼容", func(t *testing.T) {
+		responsesDefault := &Account{
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Credentials: map[string]any{"api_key": "k-responses"},
+		}
+		require.True(t, responsesDefault.SupportsOpenAIResponsesUpstream())
+		require.False(t, responsesDefault.SupportsOpenAIChatCompletionsUpstream())
+		require.False(t, responsesDefault.SupportsOpenAIMessagesUpstream())
+
+		customBase := &Account{
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Credentials: map[string]any{"api_key": "k-chat", "base_url": "https://gateway.example/v1"},
+		}
+		require.True(t, customBase.SupportsOpenAIResponsesUpstream())
+		require.True(t, customBase.SupportsOpenAIChatCompletionsUpstream())
+		require.False(t, customBase.SupportsOpenAIMessagesUpstream())
+
+		customMessages := &Account{
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Credentials: map[string]any{"api_key": "k-msg", "base_url": "https://gateway.example/v1"},
+			Extra: map[string]any{
+				"openai_upstream_supports_responses":        false,
+				"openai_upstream_supports_chat_completions": true,
+				"openai_upstream_supports_messages":         true,
+			},
+		}
+		require.False(t, customMessages.SupportsOpenAIResponsesUpstream())
+		require.True(t, customMessages.SupportsOpenAIChatCompletionsUpstream())
+		require.True(t, customMessages.SupportsOpenAIMessagesUpstream())
+	})
+
 	t.Run("非OpenAI账号默认关闭", func(t *testing.T) {
 		account := &Account{
 			Platform: PlatformAnthropic,

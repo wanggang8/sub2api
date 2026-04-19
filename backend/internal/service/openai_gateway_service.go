@@ -34,6 +34,15 @@ import (
 	"go.uber.org/zap"
 )
 
+type OpenAIUpstreamAPI string
+
+const (
+	OpenAIUpstreamAPIAny             OpenAIUpstreamAPI = "any"
+	OpenAIUpstreamAPIResponses       OpenAIUpstreamAPI = "responses"
+	OpenAIUpstreamAPIChatCompletions OpenAIUpstreamAPI = "chat_completions"
+	OpenAIUpstreamAPIMessages        OpenAIUpstreamAPI = "messages"
+)
+
 const (
 	// ChatGPT internal API for OAuth accounts
 	chatgptCodexURL = "https://chatgpt.com/backend-api/codex/responses"
@@ -2664,6 +2673,18 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	body []byte,
 	token string,
 ) (*http.Request, error) {
+	targetAPI := OpenAIUpstreamAPIResponses
+	if c != nil {
+		if override, ok := c.Get("openai_upstream_endpoint_override"); ok {
+			switch strings.TrimSpace(fmt.Sprint(override)) {
+			case "/v1/chat/completions":
+				targetAPI = OpenAIUpstreamAPIChatCompletions
+			case "/v1/messages":
+				targetAPI = OpenAIUpstreamAPIMessages
+			}
+		}
+	}
+
 	targetURL := openaiPlatformAPIURL
 	switch account.Type {
 	case AccountTypeOAuth:
@@ -2675,10 +2696,19 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 			if err != nil {
 				return nil, err
 			}
-			targetURL = buildOpenAIResponsesURL(validatedURL)
+			switch targetAPI {
+			case OpenAIUpstreamAPIChatCompletions:
+				targetURL = buildOpenAIChatCompletionsURL(validatedURL)
+			case OpenAIUpstreamAPIMessages:
+				targetURL = buildOpenAIMessagesURL(validatedURL)
+			default:
+				targetURL = buildOpenAIResponsesURL(validatedURL)
+			}
 		}
 	}
-	targetURL = appendOpenAIResponsesRequestPathSuffix(targetURL, openAIResponsesRequestPathSuffix(c))
+	if targetAPI == OpenAIUpstreamAPIResponses || targetAPI == OpenAIUpstreamAPIAny {
+		targetURL = appendOpenAIResponsesRequestPathSuffix(targetURL, openAIResponsesRequestPathSuffix(c))
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
@@ -4176,6 +4206,28 @@ func (s *OpenAIGatewayService) validateUpstreamBaseURL(raw string) (string, erro
 // - base 以 /v1 结尾：追加 /responses
 // - base 已是 /responses：原样返回
 // - 其他情况：追加 /v1/responses
+func buildOpenAIChatCompletionsURL(base string) string {
+	normalized := strings.TrimRight(strings.TrimSpace(base), "/")
+	if strings.HasSuffix(normalized, "/chat/completions") {
+		return normalized
+	}
+	if strings.HasSuffix(normalized, "/v1") {
+		return normalized + "/chat/completions"
+	}
+	return normalized + "/v1/chat/completions"
+}
+
+func buildOpenAIMessagesURL(base string) string {
+	normalized := strings.TrimRight(strings.TrimSpace(base), "/")
+	if strings.HasSuffix(normalized, "/messages") {
+		return normalized
+	}
+	if strings.HasSuffix(normalized, "/v1") {
+		return normalized + "/messages"
+	}
+	return normalized + "/v1/messages"
+}
+
 func buildOpenAIResponsesURL(base string) string {
 	normalized := strings.TrimRight(strings.TrimSpace(base), "/")
 	if strings.HasSuffix(normalized, "/responses") {

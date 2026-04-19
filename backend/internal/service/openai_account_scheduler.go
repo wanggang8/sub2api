@@ -21,14 +21,24 @@ const (
 	openAIAccountScheduleLayerLoadBalance      = "load_balance"
 )
 
+type OpenAIUpstreamCapability string
+
+const (
+	OpenAIUpstreamCapabilityAny             OpenAIUpstreamCapability = ""
+	OpenAIUpstreamCapabilityResponses       OpenAIUpstreamCapability = "responses"
+	OpenAIUpstreamCapabilityChatCompletions OpenAIUpstreamCapability = "chat_completions"
+	OpenAIUpstreamCapabilityMessages        OpenAIUpstreamCapability = "messages"
+)
+
 type OpenAIAccountScheduleRequest struct {
-	GroupID            *int64
-	SessionHash        string
-	StickyAccountID    int64
-	PreviousResponseID string
-	RequestedModel     string
-	RequiredTransport  OpenAIUpstreamTransport
-	ExcludedIDs        map[int64]struct{}
+	GroupID             *int64
+	SessionHash         string
+	StickyAccountID     int64
+	PreviousResponseID  string
+	RequestedModel      string
+	RequiredTransport   OpenAIUpstreamTransport
+	RequiredCapability  OpenAIUpstreamCapability
+	ExcludedIDs         map[int64]struct{}
 }
 
 type OpenAIAccountScheduleDecision struct {
@@ -246,7 +256,7 @@ func (s *defaultOpenAIAccountScheduler) Select(
 			return nil, decision, err
 		}
 		if selection != nil && selection.Account != nil {
-			if !s.isAccountTransportCompatible(selection.Account, req.RequiredTransport) {
+			if !s.isAccountTransportCompatible(selection.Account, req.RequiredTransport) || !s.isAccountCapabilityCompatible(selection.Account, req.RequiredCapability) {
 				selection = nil
 			}
 		}
@@ -327,7 +337,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 	if req.RequestedModel != "" && !account.IsModelSupported(req.RequestedModel) {
 		return nil, nil
 	}
-	if !s.isAccountTransportCompatible(account, req.RequiredTransport) {
+	if !s.isAccountTransportCompatible(account, req.RequiredTransport) || !s.isAccountCapabilityCompatible(account, req.RequiredCapability) {
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
 		return nil, nil
 	}
@@ -603,7 +613,7 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		if req.RequestedModel != "" && !account.IsModelSupported(req.RequestedModel) {
 			continue
 		}
-		if !s.isAccountTransportCompatible(account, req.RequiredTransport) {
+		if !s.isAccountTransportCompatible(account, req.RequiredTransport) || !s.isAccountCapabilityCompatible(account, req.RequiredCapability) {
 			continue
 		}
 		filtered = append(filtered, account)
@@ -706,11 +716,11 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 	for i := 0; i < len(selectionOrder); i++ {
 		candidate := selectionOrder[i]
 		fresh := s.service.resolveFreshSchedulableOpenAIAccount(ctx, candidate.account, req.RequestedModel)
-		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) {
+		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountCapabilityCompatible(fresh, req.RequiredCapability) {
 			continue
 		}
 		fresh = s.service.recheckSelectedOpenAIAccountFromDB(ctx, fresh, req.RequestedModel)
-		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) {
+		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountCapabilityCompatible(fresh, req.RequiredCapability) {
 			continue
 		}
 		result, acquireErr := s.service.tryAcquireAccountSlot(ctx, fresh.ID, fresh.Concurrency)
@@ -733,7 +743,7 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 	// WaitPlan.MaxConcurrency 使用 Concurrency（非 EffectiveLoadFactor），因为 WaitPlan 控制的是 Redis 实际并发槽位等待。
 	for _, candidate := range selectionOrder {
 		fresh := s.service.resolveFreshSchedulableOpenAIAccount(ctx, candidate.account, req.RequestedModel)
-		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) {
+		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountCapabilityCompatible(fresh, req.RequiredCapability) {
 			continue
 		}
 		return &AccountSelectionResult{
@@ -759,6 +769,24 @@ func (s *defaultOpenAIAccountScheduler) isAccountTransportCompatible(account *Ac
 		return false
 	}
 	return s.service.getOpenAIWSProtocolResolver().Resolve(account).Transport == requiredTransport
+}
+
+func (s *defaultOpenAIAccountScheduler) isAccountCapabilityCompatible(account *Account, requiredCapability OpenAIUpstreamCapability) bool {
+	if account == nil {
+		return false
+	}
+	switch requiredCapability {
+	case OpenAIUpstreamCapabilityAny:
+		return true
+	case OpenAIUpstreamCapabilityResponses:
+		return account.SupportsOpenAIResponsesUpstream()
+	case OpenAIUpstreamCapabilityChatCompletions:
+		return account.SupportsOpenAIChatCompletionsUpstream()
+	case OpenAIUpstreamCapabilityMessages:
+		return account.SupportsOpenAIMessagesUpstream()
+	default:
+		return true
+	}
 }
 
 func (s *defaultOpenAIAccountScheduler) ReportResult(accountID int64, success bool, firstTokenMs *int) {
@@ -828,6 +856,7 @@ func (s *OpenAIGatewayService) SelectAccountWithScheduler(
 	requestedModel string,
 	excludedIDs map[int64]struct{},
 	requiredTransport OpenAIUpstreamTransport,
+	requiredCapability ...OpenAIUpstreamCapability,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
 	decision := OpenAIAccountScheduleDecision{}
 	scheduler := s.getOpenAIAccountScheduler()
@@ -835,6 +864,11 @@ func (s *OpenAIGatewayService) SelectAccountWithScheduler(
 		selection, err := s.SelectAccountWithLoadAwareness(ctx, groupID, sessionHash, requestedModel, excludedIDs)
 		decision.Layer = openAIAccountScheduleLayerLoadBalance
 		return selection, decision, err
+	}
+
+	capability := OpenAIUpstreamCapabilityAny
+	if len(requiredCapability) > 0 {
+		capability = requiredCapability[0]
 	}
 
 	var stickyAccountID int64
@@ -851,6 +885,7 @@ func (s *OpenAIGatewayService) SelectAccountWithScheduler(
 		PreviousResponseID: previousResponseID,
 		RequestedModel:     requestedModel,
 		RequiredTransport:  requiredTransport,
+		RequiredCapability: capability,
 		ExcludedIDs:        excludedIDs,
 	})
 }

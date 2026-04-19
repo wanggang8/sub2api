@@ -21,15 +21,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// cursorResponsesUnsupportedFields are top-level Responses API parameters that
-// Codex upstreams reject with "Unsupported parameter: ...". They must be
-// stripped when forwarding a raw client body through the Responses-shape
-// short-circuit in ForwardAsChatCompletions (see isResponsesShape branch).
-// The normal Chat Completions → Responses conversion path is unaffected
-// because ChatCompletionsRequest has no fields for these parameters — unknown
-// fields are dropped naturally by json.Unmarshal. Kept semantically in sync
-// with the list in openai_gateway_service.go:2034 used by the /v1/responses
-// passthrough path.
 var cursorResponsesUnsupportedFields = []string{
 	"prompt_cache_retention",
 	"safety_identifier",
@@ -37,11 +28,10 @@ var cursorResponsesUnsupportedFields = []string{
 	"stream_options",
 }
 
-// ForwardAsChatCompletions accepts a Chat Completions request body, converts it
-// to OpenAI Responses API format, forwards to the OpenAI upstream, and converts
-// the response back to Chat Completions format. All account types (OAuth and API
-// Key) go through the Responses API conversion path since the upstream only
-// exposes the /v1/responses endpoint.
+// ForwardAsChatCompletions accepts a Chat Completions request body and forwards
+// it to an OpenAI-compatible upstream. Depending on the selected account's
+// declared upstream capabilities, it either uses the legacy Responses API
+// conversion path or a direct /v1/chat/completions upstream path.
 func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	ctx context.Context,
 	c *gin.Context,
@@ -52,7 +42,6 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 ) (*OpenAIForwardResult, error) {
 	startTime := time.Now()
 
-	// 1. Parse Chat Completions request
 	var chatReq apicompat.ChatCompletionsRequest
 	if err := json.Unmarshal(body, &chatReq); err != nil {
 		return nil, fmt.Errorf("parse chat completions request: %w", err)
@@ -61,8 +50,6 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	clientStream := chatReq.Stream
 	includeUsage := chatReq.StreamOptions != nil && chatReq.StreamOptions.IncludeUsage
 
-	// 2. Resolve model mapping early so compat prompt_cache_key injection can
-	// derive a stable seed from the final upstream model family.
 	billingModel := resolveOpenAIForwardModel(account, originalModel, defaultMappedModel)
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
 
@@ -73,18 +60,6 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		compatPromptCacheInjected = promptCacheKey != ""
 	}
 
-	// 3. Build the upstream (Responses API) body.
-	//
-	// Cursor compatibility: some clients (notably Cursor cloud) send Responses
-	// API shaped bodies — `input: [...]` with no `messages` field — to the
-	// /v1/chat/completions URL. Running those through ChatCompletionsToResponses
-	// would silently drop Cursor's `input` array (the struct has no Input field)
-	// and produce `input: null`, which Codex upstreams reject with
-	// "Invalid type for 'input': expected a string, but got an object".
-	//
-	// Detect that shape and forward the raw body as-is, only rewriting `model`
-	// to the resolved upstream model. The downstream codex OAuth transform will
-	// still normalize store/stream/instructions/etc.
 	isResponsesShape := !gjson.GetBytes(body, "messages").Exists() && gjson.GetBytes(body, "input").Exists()
 
 	var (
@@ -97,18 +72,11 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		if err != nil {
 			return nil, fmt.Errorf("rewrite model in responses-shape body: %w", err)
 		}
-		// Strip Responses API parameters that no Codex upstream accepts.
-		// Because this branch forwards the raw body (the normal path rebuilds
-		// it from ChatCompletionsRequest and drops unknown fields naturally),
-		// we must filter these fields explicitly here — otherwise the upstream
-		// rejects the request with "Unsupported parameter: ...".
 		for _, field := range cursorResponsesUnsupportedFields {
 			if stripped, derr := sjson.DeleteBytes(responsesBody, field); derr == nil {
 				responsesBody = stripped
 			}
 		}
-		// Minimal stub populated from the raw body so downstream billing
-		// propagation (ServiceTier, ReasoningEffort) keeps working.
 		responsesReq = &apicompat.ResponsesRequest{
 			Model:       upstreamModel,
 			ServiceTier: gjson.GetBytes(responsesBody, "service_tier").String(),
@@ -117,8 +85,6 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 			responsesReq.Reasoning = &apicompat.ResponsesReasoning{Effort: effort}
 		}
 	} else {
-		// Normal path: convert Chat Completions → Responses.
-		// ChatCompletionsToResponses always sets Stream=true (upstream always streams).
 		responsesReq, err = apicompat.ChatCompletionsToResponses(&chatReq)
 		if err != nil {
 			return nil, fmt.Errorf("convert chat completions to responses: %w", err)
@@ -145,49 +111,60 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		)
 	}
 	logger.L().Debug("openai chat_completions: model mapping applied", logFields...)
+	normalizedModelForTemplate := upstreamModel
 
-	if account.Type == AccountTypeOAuth {
+	if account.IsOpenAIApiKey() && !account.SupportsOpenAIResponsesUpstream() && account.SupportsOpenAIChatCompletionsUpstream() {
+		if c != nil {
+			c.Set("openai_upstream_endpoint_override", "/v1/chat/completions")
+		}
+		return s.forwardOpenAIChatCompletionsDirect(ctx, c, account, body, originalModel, billingModel, upstreamModel, promptCacheKey, clientStream, startTime)
+	}
+
+	if account.Type == AccountTypeOAuth || promptCacheKey != "" {
 		var reqBody map[string]any
 		if err := json.Unmarshal(responsesBody, &reqBody); err != nil {
-			return nil, fmt.Errorf("unmarshal for codex transform: %w", err)
+			return nil, fmt.Errorf("unmarshal for responses patch: %w", err)
 		}
-		codexResult := applyCodexOAuthTransform(reqBody, false, false)
-		if codexResult.NormalizedModel != "" {
-			upstreamModel = codexResult.NormalizedModel
-		}
-		if codexResult.PromptCacheKey != "" {
-			promptCacheKey = codexResult.PromptCacheKey
-		} else if promptCacheKey != "" {
+		if promptCacheKey != "" {
 			reqBody["prompt_cache_key"] = promptCacheKey
+		}
+		if account.Type == AccountTypeOAuth {
+			codexResult := applyCodexOAuthTransform(reqBody, false, false)
+			if codexResult.NormalizedModel != "" {
+				upstreamModel = codexResult.NormalizedModel
+				normalizedModelForTemplate = codexResult.NormalizedModel
+			}
+			if codexResult.PromptCacheKey != "" {
+				promptCacheKey = codexResult.PromptCacheKey
+			} else if promptCacheKey != "" {
+				reqBody["prompt_cache_key"] = promptCacheKey
+			}
+		}
+		forcedTemplateText := ""
+		if s.cfg != nil {
+			forcedTemplateText = s.cfg.Gateway.ForcedCodexInstructionsTemplate
+		}
+		if _, err := applyForcedCodexInstructionsTemplateIfNeeded(c, reqBody, forcedTemplateText, forcedCodexInstructionsTemplateData{
+			OriginalModel:   originalModel,
+			NormalizedModel: normalizedModelForTemplate,
+			BillingModel:    billingModel,
+			UpstreamModel:   upstreamModel,
+		}); err != nil {
+			return nil, err
 		}
 		responsesBody, err = json.Marshal(reqBody)
 		if err != nil {
-			return nil, fmt.Errorf("remarshal after codex transform: %w", err)
+			return nil, fmt.Errorf("remarshal after responses patch: %w", err)
 		}
 	}
 
-	forcedTemplateText := ""
-	if s.cfg != nil {
-		forcedTemplateText = s.cfg.Gateway.ForcedCodexInstructionsTemplate
-	}
-	if patchedBody, _, err := applyForcedCodexInstructionsTemplateToBodyIfNeeded(c, responsesBody, forcedTemplateText, forcedCodexInstructionsTemplateData{
-		OriginalModel:   originalModel,
-		NormalizedModel: upstreamModel,
-		BillingModel:    billingModel,
-		UpstreamModel:   upstreamModel,
-	}); err != nil {
-		return nil, err
-	} else {
-		responsesBody = patchedBody
-	}
-
-	// 5. Get access token
 	token, _, err := s.GetAccessToken(ctx, account)
 	if err != nil {
 		return nil, fmt.Errorf("get access token: %w", err)
 	}
 
-	// 6. Build upstream request
+	setOpsUpstreamRequestBody(c, responsesBody)
+
 	upstreamReq, err := s.buildUpstreamRequest(ctx, c, account, responsesBody, token, true, promptCacheKey, false)
 	if err != nil {
 		return nil, fmt.Errorf("build upstream request: %w", err)
@@ -197,7 +174,6 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		upstreamReq.Header.Set("session_id", generateSessionUUID(promptCacheKey))
 	}
 
-	// 7. Send request
 	proxyURL := ""
 	if account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
@@ -206,20 +182,12 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	if err != nil {
 		safeErr := sanitizeUpstreamErrorMessage(err.Error())
 		setOpsUpstreamError(c, 0, safeErr, "")
-		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
-			Platform:           account.Platform,
-			AccountID:          account.ID,
-			AccountName:        account.Name,
-			UpstreamStatusCode: 0,
-			Kind:               "request_error",
-			Message:            safeErr,
-		})
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{Platform: account.Platform, AccountID: account.ID, AccountName: account.Name, UpstreamStatusCode: 0, Kind: "request_error", Message: safeErr})
 		writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", "Upstream request failed")
 		return nil, fmt.Errorf("upstream request failed: %s", safeErr)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// 8. Handle error response with failover
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 		_ = resp.Body.Close()
@@ -236,29 +204,15 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 				}
 				upstreamDetail = truncateString(string(respBody), maxBytes)
 			}
-			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
-				Platform:           account.Platform,
-				AccountID:          account.ID,
-				AccountName:        account.Name,
-				UpstreamStatusCode: resp.StatusCode,
-				UpstreamRequestID:  resp.Header.Get("x-request-id"),
-				Kind:               "failover",
-				Message:            upstreamMsg,
-				Detail:             upstreamDetail,
-			})
+			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{Platform: account.Platform, AccountID: account.ID, AccountName: account.Name, UpstreamStatusCode: resp.StatusCode, UpstreamRequestID: resp.Header.Get("x-request-id"), Kind: "failover", Message: upstreamMsg, Detail: upstreamDetail})
 			if s.rateLimitService != nil {
 				s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
 			}
-			return nil, &UpstreamFailoverError{
-				StatusCode:             resp.StatusCode,
-				ResponseBody:           respBody,
-				RetryableOnSameAccount: account.IsPoolMode() && (isPoolModeRetryableStatus(resp.StatusCode) || isOpenAITransientProcessingError(resp.StatusCode, upstreamMsg, respBody)),
-			}
+			return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBody, RetryableOnSameAccount: account.IsPoolMode() && (isPoolModeRetryableStatus(resp.StatusCode) || isOpenAITransientProcessingError(resp.StatusCode, upstreamMsg, respBody))}
 		}
 		return s.handleChatCompletionsErrorResponse(resp, c, account)
 	}
 
-	// 9. Handle normal response
 	var result *OpenAIForwardResult
 	var handleErr error
 	if clientStream {
@@ -267,7 +221,6 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		result, handleErr = s.handleChatBufferedStreamingResponse(resp, c, originalModel, billingModel, upstreamModel, startTime)
 	}
 
-	// Propagate ServiceTier and ReasoningEffort to result for billing
 	if handleErr == nil && result != nil {
 		if responsesReq.ServiceTier != "" {
 			st := responsesReq.ServiceTier
@@ -279,7 +232,6 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		}
 	}
 
-	// Extract and save Codex usage snapshot from response headers (for OAuth accounts)
 	if handleErr == nil && account.Type == AccountTypeOAuth {
 		if snapshot := ParseCodexRateLimitHeaders(resp.Header); snapshot != nil {
 			s.updateCodexUsageSnapshot(ctx, account.ID, snapshot)
@@ -289,27 +241,44 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	return result, handleErr
 }
 
-// handleChatCompletionsErrorResponse reads an upstream error and returns it in
-// OpenAI Chat Completions error format.
-func (s *OpenAIGatewayService) handleChatCompletionsErrorResponse(
-	resp *http.Response,
+func (s *OpenAIGatewayService) forwardOpenAIChatCompletionsDirect(
+	ctx context.Context,
 	c *gin.Context,
 	account *Account,
-) (*OpenAIForwardResult, error) {
-	return s.handleCompatErrorResponse(resp, c, account, writeChatCompletionsError)
-}
-
-// handleChatBufferedStreamingResponse reads all Responses SSE events from the
-// upstream, finds the terminal event, converts to a Chat Completions JSON
-// response, and writes it to the client.
-func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
-	resp *http.Response,
-	c *gin.Context,
+	body []byte,
 	originalModel string,
 	billingModel string,
 	upstreamModel string,
+	promptCacheKey string,
+	reqStream bool,
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
+	forwardBody := body
+	if upstreamModel != "" && upstreamModel != originalModel {
+		if patched, err := sjson.SetBytes(forwardBody, "model", upstreamModel); err == nil {
+			forwardBody = patched
+		}
+	}
+	if strings.TrimSpace(promptCacheKey) != "" {
+		if patched, err := sjson.SetBytes(forwardBody, "prompt_cache_key", promptCacheKey); err == nil {
+			forwardBody = patched
+		}
+	}
+
+	reasoningEffort := extractOpenAIReasoningEffortFromBody(body, originalModel)
+	result, err := s.forwardOpenAIPassthrough(ctx, c, account, forwardBody, originalModel, reasoningEffort, reqStream, startTime)
+	if result != nil {
+		result.BillingModel = billingModel
+		result.UpstreamModel = upstreamModel
+	}
+	return result, err
+}
+
+func (s *OpenAIGatewayService) handleChatCompletionsErrorResponse(resp *http.Response, c *gin.Context, account *Account) (*OpenAIForwardResult, error) {
+	return s.handleCompatErrorResponse(resp, c, account, writeChatCompletionsError)
+}
+
+func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(resp *http.Response, c *gin.Context, originalModel string, billingModel string, upstreamModel string, startTime time.Time) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -332,25 +301,14 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 
 		var event apicompat.ResponsesStreamEvent
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
-			logger.L().Warn("openai chat_completions buffered: failed to parse event",
-				zap.Error(err),
-				zap.String("request_id", requestID),
-			)
+			logger.L().Warn("openai chat_completions buffered: failed to parse event", zap.Error(err), zap.String("request_id", requestID))
 			continue
 		}
-
-		// Accumulate delta content for fallback when terminal output is empty.
 		acc.ProcessEvent(&event)
-
-		if (event.Type == "response.completed" || event.Type == "response.done" ||
-			event.Type == "response.incomplete" || event.Type == "response.failed") &&
-			event.Response != nil {
+		if (event.Type == "response.completed" || event.Type == "response.done" || event.Type == "response.incomplete" || event.Type == "response.failed") && event.Response != nil {
 			finalResponse = event.Response
 			if event.Response.Usage != nil {
-				usage = OpenAIUsage{
-					InputTokens:  event.Response.Usage.InputTokens,
-					OutputTokens: event.Response.Usage.OutputTokens,
-				}
+				usage = OpenAIUsage{InputTokens: event.Response.Usage.InputTokens, OutputTokens: event.Response.Usage.OutputTokens}
 				if event.Response.Usage.InputTokensDetails != nil {
 					usage.CacheReadInputTokens = event.Response.Usage.InputTokensDetails.CachedTokens
 				}
@@ -360,10 +318,7 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 
 	if err := scanner.Err(); err != nil {
 		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			logger.L().Warn("openai chat_completions buffered: read error",
-				zap.Error(err),
-				zap.String("request_id", requestID),
-			)
+			logger.L().Warn("openai chat_completions buffered: read error", zap.Error(err), zap.String("request_id", requestID))
 		}
 	}
 
@@ -372,39 +327,17 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 		return nil, fmt.Errorf("upstream stream ended without terminal event")
 	}
 
-	// When the terminal event has an empty output array, reconstruct from
-	// accumulated delta events so the client receives the full content.
 	acc.SupplementResponseOutput(finalResponse)
-
 	chatResp := apicompat.ResponsesToChatCompletions(finalResponse, originalModel)
-
 	if s.responseHeaderFilter != nil {
 		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	}
 	c.JSON(http.StatusOK, chatResp)
 
-	return &OpenAIForwardResult{
-		RequestID:     requestID,
-		Usage:         usage,
-		Model:         originalModel,
-		BillingModel:  billingModel,
-		UpstreamModel: upstreamModel,
-		Stream:        false,
-		Duration:      time.Since(startTime),
-	}, nil
+	return &OpenAIForwardResult{RequestID: requestID, Usage: usage, Model: originalModel, BillingModel: billingModel, UpstreamModel: upstreamModel, Stream: false, Duration: time.Since(startTime)}, nil
 }
 
-// handleChatStreamingResponse reads Responses SSE events from upstream,
-// converts each to Chat Completions SSE chunks, and writes them to the client.
-func (s *OpenAIGatewayService) handleChatStreamingResponse(
-	resp *http.Response,
-	c *gin.Context,
-	originalModel string,
-	billingModel string,
-	upstreamModel string,
-	includeUsage bool,
-	startTime time.Time,
-) (*OpenAIForwardResult, error) {
+func (s *OpenAIGatewayService) handleChatStreamingResponse(resp *http.Response, c *gin.Context, originalModel string, billingModel string, upstreamModel string, includeUsage bool, startTime time.Time) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
 	if s.responseHeaderFilter != nil {
@@ -432,16 +365,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
 
 	resultWithUsage := func() *OpenAIForwardResult {
-		return &OpenAIForwardResult{
-			RequestID:     requestID,
-			Usage:         usage,
-			Model:         originalModel,
-			BillingModel:  billingModel,
-			UpstreamModel: upstreamModel,
-			Stream:        true,
-			Duration:      time.Since(startTime),
-			FirstTokenMs:  firstTokenMs,
-		}
+		return &OpenAIForwardResult{RequestID: requestID, Usage: usage, Model: originalModel, BillingModel: billingModel, UpstreamModel: upstreamModel, Stream: true, Duration: time.Since(startTime), FirstTokenMs: firstTokenMs}
 	}
 
 	processDataLine := func(payload string) bool {
@@ -450,42 +374,26 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
 		}
-
 		var event apicompat.ResponsesStreamEvent
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
-			logger.L().Warn("openai chat_completions stream: failed to parse event",
-				zap.Error(err),
-				zap.String("request_id", requestID),
-			)
+			logger.L().Warn("openai chat_completions stream: failed to parse event", zap.Error(err), zap.String("request_id", requestID))
 			return false
 		}
-
-		// Extract usage from completion events
-		if (event.Type == "response.completed" || event.Type == "response.incomplete" || event.Type == "response.failed") &&
-			event.Response != nil && event.Response.Usage != nil {
-			usage = OpenAIUsage{
-				InputTokens:  event.Response.Usage.InputTokens,
-				OutputTokens: event.Response.Usage.OutputTokens,
-			}
+		if (event.Type == "response.completed" || event.Type == "response.incomplete" || event.Type == "response.failed") && event.Response != nil && event.Response.Usage != nil {
+			usage = OpenAIUsage{InputTokens: event.Response.Usage.InputTokens, OutputTokens: event.Response.Usage.OutputTokens}
 			if event.Response.Usage.InputTokensDetails != nil {
 				usage.CacheReadInputTokens = event.Response.Usage.InputTokensDetails.CachedTokens
 			}
 		}
-
 		chunks := apicompat.ResponsesEventToChatChunks(&event, state)
 		for _, chunk := range chunks {
 			sse, err := apicompat.ChatChunkToSSE(chunk)
 			if err != nil {
-				logger.L().Warn("openai chat_completions stream: failed to marshal chunk",
-					zap.Error(err),
-					zap.String("request_id", requestID),
-				)
+				logger.L().Warn("openai chat_completions stream: failed to marshal chunk", zap.Error(err), zap.String("request_id", requestID))
 				continue
 			}
 			if _, err := fmt.Fprint(c.Writer, sse); err != nil {
-				logger.L().Info("openai chat_completions stream: client disconnected",
-					zap.String("request_id", requestID),
-				)
+				logger.L().Info("openai chat_completions stream: client disconnected", zap.String("request_id", requestID))
 				return true
 			}
 		}
@@ -502,31 +410,24 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				if err != nil {
 					continue
 				}
-				fmt.Fprint(c.Writer, sse) //nolint:errcheck
+				fmt.Fprint(c.Writer, sse)
 			}
 		}
-		// Send [DONE] sentinel
-		fmt.Fprint(c.Writer, "data: [DONE]\n\n") //nolint:errcheck
+		fmt.Fprint(c.Writer, "data: [DONE]\n\n")
 		c.Writer.Flush()
 		return resultWithUsage(), nil
 	}
 
 	handleScanErr := func(err error) {
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			logger.L().Warn("openai chat_completions stream: read error",
-				zap.Error(err),
-				zap.String("request_id", requestID),
-			)
+			logger.L().Warn("openai chat_completions stream: read error", zap.Error(err), zap.String("request_id", requestID))
 		}
 	}
 
-	// Determine keepalive interval
 	keepaliveInterval := time.Duration(0)
 	if s.cfg != nil && s.cfg.Gateway.StreamKeepaliveInterval > 0 {
 		keepaliveInterval = time.Duration(s.cfg.Gateway.StreamKeepaliveInterval) * time.Second
 	}
-
-	// No keepalive: fast synchronous path
 	if keepaliveInterval <= 0 {
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -541,11 +442,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		return finalizeStream()
 	}
 
-	// With keepalive: goroutine + channel + select
-	type scanEvent struct {
-		line string
-		err  error
-	}
+	type scanEvent struct{ line string; err error }
 	events := make(chan scanEvent, 16)
 	done := make(chan struct{})
 	sendEvent := func(ev scanEvent) bool {
@@ -572,35 +469,19 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	keepaliveTicker := time.NewTicker(keepaliveInterval)
 	defer keepaliveTicker.Stop()
 	lastDataAt := time.Now()
-
 	for {
 		select {
 		case ev, ok := <-events:
-			if !ok {
-				return finalizeStream()
-			}
-			if ev.err != nil {
-				handleScanErr(ev.err)
-				return finalizeStream()
-			}
+			if !ok { return finalizeStream() }
+			if ev.err != nil { handleScanErr(ev.err); return finalizeStream() }
 			lastDataAt = time.Now()
 			line := ev.line
-			if !strings.HasPrefix(line, "data: ") || line == "data: [DONE]" {
-				continue
-			}
-			if processDataLine(line[6:]) {
-				return resultWithUsage(), nil
-			}
-
+			if !strings.HasPrefix(line, "data: ") || line == "data: [DONE]" { continue }
+			if processDataLine(line[6:]) { return resultWithUsage(), nil }
 		case <-keepaliveTicker.C:
-			if time.Since(lastDataAt) < keepaliveInterval {
-				continue
-			}
-			// Send SSE comment as keepalive
+			if time.Since(lastDataAt) < keepaliveInterval { continue }
 			if _, err := fmt.Fprint(c.Writer, ":\n\n"); err != nil {
-				logger.L().Info("openai chat_completions stream: client disconnected during keepalive",
-					zap.String("request_id", requestID),
-				)
+				logger.L().Info("openai chat_completions stream: client disconnected during keepalive", zap.String("request_id", requestID))
 				return resultWithUsage(), nil
 			}
 			c.Writer.Flush()
@@ -608,12 +489,6 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	}
 }
 
-// writeChatCompletionsError writes an error response in OpenAI Chat Completions format.
 func writeChatCompletionsError(c *gin.Context, statusCode int, errType, message string) {
-	c.JSON(statusCode, gin.H{
-		"error": gin.H{
-			"type":    errType,
-			"message": message,
-		},
-	})
+	c.JSON(statusCode, gin.H{"error": gin.H{"type": errType, "message": message}})
 }

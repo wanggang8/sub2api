@@ -153,6 +153,9 @@ func (h *CursorCompatHandler) Messages(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// OpenAI-compatible Cursor messages is intentionally left out for now.
+	// Non-messages Cursor OpenAI requests already reuse the OpenAI gateway
+	// capability selection path, while this endpoint remains Anthropic-only.
 	if getCompatGroupPlatform(c) != service.PlatformAnthropic {
 		cursorCompatTypedError(c, http.StatusBadRequest, "invalid_request_error", "Cursor messages only supports Anthropic-compatible groups")
 		return

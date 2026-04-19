@@ -1,5 +1,10 @@
 docs/claude-relay-service/
 
+# 本地工具目录
+.omx/
+.pnpm-store/
+.worktrees/
+
 # ===================
 # Go 后端
 # ===================
@@ -134,4 +139,5 @@ docs/*
 frontend/coverage/
 aicodex
 output/
+local-data/
 
