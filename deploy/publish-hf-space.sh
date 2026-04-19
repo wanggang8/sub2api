@@ -95,6 +95,33 @@ remove_hf_disallowed_binaries() {
   fi
 }
 
+ensure_hf_readme_front_matter() {
+  local readme tmpfile
+  readme="README.md"
+  [[ -f "${readme}" ]] || fail "snapshot is missing README.md"
+
+  if head -n 1 "${readme}" | grep -qx -- '---'; then
+    info "README.md already contains HF front matter"
+    return 0
+  fi
+
+  tmpfile="$(mktemp "${TMPDIR:-/tmp}/hf-readme.XXXXXX")"
+  cat >"${tmpfile}" <<'EOF'
+---
+title: Sub2API
+emoji: "🚀"
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+---
+
+EOF
+  cat "${readme}" >>"${tmpfile}"
+  mv "${tmpfile}" "${readme}"
+  info "injected HF Space metadata into README.md"
+}
+
 main() {
   require_clean_tree
 
@@ -116,6 +143,7 @@ main() {
     git init -b "${TARGET_BRANCH}" >/dev/null
     configure_snapshot_identity
     remove_hf_disallowed_binaries
+    ensure_hf_readme_front_matter
     check_large_files
     git add -A
     commit_msg="HF deployment snapshot from ${head_sha}"
