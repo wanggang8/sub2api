@@ -431,6 +431,17 @@ export async function setSchedulable(id: number, schedulable: boolean): Promise<
   return data
 }
 
+export interface OpenAIUpstreamModelsPreviewRequest {
+  base_url: string
+  api_key: string
+}
+
+export interface UpstreamModelsResult<TModel = ClaudeModel> {
+  models: TModel[]
+  source: 'upstream' | 'fallback'
+  message?: string
+}
+
 /**
  * Get available models for an account
  * @param id - Account ID
@@ -438,6 +449,18 @@ export async function setSchedulable(id: number, schedulable: boolean): Promise<
  */
 export async function getAvailableModels(id: number): Promise<ClaudeModel[]> {
   const { data } = await apiClient.get<ClaudeModel[]>(`/admin/accounts/${id}/models`)
+  return data
+}
+
+export async function previewOpenAIUpstreamModels(
+  payload: OpenAIUpstreamModelsPreviewRequest
+): Promise<UpstreamModelsResult> {
+  const { data } = await apiClient.post<UpstreamModelsResult>('/admin/accounts/models/preview', payload)
+  return data
+}
+
+export async function refreshOpenAIUpstreamModels(id: number): Promise<UpstreamModelsResult> {
+  const { data } = await apiClient.post<UpstreamModelsResult>(`/admin/accounts/${id}/models/refresh-upstream`)
   return data
 }
 
@@ -650,6 +673,8 @@ export const accountsAPI = {
   resetTempUnschedulable,
   setSchedulable,
   getAvailableModels,
+  previewOpenAIUpstreamModels,
+  refreshOpenAIUpstreamModels,
   generateAuthUrl,
   exchangeCode,
   refreshOpenAIToken,

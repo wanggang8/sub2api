@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,6 +28,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/sync/errgroup"
@@ -1761,6 +1764,22 @@ type SetSchedulableRequest struct {
 	Schedulable bool `json:"schedulable"`
 }
 
+type openAIUpstreamModelsRequest struct {
+	BaseURL string `json:"base_url" binding:"required"`
+	APIKey  string `json:"api_key" binding:"required"`
+}
+
+type openAIUpstreamModelsEnvelope struct {
+	Data []openAIUpstreamModel `json:"data"`
+}
+
+type openAIUpstreamModel struct {
+	ID      string `json:"id"`
+	Object  string `json:"object"`
+	Created int64  `json:"created"`
+	OwnedBy string `json:"owned_by"`
+}
+
 // SetSchedulable handles toggling account schedulable status
 // POST /api/v1/admin/accounts/:id/schedulable
 func (h *AccountHandler) SetSchedulable(c *gin.Context) {
@@ -1783,6 +1802,146 @@ func (h *AccountHandler) SetSchedulable(c *gin.Context) {
 	}
 
 	response.Success(c, h.buildAccountResponseWithRuntime(c.Request.Context(), account))
+}
+
+func buildOpenAIModelListURL(baseURL string) string {
+	normalized := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if strings.HasSuffix(normalized, "/models") {
+		return normalized
+	}
+	if strings.HasSuffix(normalized, "/v1") {
+		return normalized + "/models"
+	}
+	return normalized + "/v1/models"
+}
+
+func defaultOpenAIUpstreamModelsResult(message string) gin.H {
+	payload := gin.H{
+		"models":  openai.DefaultModels,
+		"source":  "fallback",
+		"message": message,
+	}
+	if strings.TrimSpace(message) == "" {
+		delete(payload, "message")
+	}
+	return payload
+}
+
+func normalizeOpenAIUpstreamModels(models []openAIUpstreamModel) []openai.Model {
+	if len(models) == 0 {
+		return nil
+	}
+	result := make([]openai.Model, 0, len(models))
+	for _, item := range models {
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			continue
+		}
+		result = append(result, openai.Model{
+			ID:          id,
+			Object:      "model",
+			Created:     item.Created,
+			OwnedBy:     item.OwnedBy,
+			Type:        "model",
+			DisplayName: id,
+		})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].ID < result[j].ID
+	})
+	return result
+}
+
+func (h *AccountHandler) fetchOpenAIUpstreamModels(ctx context.Context, baseURL, apiKey string) ([]openai.Model, error) {
+	trimmedBaseURL := strings.TrimSpace(baseURL)
+	trimmedAPIKey := strings.TrimSpace(apiKey)
+	if trimmedBaseURL == "" || trimmedAPIKey == "" {
+		return nil, errors.New("base_url and api_key are required")
+	}
+	normalizedBaseURL, err := urlvalidator.ValidateURLFormat(trimmedBaseURL, false)
+	if err != nil {
+		return nil, fmt.Errorf("invalid base_url: %w", err)
+	}
+	requestURL := buildOpenAIModelListURL(normalizedBaseURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+trimmedAPIKey)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		bodyText := strings.TrimSpace(string(body))
+		if bodyText == "" {
+			return nil, fmt.Errorf("upstream returned status %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("upstream returned status %d: %s", resp.StatusCode, bodyText)
+	}
+
+	var envelope openAIUpstreamModelsEnvelope
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, err
+	}
+	models := normalizeOpenAIUpstreamModels(envelope.Data)
+	if len(models) == 0 {
+		return nil, errors.New("upstream returned empty model list")
+	}
+	return models, nil
+}
+
+func (h *AccountHandler) PreviewOpenAIUpstreamModels(c *gin.Context) {
+	var req openAIUpstreamModelsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	models, err := h.fetchOpenAIUpstreamModels(c.Request.Context(), req.BaseURL, req.APIKey)
+	if err != nil {
+		response.Success(c, defaultOpenAIUpstreamModelsResult("无法从上游获取模型列表，已使用默认模型列表。"))
+		return
+	}
+	response.Success(c, gin.H{
+		"models": models,
+		"source": "upstream",
+	})
+}
+
+func (h *AccountHandler) RefreshOpenAIUpstreamModels(c *gin.Context) {
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
+	if err != nil {
+		response.NotFound(c, "Account not found")
+		return
+	}
+	if !account.IsOpenAIApiKey() {
+		response.BadRequest(c, "Only OpenAI API Key accounts support upstream model fetching")
+		return
+	}
+	baseURL := strings.TrimSpace(account.GetOpenAIBaseURL())
+	apiKey := strings.TrimSpace(account.GetOpenAIApiKey())
+	models, err := h.fetchOpenAIUpstreamModels(c.Request.Context(), baseURL, apiKey)
+	if err != nil {
+		response.Success(c, defaultOpenAIUpstreamModelsResult("无法从上游获取模型列表，已使用默认模型列表。"))
+		return
+	}
+	response.Success(c, gin.H{
+		"models": models,
+		"source": "upstream",
+	})
 }
 
 // GetAvailableModels handles getting available models for an account
