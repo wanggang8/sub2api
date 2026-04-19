@@ -4546,6 +4546,15 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if input.BillingModelSource == BillingModelSourceRequested && input.OriginalModel != "" {
 		billingModel = input.OriginalModel
 	}
+	requestedModel := result.Model
+	if input.OriginalModel != "" {
+		requestedModel = input.OriginalModel
+	}
+	if requestedPricing, pricingErr := s.billingService.GetModelPricing(requestedModel); pricingErr != nil || requestedPricing == nil {
+		if upstreamModel := strings.TrimSpace(result.UpstreamModel); upstreamModel != "" {
+			billingModel = upstreamModel
+		}
+	}
 	serviceTier := ""
 	if result.ServiceTier != nil {
 		serviceTier = strings.TrimSpace(*result.ServiceTier)
@@ -4582,7 +4591,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	requestID := resolveUsageBillingRequestID(ctx, result.RequestID)
 
 	// 确定 RequestedModel（渠道映射前的原始模型）
-	requestedModel := result.Model
+	requestedModel = result.Model
 	if input.OriginalModel != "" {
 		requestedModel = input.OriginalModel
 	}

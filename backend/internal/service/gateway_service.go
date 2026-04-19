@@ -7787,6 +7787,11 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	if input.OriginalModel != "" {
 		requestedModel = input.OriginalModel
 	}
+	if requestedPricing, pricingErr := s.billingService.GetModelPricing(requestedModel); pricingErr != nil || requestedPricing == nil {
+		if upstreamModel := strings.TrimSpace(result.UpstreamModel); upstreamModel != "" {
+			billingModel = upstreamModel
+		}
+	}
 
 	// 计算费用
 	cost := s.calculateRecordUsageCost(ctx, result, apiKey, billingModel, multiplier, opts)
