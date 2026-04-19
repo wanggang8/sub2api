@@ -28,6 +28,10 @@ const (
 	OpenAIUpstreamCapabilityResponses       OpenAIUpstreamCapability = "responses"
 	OpenAIUpstreamCapabilityChatCompletions OpenAIUpstreamCapability = "chat_completions"
 	OpenAIUpstreamCapabilityMessages        OpenAIUpstreamCapability = "messages"
+	// Compatible capability selectors model which upstreams can safely serve a
+	// given public endpoint with the current backend adaptation chain.
+	OpenAIUpstreamCapabilityResponsesCompatibleChatCompletions OpenAIUpstreamCapability = "responses_or_chat_completions"
+	OpenAIUpstreamCapabilityResponsesCompatibleMessages        OpenAIUpstreamCapability = "responses_or_messages"
 )
 
 type OpenAIAccountScheduleRequest struct {
@@ -784,6 +788,10 @@ func (s *defaultOpenAIAccountScheduler) isAccountCapabilityCompatible(account *A
 		return account.SupportsOpenAIChatCompletionsUpstream()
 	case OpenAIUpstreamCapabilityMessages:
 		return account.SupportsOpenAIMessagesUpstream()
+	case OpenAIUpstreamCapabilityResponsesCompatibleChatCompletions:
+		return account.SupportsOpenAIResponsesUpstream() || account.SupportsOpenAIChatCompletionsUpstream()
+	case OpenAIUpstreamCapabilityResponsesCompatibleMessages:
+		return account.SupportsOpenAIResponsesUpstream() || account.SupportsOpenAIMessagesUpstream()
 	default:
 		return true
 	}

@@ -204,23 +204,7 @@ func TestAccount_IsOpenAIResponsesWebSocketV2Enabled(t *testing.T) {
 		require.False(t, customBase.SupportsOpenAIMessagesUpstream())
 	})
 
-	t.Run("显式声明能力字段时按声明结果生效", func(t *testing.T) {
-		customMessages := &Account{
-			Platform:    PlatformOpenAI,
-			Type:        AccountTypeAPIKey,
-			Credentials: map[string]any{"api_key": "k-msg", "base_url": "https://gateway.example/v1"},
-			Extra: map[string]any{
-				"openai_upstream_supports_responses":        false,
-				"openai_upstream_supports_chat_completions": true,
-				"openai_upstream_supports_messages":         true,
-			},
-		}
-		require.True(t, customMessages.SupportsOpenAIResponsesUpstream())
-		require.False(t, customMessages.SupportsOpenAIChatCompletionsUpstream())
-		require.False(t, customMessages.SupportsOpenAIMessagesUpstream())
-	})
-
-	t.Run("显式关闭 responses 并开启 chat/messages 时按能力路由", func(t *testing.T) {
+	t.Run("显式声明能力字段覆盖默认推断", func(t *testing.T) {
 		customMessages := &Account{
 			Platform:    PlatformOpenAI,
 			Type:        AccountTypeAPIKey,

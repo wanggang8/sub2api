@@ -17,6 +17,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 	"go.uber.org/zap"
 )
@@ -298,6 +299,24 @@ func (s *OpenAIGatewayService) forwardOpenAIMessagesDirect(
 			forwardBody = patched
 		}
 	}
+	forcedTemplateText := ""
+	if s.cfg != nil {
+		forcedTemplateText = s.cfg.Gateway.ForcedCodexInstructionsTemplate
+	}
+	if patched, _, err := applyForcedCodexInstructionsTemplateToAnthropicBodyIfNeeded(c, forwardBody, forcedTemplateText, forcedCodexInstructionsTemplateData{
+		OriginalModel:   originalModel,
+		NormalizedModel: upstreamModel,
+		BillingModel:    billingModel,
+		UpstreamModel:   upstreamModel,
+	}); err != nil {
+		return nil, err
+	} else {
+		forwardBody = patched
+	}
+	if c != nil && upstreamModel != "" && upstreamModel != originalModel {
+		c.Set("openai_passthrough_model_rewrite_from", upstreamModel)
+		c.Set("openai_passthrough_model_rewrite_to", originalModel)
+	}
 
 	token, _, err := s.GetAccessToken(ctx, account)
 	if err != nil {
@@ -357,13 +376,37 @@ func (s *OpenAIGatewayService) forwardOpenAIMessagesDirect(
 		c.Writer.Header().Set("Connection", "keep-alive")
 		c.Writer.Header().Set("X-Accel-Buffering", "no")
 		c.Writer.WriteHeader(http.StatusOK)
-		_, _ = io.Copy(c.Writer, resp.Body)
+		scanner := bufio.NewScanner(resp.Body)
+		maxLineSize := defaultMaxLineSize
+		if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
+			maxLineSize = s.cfg.Gateway.MaxLineSize
+		}
+		scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
+		rewriteModel := upstreamModel != "" && upstreamModel != originalModel
+		for scanner.Scan() {
+			line := scanner.Text()
+			if rewriteModel {
+				line = replaceAnthropicSSEMessageModel(line, upstreamModel, originalModel)
+			}
+			_, _ = io.WriteString(c.Writer, line+"\n")
+			if flusher, ok := c.Writer.(http.Flusher); ok {
+				flusher.Flush()
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			return nil, fmt.Errorf("read upstream stream: %w", err)
+		}
 		return &OpenAIForwardResult{RequestID: requestID, Usage: OpenAIUsage{}, Model: originalModel, BillingModel: billingModel, UpstreamModel: upstreamModel, Stream: true, Duration: time.Since(startTime)}, nil
 	}
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read upstream response: %w", err)
+	}
+	if strings.TrimSpace(originalModel) != "" {
+		if patched, err := sjson.SetBytes(respBody, "model", originalModel); err == nil {
+			respBody = patched
+		}
 	}
 	contentType := resp.Header.Get("Content-Type")
 	if contentType == "" {
@@ -372,6 +415,21 @@ func (s *OpenAIGatewayService) forwardOpenAIMessagesDirect(
 	c.Data(http.StatusOK, contentType, respBody)
 	usage := OpenAIUsage{}
 	return &OpenAIForwardResult{RequestID: requestID, Usage: usage, Model: originalModel, BillingModel: billingModel, UpstreamModel: upstreamModel, Stream: false, Duration: time.Since(startTime)}, nil
+}
+
+func replaceAnthropicSSEMessageModel(line, fromModel, toModel string) string {
+	data, ok := extractOpenAISSEDataLine(line)
+	if !ok || data == "" || data == "[DONE]" || fromModel == "" || toModel == "" || fromModel == toModel {
+		return line
+	}
+	if m := gjson.Get(data, "message.model"); m.Exists() && m.Str == fromModel {
+		newData, err := sjson.Set(data, "message.model", toModel)
+		if err != nil {
+			return line
+		}
+		return "data: " + newData
+	}
+	return line
 }
 
 // handleAnthropicBufferedStreamingResponse reads all Responses SSE events from

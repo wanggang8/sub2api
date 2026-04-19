@@ -259,6 +259,24 @@ func (s *OpenAIGatewayService) forwardOpenAIChatCompletionsDirect(
 			forwardBody = patched
 		}
 	}
+	forcedTemplateText := ""
+	if s.cfg != nil {
+		forcedTemplateText = s.cfg.Gateway.ForcedCodexInstructionsTemplate
+	}
+	if patched, _, err := applyForcedCodexInstructionsTemplateToChatCompletionsBodyIfNeeded(c, forwardBody, forcedTemplateText, forcedCodexInstructionsTemplateData{
+		OriginalModel:   originalModel,
+		NormalizedModel: upstreamModel,
+		BillingModel:    billingModel,
+		UpstreamModel:   upstreamModel,
+	}); err != nil {
+		return nil, err
+	} else {
+		forwardBody = patched
+	}
+	if c != nil && upstreamModel != "" && upstreamModel != originalModel {
+		c.Set("openai_passthrough_model_rewrite_from", upstreamModel)
+		c.Set("openai_passthrough_model_rewrite_to", originalModel)
+	}
 
 	reasoningEffort := extractOpenAIReasoningEffortFromBody(body, originalModel)
 	result, err := s.forwardOpenAIPassthrough(ctx, c, account, forwardBody, originalModel, reasoningEffort, reqStream, startTime)
@@ -437,7 +455,10 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(resp *http.Response, 
 		return finalizeStream()
 	}
 
-	type scanEvent struct{ line string; err error }
+	type scanEvent struct {
+		line string
+		err  error
+	}
 	events := make(chan scanEvent, 16)
 	done := make(chan struct{})
 	sendEvent := func(ev scanEvent) bool {
@@ -467,14 +488,25 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(resp *http.Response, 
 	for {
 		select {
 		case ev, ok := <-events:
-			if !ok { return finalizeStream() }
-			if ev.err != nil { handleScanErr(ev.err); return finalizeStream() }
+			if !ok {
+				return finalizeStream()
+			}
+			if ev.err != nil {
+				handleScanErr(ev.err)
+				return finalizeStream()
+			}
 			lastDataAt = time.Now()
 			line := ev.line
-			if !strings.HasPrefix(line, "data: ") || line == "data: [DONE]" { continue }
-			if processDataLine(line[6:]) { return resultWithUsage(), nil }
+			if !strings.HasPrefix(line, "data: ") || line == "data: [DONE]" {
+				continue
+			}
+			if processDataLine(line[6:]) {
+				return resultWithUsage(), nil
+			}
 		case <-keepaliveTicker.C:
-			if time.Since(lastDataAt) < keepaliveInterval { continue }
+			if time.Since(lastDataAt) < keepaliveInterval {
+				continue
+			}
 			if _, err := fmt.Fprint(c.Writer, ":\n\n"); err != nil {
 				logger.L().Info("openai chat_completions stream: client disconnected during keepalive", zap.String("request_id", requestID))
 				return resultWithUsage(), nil

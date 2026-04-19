@@ -309,6 +309,104 @@ func TestNormalizeChatStreamRequestBodyRendersHistorySummaryThinking(t *testing.
 	require.Contains(t, text, "tail response")
 }
 
+func TestNormalizeChatStreamRequestBodyPreservesAssistantThinkingSignature(t *testing.T) {
+	raw := []byte(`{
+		"model":"claude-sonnet-4-5",
+		"chat_history":[
+			{
+				"request_message":"hi",
+				"response_nodes":[
+					{"type":8,"thinking":{"summary":"first think","signature":"sig-1"}}
+				]
+			}
+		],
+		"stream":false
+	}`)
+
+	normalized, err := NormalizeChatStreamRequestBody(raw)
+	require.NoError(t, err)
+
+	var req apicompat.AnthropicRequest
+	require.NoError(t, json.Unmarshal(normalized, &req))
+	require.Len(t, req.Messages, 2)
+
+	var blocks []map[string]any
+	require.NoError(t, json.Unmarshal(req.Messages[1].Content, &blocks))
+	foundThinking := false
+	for _, block := range blocks {
+		if block["type"] == "thinking" {
+			foundThinking = true
+			require.Equal(t, "first think", block["thinking"])
+			require.Equal(t, "sig-1", block["signature"])
+		}
+	}
+	require.True(t, foundThinking)
+}
+
+func TestNormalizeChatStreamRequestBodyRendersHistorySummaryType7ToolUseAndEncryptedThinking(t *testing.T) {
+	raw := []byte(`{
+		"model":"claude-sonnet-4-5",
+		"request_nodes":[
+			{"type":10,"history_summary_node":{
+				"message_template":"Summary: {summary}\nTail: {end_part_full}",
+				"summary_text":"older context",
+				"history_end":[{
+					"request_message":"tail request",
+					"response_nodes":[
+						{"type":8,"thinking":{"encrypted_content":"encrypted-think"}},
+						{"type":7,"tool_use":{"tool_use_id":"call_1","tool_name":"edit_file","input_json":"{\"path\":\"main.go\"}"}}
+					]
+				}]
+			}}
+		],
+		"stream":false
+	}`)
+
+	normalized, err := NormalizeChatStreamRequestBody(raw)
+	require.NoError(t, err)
+
+	var req apicompat.AnthropicRequest
+	require.NoError(t, json.Unmarshal(normalized, &req))
+	require.Len(t, req.Messages, 1)
+
+	var blocks []map[string]any
+	require.NoError(t, json.Unmarshal(req.Messages[0].Content, &blocks))
+	require.Len(t, blocks, 1)
+	require.Equal(t, "text", blocks[0]["type"])
+	text := blocks[0]["text"].(string)
+	require.Contains(t, text, "encrypted-think")
+	require.Contains(t, text, `<tool_use name="edit_file" tool_use_id="call_1">`)
+	require.Contains(t, text, `{"path":"main.go"}`)
+}
+
+func TestNormalizeChatStreamRequestBodyIncludesWorkspaceFoldersUnchangedInIdeState(t *testing.T) {
+	raw := []byte(`{
+		"model":"claude-sonnet-4-5",
+		"message":"current request",
+		"request_nodes":[
+			{"type":4,"ide_state_node":{
+				"workspace_folders_unchanged":true,
+				"workspace_folders":[{"repository_root":"/repo","folder_root":"/repo"}]
+			}}
+		],
+		"stream":false
+	}`)
+
+	normalized, err := NormalizeChatStreamRequestBody(raw)
+	require.NoError(t, err)
+
+	var req apicompat.AnthropicRequest
+	require.NoError(t, json.Unmarshal(normalized, &req))
+	require.Len(t, req.Messages, 1)
+
+	var blocks []map[string]any
+	require.NoError(t, json.Unmarshal(req.Messages[0].Content, &blocks))
+	require.Len(t, blocks, 1)
+	require.Equal(t, "text", blocks[0]["type"])
+	text := blocks[0]["text"].(string)
+	require.Contains(t, text, "workspace_folders_unchanged=true")
+}
+
 func TestNormalizeChatStreamRequestBodyTreatsType2AsTextOrImage(t *testing.T) {
 	raw := []byte(`{
 		"model":"claude-sonnet-4-5",

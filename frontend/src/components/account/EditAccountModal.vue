@@ -3275,16 +3275,16 @@ const handleSubmit = async () => {
       }
       if (props.account.type === 'apikey') {
         if (openaiUpstreamCapability.value === 'responses') {
-          delete newExtra.openai_upstream_supports_responses
-          delete newExtra.openai_upstream_supports_chat_completions
-          delete newExtra.openai_upstream_supports_messages
+          newExtra.openai_upstream_supports_responses = true
+          newExtra.openai_upstream_supports_chat_completions = false
+          newExtra.openai_upstream_supports_messages = false
         } else if (openaiUpstreamCapability.value === 'chat_completions') {
           newExtra.openai_upstream_supports_responses = false
           newExtra.openai_upstream_supports_chat_completions = true
           newExtra.openai_upstream_supports_messages = false
         } else {
           newExtra.openai_upstream_supports_responses = false
-          newExtra.openai_upstream_supports_chat_completions = true
+          newExtra.openai_upstream_supports_chat_completions = false
           newExtra.openai_upstream_supports_messages = true
         }
       }

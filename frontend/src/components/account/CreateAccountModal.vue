@@ -3915,16 +3915,16 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
     extra.openai_apikey_responses_websockets_v2_enabled = isOpenAIWSModeEnabled(openaiAPIKeyResponsesWebSocketV2Mode.value)
 
     if (openaiUpstreamCapability.value === 'responses') {
-      delete extra.openai_upstream_supports_responses
-      delete extra.openai_upstream_supports_chat_completions
-      delete extra.openai_upstream_supports_messages
+      extra.openai_upstream_supports_responses = true
+      extra.openai_upstream_supports_chat_completions = false
+      extra.openai_upstream_supports_messages = false
     } else if (openaiUpstreamCapability.value === 'chat_completions') {
       extra.openai_upstream_supports_responses = false
       extra.openai_upstream_supports_chat_completions = true
       extra.openai_upstream_supports_messages = false
     } else {
       extra.openai_upstream_supports_responses = false
-      extra.openai_upstream_supports_chat_completions = true
+      extra.openai_upstream_supports_chat_completions = false
       extra.openai_upstream_supports_messages = true
     }
   }

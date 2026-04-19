@@ -2980,6 +2980,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	sawDone := false
 	sawTerminalEvent := false
 	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
+	rewriteFrom, rewriteTo, rewriteModel := openAIPassthroughModelRewrite(c)
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
@@ -3009,6 +3010,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		}
 
 		if !clientDisconnected {
+			if rewriteModel {
+				line = s.replaceModelInSSELine(line, rewriteFrom, rewriteTo)
+			}
 			if _, err := fmt.Fprintln(w, line); err != nil {
 				clientDisconnected = true
 				logger.LegacyPrintf("service.openai_gateway", "[OpenAI passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
@@ -3082,6 +3086,11 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 		usage = s.parseSSEUsageFromBody(string(body))
 	}
 
+	rewriteFrom, rewriteTo, rewriteModel := openAIPassthroughModelRewrite(c)
+	if rewriteModel {
+		body = s.replaceModelInResponseBody(body, rewriteFrom, rewriteTo)
+	}
+
 	writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 
 	contentType := resp.Header.Get("Content-Type")
@@ -3098,6 +3107,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c *gin.Context, body []byte) (*OpenAIUsage, error) {
 	bodyText := string(body)
 	finalResponse, ok := extractCodexFinalResponse(bodyText)
+	rewriteFrom, rewriteTo, rewriteModel := openAIPassthroughModelRewrite(c)
 
 	usage := &OpenAIUsage{}
 	if ok {
@@ -3116,6 +3126,9 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 		body = finalResponse
 		// Correct tool calls in final response
 		body = s.correctToolCallsInResponseBody(body)
+		if rewriteModel {
+			body = s.replaceModelInResponseBody(body, rewriteFrom, rewriteTo)
+		}
 	} else {
 		terminalType, terminalPayload, terminalOK := extractOpenAISSETerminalEvent(bodyText)
 		if terminalOK && terminalType == "response.failed" {
@@ -3126,6 +3139,10 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 			return nil, s.writeOpenAINonStreamingProtocolError(resp, c, msg)
 		}
 		usage = s.parseSSEUsageFromBody(bodyText)
+		if rewriteModel {
+			bodyText = s.replaceModelInSSEBody(bodyText, rewriteFrom, rewriteTo)
+			body = []byte(bodyText)
+		}
 	}
 
 	writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
@@ -3140,6 +3157,20 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 	c.Data(resp.StatusCode, contentType, body)
 
 	return usage, nil
+}
+
+func openAIPassthroughModelRewrite(c *gin.Context) (string, string, bool) {
+	if c == nil {
+		return "", "", false
+	}
+	from, _ := c.Get("openai_passthrough_model_rewrite_from")
+	to, _ := c.Get("openai_passthrough_model_rewrite_to")
+	fromText := strings.TrimSpace(fmt.Sprint(from))
+	toText := strings.TrimSpace(fmt.Sprint(to))
+	if fromText == "" || toText == "" || fromText == toText {
+		return "", "", false
+	}
+	return fromText, toText, true
 }
 
 func writeOpenAIPassthroughResponseHeaders(dst http.Header, src http.Header, filter *responseheaders.CompiledHeaderFilter) {

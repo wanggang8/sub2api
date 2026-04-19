@@ -745,7 +745,11 @@ func buildAssistantMessage(text string, nodes []Node) *apicompat.AnthropicMessag
 					text = strings.TrimSpace(node.Thinking.EncryptedContent)
 				}
 				if text != "" {
-					blocks = append(blocks, apicompat.AnthropicContentBlock{Type: "thinking", Thinking: text})
+					blocks = append(blocks, apicompat.AnthropicContentBlock{
+						Type:      "thinking",
+						Thinking:  text,
+						Signature: strings.TrimSpace(node.Thinking.Signature),
+					})
 				}
 			}
 		}
@@ -1058,11 +1062,15 @@ func renderHistorySummaryExchange(entry ChatHistoryEntry) string {
 		switch node.Type {
 		case 8:
 			if node.Thinking != nil {
-				if text := strings.TrimSpace(node.Thinking.Summary); text != "" {
+				text := strings.TrimSpace(node.Thinking.Summary)
+				if text == "" {
+					text = strings.TrimSpace(node.Thinking.EncryptedContent)
+				}
+				if text != "" {
 					thinkingParts = append(thinkingParts, text)
 				}
 			}
-		case 5:
+		case 5, 7:
 			if node.ToolUse != nil {
 				responseParts = append(responseParts,
 					fmt.Sprintf("<tool_use name=\"%s\" tool_use_id=\"%s\">", strings.TrimSpace(node.ToolUse.ToolName), strings.TrimSpace(node.ToolUse.ToolUseID)),
@@ -1126,10 +1134,16 @@ func formatIdeStatePrompt(node *IdeStateNode) string {
 		return ""
 	}
 	lines := []string{"[IDE_STATE]"}
+	if node.WorkspaceFoldersUnchanged != nil {
+		lines = append(lines, fmt.Sprintf("workspace_folders_unchanged=%t", *node.WorkspaceFoldersUnchanged))
+	}
 	if len(node.WorkspaceFolders) > 0 {
 		lines = append(lines, "workspace_folders:")
 	}
 	for _, folder := range node.WorkspaceFolders {
+		if folder.RepositoryRoot == "" && folder.FolderRoot == "" {
+			continue
+		}
 		lines = append(lines, fmt.Sprintf("- repository_root=%s folder_root=%s", emptyFallback(folder.RepositoryRoot), emptyFallback(folder.FolderRoot)))
 	}
 	if node.CurrentTerminal != nil {
