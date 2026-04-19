@@ -59,6 +59,42 @@ check_large_files() {
   fi
 }
 
+remove_hf_disallowed_binaries() {
+  local removed=0
+  local pattern path
+  local patterns=(
+    "assets/partners/logos/*.png"
+    "assets/partners/logos/*.jpg"
+    "assets/partners/logos/*.jpeg"
+    "assets/partners/logos/*.gif"
+    "assets/partners/logos/*.webp"
+    "assets/partners/logos/*.ico"
+    "frontend/public/*.png"
+    "frontend/public/*.jpg"
+    "frontend/public/*.jpeg"
+    "frontend/public/*.gif"
+    "frontend/public/*.webp"
+    "frontend/public/*.ico"
+  )
+
+  shopt -s nullglob
+  for pattern in "${patterns[@]}"; do
+    for path in ${pattern}; do
+      if [[ -f "${path}" ]]; then
+        rm -f "${path}"
+        info "excluded HF-disallowed binary asset: ${path}"
+        removed=1
+      fi
+    done
+  done
+  shopt -u nullglob
+
+  if [[ "${removed}" == "1" ]]; then
+    find assets/partners -type d -empty -delete 2>/dev/null || true
+    find frontend/public -type d -empty -delete 2>/dev/null || true
+  fi
+}
+
 main() {
   require_clean_tree
 
@@ -79,6 +115,7 @@ main() {
     cd "${temp_dir}"
     git init -b "${TARGET_BRANCH}" >/dev/null
     configure_snapshot_identity
+    remove_hf_disallowed_binaries
     check_large_files
     git add -A
     commit_msg="HF deployment snapshot from ${head_sha}"

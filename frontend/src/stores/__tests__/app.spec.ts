@@ -256,7 +256,7 @@ describe('useAppStore', () => {
       const windowAny = window as any
       windowAny.__APP_CONFIG__ = {
         site_name: 'TestSite',
-        site_logo: '/logo.png',
+        site_logo: '/logo.svg',
         version: '1.0.0',
         contact_info: 'test@test.com',
         api_base_url: 'https://api.test.com',
@@ -268,7 +268,7 @@ describe('useAppStore', () => {
 
       expect(result).toBe(true)
       expect(store.siteName).toBe('TestSite')
-      expect(store.siteLogo).toBe('/logo.png')
+      expect(store.siteLogo).toBe('/logo.svg')
       expect(store.siteVersion).toBe('1.0.0')
       expect(store.publicSettingsLoaded).toBe(true)
     })
