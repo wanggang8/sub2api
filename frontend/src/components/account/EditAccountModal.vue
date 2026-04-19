@@ -46,28 +46,52 @@
           />
           <p class="input-hint">{{ baseUrlHint }}</p>
         </div>
-        <div>
-          <label class="input-label">{{ t('admin.accounts.apiKey') }}</label>
-          <input
-            v-model="editApiKey"
-            type="password"
-            class="input font-mono"
-            autocomplete="new-password"
-            data-1p-ignore
-            data-lpignore="true"
-            data-bwignore="true"
-            :placeholder="
-              account.platform === 'openai'
-                ? 'sk-proj-...'
-                : account.platform === 'gemini'
-                  ? 'AIza...'
-                  : account.platform === 'antigravity'
-                    ? 'sk-...'
-                    : 'sk-ant-...'
-            "
-          />
-          <p class="input-hint">{{ t('admin.accounts.leaveEmptyToKeep') }}</p>
+      <div>
+        <label class="input-label">{{ t('admin.accounts.apiKey') }}</label>
+        <input
+          v-model="editApiKey"
+          type="password"
+          class="input font-mono"
+          autocomplete="new-password"
+          data-1p-ignore
+          data-lpignore="true"
+          data-bwignore="true"
+          :placeholder="
+            account.platform === 'openai'
+              ? 'sk-proj-...'
+              : account.platform === 'gemini'
+                ? 'AIza...'
+                : account.platform === 'antigravity'
+                  ? 'sk-...'
+                  : 'sk-ant-...'
+          "
+        />
+        <p class="input-hint">{{ t('admin.accounts.leaveEmptyToKeep') }}</p>
+      </div>
+
+      <div
+        v-if="account.platform === 'openai'"
+        class="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-dark-600 dark:bg-dark-700/40"
+      >
+        <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <label class="input-label mb-0">Upstream Models</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              用当前 Base URL 和 API Key 读取上游模型，用于下面的模型白名单与映射候选项。
+            </p>
+          </div>
+          <button
+            type="button"
+            class="btn btn-secondary shrink-0"
+            :disabled="!canFetchOpenAIUpstreamModels || openaiFetching"
+            @click="fetchOpenAIUpstreamModels"
+          >
+            <span v-if="openaiFetching">读取中...</span>
+            <span v-else>Fetch Upstream Models</span>
+          </button>
         </div>
+        <p v-if="openaiFetchHint" class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ openaiFetchHint }}</p>
+      </div>
 
         <!-- Model Restriction Section (不适用于 Antigravity) -->
         <div v-if="account.platform !== 'antigravity'" class="border-t border-gray-200 pt-4 dark:border-dark-600">
@@ -1102,30 +1126,6 @@
         </div>
       </div>
 
-      <div
-        v-if="account?.platform === 'openai' && account?.type === 'apikey'"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600"
-      >
-        <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
-            <label class="input-label mb-0">Upstream Models</label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              默认使用内置模型列表。可用当前 Base URL 和 API Key 读取上游模型并更新当前候选项。
-            </p>
-          </div>
-          <button
-            type="button"
-            class="btn btn-secondary shrink-0"
-            :disabled="!canFetchOpenAIUpstreamModels || openaiFetching"
-            @click="fetchOpenAIUpstreamModels"
-          >
-            <span v-if="openaiFetching">读取中...</span>
-            <span v-else>Fetch Upstream Models</span>
-          </button>
-        </div>
-        <p v-if="openaiFetchHint" class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ openaiFetchHint }}</p>
-      </div>
-
       <!-- OpenAI 上游协议（仅 API Key） -->
       <div
         v-if="account?.platform === 'openai' && account?.type === 'apikey'"
@@ -2146,8 +2146,33 @@ const currentOpenAISelectableModels = computed(() => {
   return getModelsByPlatform('openai')
 })
 
-// Computed: current preset mappings based on platform
-const presetMappings = computed(() => getPresetMappingsByPlatform(props.account?.platform || 'anthropic'))
+const presetMappings = computed(() => {
+  if (props.account?.platform === 'openai' && props.account?.type === 'apikey' && openaiFetchedModels.value && openaiFetchedModels.value.length > 0) {
+    const passthroughPresets = openaiFetchedModels.value.map((model, index) => ({
+      label: `${model}透传`,
+      from: model,
+      to: model,
+      color: index % 2 === 0
+        ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400'
+        : 'bg-sky-100 text-sky-700 hover:bg-sky-200 dark:bg-sky-900/30 dark:text-sky-400'
+    }))
+
+    const preferredTarget = openaiFetchedModels.value.find(model => ['gpt-5.4', 'gpt-5.2', 'gpt-5'].includes(model))
+      || openaiFetchedModels.value[0]
+
+    const bridgePresets = preferredTarget
+      ? [
+          { label: 'Haiku→首选', from: 'claude-haiku-4-5-20251001', to: preferredTarget, color: 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400' },
+          { label: 'Opus→首选', from: 'claude-opus-4-6', to: preferredTarget, color: 'bg-purple-100 text-purple-700 hover:bg-purple-200 dark:bg-purple-900/30 dark:text-purple-400' },
+          { label: 'Sonnet→首选', from: 'claude-sonnet-4-6', to: preferredTarget, color: 'bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400' }
+        ]
+      : []
+
+    return [...passthroughPresets, ...bridgePresets]
+  }
+
+  return getPresetMappingsByPlatform(props.account?.platform || 'anthropic')
+})
 const tempUnschedPresets = computed(() => [
   {
     label: t('admin.accounts.tempUnschedulable.presets.overloadLabel'),

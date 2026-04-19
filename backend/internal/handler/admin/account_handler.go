@@ -1858,7 +1858,7 @@ func (h *AccountHandler) fetchOpenAIUpstreamModels(ctx context.Context, baseURL,
 	if trimmedBaseURL == "" || trimmedAPIKey == "" {
 		return nil, errors.New("base_url and api_key are required")
 	}
-	normalizedBaseURL, err := urlvalidator.ValidateURLFormat(trimmedBaseURL, false)
+	normalizedBaseURL, err := urlvalidator.ValidateURLFormat(trimmedBaseURL, true)
 	if err != nil {
 		return nil, fmt.Errorf("invalid base_url: %w", err)
 	}
