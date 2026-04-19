@@ -1907,7 +1907,7 @@ func (h *AccountHandler) PreviewOpenAIUpstreamModels(c *gin.Context) {
 	}
 	models, err := h.fetchOpenAIUpstreamModels(c.Request.Context(), req.BaseURL, req.APIKey)
 	if err != nil {
-		response.Success(c, defaultOpenAIUpstreamModelsResult("无法从上游获取模型列表，已继续使用内置模型列表。"))
+		response.Success(c, defaultOpenAIUpstreamModelsResult(fmt.Sprintf("无法从上游获取模型列表，已继续使用内置模型列表。错误: %v", err)))
 		return
 	}
 	response.Success(c, gin.H{
