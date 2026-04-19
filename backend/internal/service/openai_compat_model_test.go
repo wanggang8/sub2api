@@ -277,6 +277,7 @@ func TestForwardAsChatCompletions_DirectsToUpstreamChatCompletionsWhenResponsesU
 	require.NotNil(t, result)
 	require.Equal(t, "/v1/chat/completions", upstream.lastReq.URL.Path)
 	require.Equal(t, "gpt-5.4", gjson.GetBytes(upstream.lastBody, "model").String())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").Exists())
 }
 
 func TestBuildUpstreamRequestOpenAIPassthrough_DirectsToUpstreamMessagesWhenOverridden(t *testing.T) {

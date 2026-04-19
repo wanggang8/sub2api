@@ -892,18 +892,15 @@ func (a *Account) SupportsOpenAIChatCompletionsUpstream() bool {
 		return false
 	}
 	if a.IsOpenAIOAuth() {
-		return true
-	}
-	if !a.hasCustomOpenAIBaseURL() {
 		return false
 	}
-	if a.Extra == nil {
-		return true
+	if !a.hasCustomOpenAIBaseURL() || a.Extra == nil {
+		return false
 	}
 	if enabled, ok := a.Extra["openai_upstream_supports_chat_completions"].(bool); ok {
 		return enabled
 	}
-	return true
+	return false
 }
 
 func (a *Account) SupportsOpenAIMessagesUpstream() bool {
@@ -913,10 +910,7 @@ func (a *Account) SupportsOpenAIMessagesUpstream() bool {
 	if a.IsOpenAIOAuth() {
 		return false
 	}
-	if !a.hasCustomOpenAIBaseURL() {
-		return false
-	}
-	if a.Extra == nil {
+	if !a.hasCustomOpenAIBaseURL() || a.Extra == nil {
 		return false
 	}
 	if enabled, ok := a.Extra["openai_upstream_supports_messages"].(bool); ok {

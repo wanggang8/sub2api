@@ -249,18 +249,13 @@ func (s *OpenAIGatewayService) forwardOpenAIChatCompletionsDirect(
 	originalModel string,
 	billingModel string,
 	upstreamModel string,
-	promptCacheKey string,
+	_ string,
 	reqStream bool,
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
 	forwardBody := body
 	if upstreamModel != "" && upstreamModel != originalModel {
 		if patched, err := sjson.SetBytes(forwardBody, "model", upstreamModel); err == nil {
-			forwardBody = patched
-		}
-	}
-	if strings.TrimSpace(promptCacheKey) != "" {
-		if patched, err := sjson.SetBytes(forwardBody, "prompt_cache_key", promptCacheKey); err == nil {
 			forwardBody = patched
 		}
 	}
