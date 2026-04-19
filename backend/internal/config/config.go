@@ -19,6 +19,13 @@ const (
 	RunModeSimple   = "simple"
 )
 
+const (
+	hfDBMaxOpenConnsDefault    = 28
+	hfDBMaxIdleConnsDefault    = 14
+	hfDBConnMaxLifetimeMinutes = 15
+	hfDBConnMaxIdleTimeMinutes = 3
+)
+
 // 使用量记录队列溢出策略
 const (
 	UsageRecordOverflowPolicyDrop   = "drop"
@@ -959,6 +966,8 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	// 1. DATA_DIR environment variable (highest priority)
 	if dataDir := os.Getenv("DATA_DIR"); dataDir != "" {
 		viper.AddConfigPath(dataDir)
+	} else if isHuggingFaceSpaceRuntime() {
+		viper.AddConfigPath("/data")
 	}
 	// 2. Docker data directory
 	viper.AddConfigPath("/app/data")
@@ -1227,16 +1236,26 @@ func setDefaults() {
 	viper.SetDefault("oidc_connect.userinfo_username_path", "")
 
 	// Database
+	dbMaxOpenConnsDefault := 256
+	dbMaxIdleConnsDefault := 128
+	dbConnMaxLifetimeDefault := 30
+	dbConnMaxIdleTimeDefault := 5
+	if isHuggingFaceSpaceRuntime() {
+		dbMaxOpenConnsDefault = hfDBMaxOpenConnsDefault
+		dbMaxIdleConnsDefault = hfDBMaxIdleConnsDefault
+		dbConnMaxLifetimeDefault = hfDBConnMaxLifetimeMinutes
+		dbConnMaxIdleTimeDefault = hfDBConnMaxIdleTimeMinutes
+	}
 	viper.SetDefault("database.host", "localhost")
 	viper.SetDefault("database.port", 5432)
 	viper.SetDefault("database.user", "postgres")
 	viper.SetDefault("database.password", "postgres")
 	viper.SetDefault("database.dbname", "sub2api")
 	viper.SetDefault("database.sslmode", "prefer")
-	viper.SetDefault("database.max_open_conns", 256)
-	viper.SetDefault("database.max_idle_conns", 128)
-	viper.SetDefault("database.conn_max_lifetime_minutes", 30)
-	viper.SetDefault("database.conn_max_idle_time_minutes", 5)
+	viper.SetDefault("database.max_open_conns", dbMaxOpenConnsDefault)
+	viper.SetDefault("database.max_idle_conns", dbMaxIdleConnsDefault)
+	viper.SetDefault("database.conn_max_lifetime_minutes", dbConnMaxLifetimeDefault)
+	viper.SetDefault("database.conn_max_idle_time_minutes", dbConnMaxIdleTimeDefault)
 
 	// Redis
 	viper.SetDefault("redis.host", "localhost")
@@ -1357,6 +1376,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.max_account_switches", 10)
 	viper.SetDefault("gateway.max_account_switches_gemini", 3)
 	viper.SetDefault("gateway.force_codex_cli", false)
+	viper.SetDefault("gateway.forced_codex_instructions_template_file", "")
 	viper.SetDefault("gateway.openai_passthrough_allow_timeout_headers", false)
 	// OpenAI Responses WebSocket（默认开启；可通过 force_http 紧急回滚）
 	viper.SetDefault("gateway.openai_ws.enabled", true)
@@ -2274,6 +2294,10 @@ func generateJWTSecret(byteLength int) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(buf), nil
+}
+
+func isHuggingFaceSpaceRuntime() bool {
+	return strings.TrimSpace(os.Getenv("SPACE_ID")) != "" || strings.TrimSpace(os.Getenv("SPACE_HOST")) != ""
 }
 
 // GetServerAddress returns the server address (host:port) from config file or environment variable.

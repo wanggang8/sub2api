@@ -38,27 +38,48 @@ func setupDefaultAdminConcurrency() int {
 }
 
 // GetDataDir returns the data directory for storing config and lock files.
-// Priority: DATA_DIR env > /app/data (if exists and writable) > current directory
+// Priority: DATA_DIR env > Hugging Face /data > /app/data > current directory
 func GetDataDir() string {
-	// Check DATA_DIR environment variable first
-	if dir := os.Getenv("DATA_DIR"); dir != "" {
-		return dir
-	}
-
-	// Check if /app/data exists and is writable (Docker environment)
-	dockerDataDir := "/app/data"
-	if info, err := os.Stat(dockerDataDir); err == nil && info.IsDir() {
-		// Try to check if writable by creating a temp file
-		testFile := dockerDataDir + "/.write_test"
-		if f, err := os.Create(testFile); err == nil {
-			_ = f.Close()
-			_ = os.Remove(testFile)
-			return dockerDataDir
+	for _, dir := range dataDirCandidates() {
+		if dir == "." {
+			return dir
+		}
+		if isWritableDir(dir) {
+			return dir
 		}
 	}
-
-	// Default to current directory
 	return "."
+}
+
+func dataDirCandidates() []string {
+	if dir := strings.TrimSpace(os.Getenv("DATA_DIR")); dir != "" {
+		return []string{dir, "."}
+	}
+	candidates := make([]string, 0, 3)
+	if isHuggingFaceSpaceRuntime() {
+		candidates = append(candidates, "/data")
+	}
+	candidates = append(candidates, "/app/data", ".")
+	return candidates
+}
+
+func isWritableDir(dir string) bool {
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	testFile := dir + "/.write_test"
+	f, err := os.Create(testFile)
+	if err != nil {
+		return false
+	}
+	_ = f.Close()
+	_ = os.Remove(testFile)
+	return true
+}
+
+func isHuggingFaceSpaceRuntime() bool {
+	return strings.TrimSpace(os.Getenv("SPACE_ID")) != "" || strings.TrimSpace(os.Getenv("SPACE_HOST")) != ""
 }
 
 // GetConfigFilePath returns the full path to config.yaml

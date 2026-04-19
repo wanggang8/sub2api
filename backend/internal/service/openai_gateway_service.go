@@ -1989,6 +1989,22 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 	}
 
+	forcedTemplateText := ""
+	if s.cfg != nil {
+		forcedTemplateText = s.cfg.Gateway.ForcedCodexInstructionsTemplate
+	}
+	if changed, err := applyForcedCodexInstructionsTemplateIfNeeded(c, reqBody, forcedTemplateText, forcedCodexInstructionsTemplateData{
+		OriginalModel:   reqModel,
+		NormalizedModel: upstreamModel,
+		BillingModel:    billingModel,
+		UpstreamModel:   upstreamModel,
+	}); err != nil {
+		return nil, err
+	} else if changed {
+		bodyModified = true
+		disablePatch()
+	}
+
 	// Handle max_output_tokens based on platform and account type
 	if !isCodexCLI {
 		if maxOutputTokens, hasMaxOutputTokens := reqBody["max_output_tokens"]; hasMaxOutputTokens {

@@ -87,3 +87,34 @@ func TestWriteConfigFileKeepsDefaultUserConcurrency(t *testing.T) {
 		t.Fatalf("config missing default user concurrency, got:\n%s", string(data))
 	}
 }
+
+func TestGetDataDirPrefersHuggingFaceDataDir(t *testing.T) {
+	oldSpaceID := os.Getenv("SPACE_ID")
+	oldDataDir := os.Getenv("DATA_DIR")
+	defer func() {
+		_ = os.Setenv("SPACE_ID", oldSpaceID)
+		_ = os.Setenv("DATA_DIR", oldDataDir)
+	}()
+
+	_ = os.Setenv("DATA_DIR", "")
+	_ = os.Setenv("SPACE_ID", "demo-space")
+
+	if _, err := os.Stat("/data"); err == nil {
+		if got := GetDataDir(); got != "/data" {
+			t.Fatalf("GetDataDir()=%q, want %q", got, "/data")
+		}
+	}
+}
+
+func TestDataDirCandidatesIncludesHuggingFacePath(t *testing.T) {
+	t.Setenv("DATA_DIR", "")
+	t.Setenv("SPACE_HOST", "demo.hf.space")
+
+	candidates := dataDirCandidates()
+	if len(candidates) < 2 {
+		t.Fatalf("unexpected candidates: %#v", candidates)
+	}
+	if candidates[0] != "/data" {
+		t.Fatalf("first candidate=%q, want /data", candidates[0])
+	}
+}

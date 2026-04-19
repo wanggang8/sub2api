@@ -166,6 +166,21 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		}
 	}
 
+	forcedTemplateText := ""
+	if s.cfg != nil {
+		forcedTemplateText = s.cfg.Gateway.ForcedCodexInstructionsTemplate
+	}
+	if patchedBody, _, err := applyForcedCodexInstructionsTemplateToBodyIfNeeded(c, responsesBody, forcedTemplateText, forcedCodexInstructionsTemplateData{
+		OriginalModel:   originalModel,
+		NormalizedModel: upstreamModel,
+		BillingModel:    billingModel,
+		UpstreamModel:   upstreamModel,
+	}); err != nil {
+		return nil, err
+	} else {
+		responsesBody = patchedBody
+	}
+
 	// 5. Get access token
 	token, _, err := s.GetAccessToken(ctx, account)
 	if err != nil {

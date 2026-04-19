@@ -101,6 +101,34 @@ func GoogleErrorWriter(c *gin.Context, status int, message string) {
 	})
 }
 
+// CursorErrorWriter emits Cursor/OpenAI-shaped compat errors.
+func CursorErrorWriter(c *gin.Context, status int, message string) {
+	c.JSON(status, gin.H{
+		"error": gin.H{
+			"message": message,
+			"type":    "invalid_request_error",
+		},
+	})
+}
+
+// CursorAuthErrorWriter emits Cursor auth errors while preserving compat shape.
+func CursorAuthErrorWriter(c *gin.Context, status int, code, message string) {
+	CursorErrorWriter(c, status, message)
+}
+
+// AugmentErrorWriter emits Augment compat errors.
+func AugmentErrorWriter(c *gin.Context, status int, message string) {
+	c.JSON(status, gin.H{
+		"success": false,
+		"error":   message,
+	})
+}
+
+// AugmentAuthErrorWriter emits Augment auth errors while preserving compat shape.
+func AugmentAuthErrorWriter(c *gin.Context, status int, code, message string) {
+	AugmentErrorWriter(c, status, message)
+}
+
 // RequireGroupAssignment 检查 API Key 是否已分配到分组，
 // 如果未分组且系统设置不允许未分组 Key 调度则返回 403。
 func RequireGroupAssignment(settingService *service.SettingService, writeError GatewayErrorWriter) gin.HandlerFunc {
