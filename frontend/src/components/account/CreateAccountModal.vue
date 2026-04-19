@@ -2348,6 +2348,30 @@
         </div>
       </div>
 
+      <div
+        v-if="form.platform === 'openai' && accountCategory === 'apikey'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <label class="input-label mb-0">Upstream Models</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              默认使用内置模型列表。可用当前 Base URL 和 API Key 读取上游模型并更新当前候选项。
+            </p>
+          </div>
+          <button
+            type="button"
+            class="btn btn-secondary shrink-0"
+            :disabled="!canFetchOpenAIUpstreamModels || openaiFetching"
+            @click="fetchOpenAIUpstreamModelsPreview"
+          >
+            <span v-if="openaiFetching">读取中...</span>
+            <span v-else>Fetch Upstream Models</span>
+          </button>
+        </div>
+        <p v-if="openaiFetchHint" class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ openaiFetchHint }}</p>
+      </div>
+
       <!-- OpenAI 上游协议（仅 API Key） -->
       <div
         v-if="form.platform === 'openai' && accountCategory === 'apikey'"
@@ -2399,54 +2423,6 @@
             <div class="text-sm font-medium text-gray-900 dark:text-white">Messages</div>
             <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">兼容 `/v1/messages`</div>
           </button>
-        </div>
-      </div>
-
-      <div
-        v-if="form.platform === 'openai' && accountCategory === 'apikey'"
-        class="rounded-xl border border-gray-200/80 bg-gradient-to-br from-white to-gray-50 p-4 shadow-sm dark:border-dark-600 dark:from-dark-800 dark:to-dark-700"
-      >
-        <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-          <div>
-            <label class="input-label mb-0">Upstream Models Preview</label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              使用当前 Base URL 和 API Key 读取上游 `/v1/models`，便于确认模型列表是否正确。
-            </p>
-          </div>
-          <button
-            type="button"
-            class="btn btn-secondary shrink-0"
-            :disabled="!canFetchOpenAIUpstreamModels || openaiUpstreamModelsLoading"
-            @click="fetchOpenAIUpstreamModelsPreview"
-          >
-            <span v-if="openaiUpstreamModelsLoading">读取中...</span>
-            <span v-else>Fetch Upstream Models</span>
-          </button>
-        </div>
-
-        <div v-if="openaiUpstreamModelsSource === 'fallback'" class="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300">
-          <span class="font-medium">⚠️ 已使用默认模型列表</span>
-          <span v-if="openaiUpstreamModelsMessage" class="ml-2">{{ openaiUpstreamModelsMessage }}</span>
-        </div>
-
-        <div v-else-if="openaiUpstreamModelsSource === 'upstream'" class="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300">
-          已读取上游模型列表。
-        </div>
-
-        <div v-if="openaiUpstreamModels.length > 0" class="mt-3 flex flex-wrap gap-2">
-          <span
-            v-for="model in openaiUpstreamModels.slice(0, 24)"
-            :key="model.id"
-            class="inline-flex items-center rounded-full border border-gray-200 bg-white px-3 py-1 text-xs text-gray-700 shadow-sm dark:border-dark-500 dark:bg-dark-800 dark:text-gray-200"
-          >
-            {{ model.display_name || model.id }}
-          </span>
-          <span
-            v-if="openaiUpstreamModels.length > 24"
-            class="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs text-gray-500 dark:border-dark-500 dark:bg-dark-700 dark:text-gray-400"
-          >
-            +{{ openaiUpstreamModels.length - 24 }} more
-          </span>
         </div>
       </div>
 
@@ -3163,6 +3139,9 @@ const editResetTimezone = ref<string | null>(null)
 const modelMappings = ref<ModelMapping[]>([])
 const modelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
 const allowedModels = ref<string[]>([])
+const openaiFetchedModels = ref<string[] | null>(null)
+const openaiFetchHint = ref('')
+const openaiFetching = ref(false)
 const DEFAULT_POOL_MODE_RETRY_COUNT = 3
 const MAX_POOL_MODE_RETRY_COUNT = 10
 const poolModeEnabled = ref(false)
@@ -3322,6 +3301,13 @@ const canFetchOpenAIUpstreamModels = computed(() => (
   && apiKeyValue.value.trim().length > 0
 ))
 
+const currentOpenAISelectableModels = computed(() => {
+  if (form.platform === 'openai' && accountCategory.value === 'apikey' && openaiFetchedModels.value && openaiFetchedModels.value.length > 0) {
+    return openaiFetchedModels.value
+  }
+  return getModelsByPlatform('openai')
+})
+
 const mixedChannelWarningMessageText = computed(() => {
   if (mixedChannelWarningDetails.value) {
     return t('admin.accounts.mixedChannelWarning', mixedChannelWarningDetails.value)
@@ -3440,6 +3426,7 @@ watch(
         .catch(() => { tlsFingerprintProfiles.value = [] })
       // Modal opened - fill related models
       allowedModels.value = [...getModelsByPlatform(form.platform)]
+      resetOpenAIFetchedModels()
       // Antigravity: 默认使用映射模式并填充默认映射
       if (form.platform === 'antigravity') {
         antigravityModelRestrictionMode.value = 'mapping'
@@ -3496,7 +3483,7 @@ watch(
     // Clear model-related settings
     allowedModels.value = []
     modelMappings.value = []
-    resetOpenAIUpstreamModels()
+    resetOpenAIFetchedModels()
     // Antigravity: 默认使用映射模式并填充默认映射
     if (newPlatform === 'antigravity') {
       antigravityModelRestrictionMode.value = 'mapping'
@@ -3956,6 +3943,18 @@ const resetForm = () => {
   clearMixedChannelDialog()
 }
 
+watch([() => form.platform, accountCategory], ([platform, category], [prevPlatform, prevCategory]) => {
+  if (platform !== prevPlatform || category !== prevCategory) {
+    resetOpenAIFetchedModels()
+  }
+})
+
+watch([apiKeyBaseUrl, apiKeyValue], ([baseUrl, apiKey], [prevBaseUrl, prevApiKey]) => {
+  if (baseUrl !== prevBaseUrl || apiKey !== prevApiKey) {
+    resetOpenAIFetchedModels()
+  }
+})
+
 const handleClose = () => {
   antigravityMixedChannelConfirmed.value = false
   clearMixedChannelDialog()
@@ -4059,31 +4058,33 @@ const handleMixedChannelCancel = () => {
   clearMixedChannelDialog()
 }
 
+const resetOpenAIFetchedModels = () => {
+  openaiFetchedModels.value = null
+  openaiFetchHint.value = ''
+  openaiFetching.value = false
+}
+
 const fetchOpenAIUpstreamModelsPreview = async () => {
-  if (!canFetchOpenAIUpstreamModels.value || openaiUpstreamModelsLoading.value) {
+  if (!canFetchOpenAIUpstreamModels.value || openaiFetching.value) {
     return
   }
-  openaiUpstreamModelsLoading.value = true
+  openaiFetching.value = true
   try {
     const result = await adminAPI.accounts.previewOpenAIUpstreamModels({
       base_url: apiKeyBaseUrl.value.trim(),
       api_key: apiKeyValue.value.trim()
     })
-    openaiUpstreamModels.value = result.models || []
-    openaiUpstreamModelsSource.value = result.source
-    openaiUpstreamModelsMessage.value = result.message || ''
+    if (result.source === 'upstream' && result.models?.length) {
+      openaiFetchedModels.value = result.models.map(model => model.id)
+      openaiFetchHint.value = `已获取 ${result.models.length} 个上游模型，当前候选列表已更新。`
+    } else {
+      openaiFetchHint.value = result.message || '读取失败，继续使用内置模型列表。'
+    }
   } catch (error: any) {
-    appStore.showError(error.message || '获取上游模型列表失败')
+    openaiFetchHint.value = error.message || '读取失败，继续使用内置模型列表。'
   } finally {
-    openaiUpstreamModelsLoading.value = false
+    openaiFetching.value = false
   }
-}
-
-const resetOpenAIUpstreamModels = () => {
-  openaiUpstreamModelsLoading.value = false
-  openaiUpstreamModelsSource.value = null
-  openaiUpstreamModelsMessage.value = ''
-  openaiUpstreamModels.value = []
 }
 
 const normalizePoolModeRetryCount = (value: number) => {

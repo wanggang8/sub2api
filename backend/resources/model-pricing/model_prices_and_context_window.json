@@ -649,7 +649,7 @@
     "supports_vision": true,
     "tool_use_system_prompt_tokens": 346
   },
-  "CustomModel": {
+  "custommodel": {
     "cache_creation_input_token_cost": 3.75e-06,
     "cache_creation_input_token_cost_above_200k_tokens": 7.5e-06,
     "cache_read_input_token_cost": 3e-07,

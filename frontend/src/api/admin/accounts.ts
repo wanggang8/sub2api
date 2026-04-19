@@ -459,11 +459,6 @@ export async function previewOpenAIUpstreamModels(
   return data
 }
 
-export async function refreshOpenAIUpstreamModels(id: number): Promise<UpstreamModelsResult> {
-  const { data } = await apiClient.post<UpstreamModelsResult>(`/admin/accounts/${id}/models/refresh-upstream`)
-  return data
-}
-
 export interface CRSPreviewAccount {
   crs_account_id: string
   kind: string
@@ -674,7 +669,6 @@ export const accountsAPI = {
   setSchedulable,
   getAvailableModels,
   previewOpenAIUpstreamModels,
-  refreshOpenAIUpstreamModels,
   generateAuthUrl,
   exchangeCode,
   refreshOpenAIToken,

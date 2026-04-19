@@ -1907,35 +1907,7 @@ func (h *AccountHandler) PreviewOpenAIUpstreamModels(c *gin.Context) {
 	}
 	models, err := h.fetchOpenAIUpstreamModels(c.Request.Context(), req.BaseURL, req.APIKey)
 	if err != nil {
-		response.Success(c, defaultOpenAIUpstreamModelsResult("无法从上游获取模型列表，已使用默认模型列表。"))
-		return
-	}
-	response.Success(c, gin.H{
-		"models": models,
-		"source": "upstream",
-	})
-}
-
-func (h *AccountHandler) RefreshOpenAIUpstreamModels(c *gin.Context) {
-	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil {
-		response.BadRequest(c, "Invalid account ID")
-		return
-	}
-	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
-	if err != nil {
-		response.NotFound(c, "Account not found")
-		return
-	}
-	if !account.IsOpenAIApiKey() {
-		response.BadRequest(c, "Only OpenAI API Key accounts support upstream model fetching")
-		return
-	}
-	baseURL := strings.TrimSpace(account.GetOpenAIBaseURL())
-	apiKey := strings.TrimSpace(account.GetOpenAIApiKey())
-	models, err := h.fetchOpenAIUpstreamModels(c.Request.Context(), baseURL, apiKey)
-	if err != nil {
-		response.Success(c, defaultOpenAIUpstreamModelsResult("无法从上游获取模型列表，已使用默认模型列表。"))
+		response.Success(c, defaultOpenAIUpstreamModelsResult("无法从上游获取模型列表，已继续使用内置模型列表。"))
 		return
 	}
 	response.Success(c, gin.H{

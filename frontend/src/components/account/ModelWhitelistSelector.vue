@@ -133,6 +133,7 @@ const props = defineProps<{
   modelValue: string[]
   platform?: string
   platforms?: string[]
+  availableModels?: string[]
 }>()
 
 const emit = defineEmits<{
@@ -163,6 +164,22 @@ const normalizedPlatforms = computed(() => {
 })
 
 const availableOptions = computed(() => {
+  if (props.availableModels && props.availableModels.length > 0) {
+    const seen = new Set<string>()
+    return props.availableModels
+      .map(model => model.trim())
+      .filter(model => {
+        if (!model || seen.has(model)) return false
+        seen.add(model)
+        return true
+      })
+      .map(model => {
+        const preset = allModels.find(item => item.value === model)
+        if (preset) return preset
+        return { value: model, label: model }
+      })
+  }
+
   if (normalizedPlatforms.value.length === 0) {
     return allModels
   }
@@ -219,6 +236,15 @@ const handleEnter = () => {
 
 const fillRelated = () => {
   const newModels = [...props.modelValue]
+  if (props.availableModels && props.availableModels.length > 0) {
+    for (const model of props.availableModels) {
+      if (!newModels.includes(model)) {
+        newModels.push(model)
+      }
+    }
+    emit('update:modelValue', newModels)
+    return
+  }
   for (const platform of normalizedPlatforms.value) {
     for (const model of getModelsByPlatform(platform)) {
       if (!newModels.includes(model)) {
