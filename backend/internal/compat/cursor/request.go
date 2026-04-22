@@ -21,7 +21,22 @@ func NormalizeResponsesRequestBody(raw []byte) ([]byte, error) {
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		return nil, err
 	}
-	if len(probe.Input) > 0 || len(probe.Messages) == 0 {
+	if len(probe.Input) > 0 {
+		normalizedInput, changed, err := normalizeResponsesInputFunctionOutputs(probe.Input)
+		if err != nil {
+			return nil, err
+		}
+		if !changed {
+			return raw, nil
+		}
+		var payload map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return nil, err
+		}
+		payload["input"] = normalizedInput
+		return json.Marshal(payload)
+	}
+	if len(probe.Messages) == 0 {
 		return raw, nil
 	}
 
@@ -34,6 +49,46 @@ func NormalizeResponsesRequestBody(raw []byte) ([]byte, error) {
 		return nil, fmt.Errorf("convert chat payload to responses: %w", err)
 	}
 	return json.Marshal(converted)
+}
+
+func normalizeResponsesInputFunctionOutputs(raw json.RawMessage) (json.RawMessage, bool, error) {
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return raw, false, nil
+	}
+
+	var items []map[string]any
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return raw, false, nil
+	}
+
+	changed := false
+	for _, item := range items {
+		if itemType, _ := item["type"].(string); itemType != "function_call_output" {
+			continue
+		}
+		output, exists := item["output"]
+		if !exists {
+			continue
+		}
+		if _, ok := output.(string); ok {
+			continue
+		}
+		outputJSON, err := json.Marshal(output)
+		if err != nil {
+			return nil, false, fmt.Errorf("marshal function_call_output output: %w", err)
+		}
+		item["output"] = responsesFunctionOutputText(outputJSON)
+		changed = true
+	}
+	if !changed {
+		return raw, false, nil
+	}
+	normalized, err := json.Marshal(items)
+	if err != nil {
+		return nil, false, fmt.Errorf("marshal normalized responses input: %w", err)
+	}
+	return normalized, true, nil
 }
 
 func NormalizeChatCompletionsRequestBody(raw []byte) ([]byte, error) {

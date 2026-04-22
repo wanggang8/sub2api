@@ -92,6 +92,34 @@ func TestNormalizeChatCompletionsRequestBodyFunctionOutputArrayText(t *testing.T
 	require.Equal(t, "line one\nline two", toolMsg["content"])
 }
 
+func TestNormalizeResponsesRequestBodyFunctionOutputArrayText(t *testing.T) {
+	raw := []byte(`{
+		"model": "gpt-5.4",
+		"input": [
+			{
+				"type": "function_call_output",
+				"call_id": "call_1",
+				"output": [
+					{"type": "text", "text": "line one"},
+					{"type": "output_text", "text": "line two"}
+				]
+			}
+		]
+	}`)
+
+	normalized, err := NormalizeResponsesRequestBody(raw)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(normalized, &payload))
+	items := payload["input"].([]any)
+	require.Len(t, items, 1)
+	item := items[0].(map[string]any)
+	require.Equal(t, "function_call_output", item["type"])
+	require.Equal(t, "call_1", item["call_id"])
+	require.Equal(t, "line one\nline two", item["output"])
+}
+
 func TestNormalizeChatCompletionsRequestBodyPreservesMultipleTools(t *testing.T) {
 	raw := []byte(`{
 		"model": "gpt-4.1",
