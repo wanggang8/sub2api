@@ -1,55 +1,59 @@
-# Hugging Face package release flow
+# Hugging Face 打包发布流程
 
-This project publishes Hugging Face Spaces in package mode to avoid rebuilding
-the frontend and Go backend inside the Space builder.
+这个项目发布到 Hugging Face Spaces 时使用 **package mode**，避免在
+Space 构建机里重新执行前端构建和 Go 后端编译。
 
-## One-time setup
+## 一次性配置
 
-The local `space` remote should point to the target Space:
+本地 `space` 远端应指向当前目标 Space：
 
 ```bash
-git remote set-url space https://Vick888888@huggingface.co/spaces/Vick888888/VickLuckey
+git remote set-url space https://Vick888888@huggingface.co/spaces/Vick888888/gatewaySub
 ```
 
-## Publish a new package
+## 生成新的运行包
 
-Push your code to `myfork/main`. The `HF Package` GitHub Actions workflow builds
-and uploads this fixed release asset:
+把代码推到 `myfork/main` 后，GitHub Actions 里的 `HF Package` 工作流会自动构建并上传固定名称的运行包：
 
 ```text
 https://github.com/wanggang8/sub2api/releases/download/hf-latest/gatewayTestSub-hf-linux-amd64.tar.gz
 ```
 
-You can also run the workflow manually from GitHub Actions when you want to
-refresh the package without another code push.
+也可以在 GitHub Actions 页面手动运行 `HF Package` 工作流，用来在没有新提交时刷新运行包。
 
-## Publish the Space
+## 发布到 Space
 
-After the GitHub Action has uploaded the package, publish the Space snapshot:
+确认 GitHub Actions 已经成功上传运行包后，执行：
 
 ```bash
 HF_PACKAGE_URL="https://github.com/wanggang8/sub2api/releases/download/hf-latest/gatewayTestSub-hf-linux-amd64.tar.gz" \
 bash deploy/publish-hf-space.sh
 ```
 
-In package mode, the Space repo receives only a minimal `README.md` and
-`Dockerfile`. The Dockerfile downloads the packaged runtime during the Space
-build, so the Space builder does not run `pnpm install`, frontend build, or
-`go build`.
+在 package mode 下，推送到 Hugging Face Space 仓库的内容只有极简 `README.md` 和 `Dockerfile`。  
+Dockerfile 会在 Space 构建时下载上面的运行包并启动，所以 Space 构建机不会再执行：
 
-## Local package build
+- `pnpm install`
+- 前端构建
+- `go build`
 
-For local verification, create the same tarball shape with:
+## 本地生成运行包
+
+如需本地验证同样的包结构，可以执行：
 
 ```bash
 bash deploy/build-hf-package.sh
 ```
 
-The package is written under `release/hf/`.
+生成的包会放在：
 
-## Notes
+```text
+release/hf/
+```
 
-- The Space commit hash differs from `main` because `publish-hf-space.sh`
-  creates a clean one-commit snapshot.
-- Do not commit the generated `release/hf/*.tar.gz` file.
-- If the package URL changes, pass the new URL through `HF_PACKAGE_URL`.
+## 注意事项
+
+- Space 上的提交号和 `main` 不一样是正常的，因为 `publish-hf-space.sh` 会创建一个干净的一次性快照提交。
+- 不要提交 `release/hf/*.tar.gz` 这类本地生成包。
+- 如果运行包 URL 变了，通过 `HF_PACKAGE_URL` 传入新的地址即可。
+- 当前 HF 运行时命令使用 `gatewayTestSub`，不要改回 `sub2api`，避免再次触发 Space 风控。
