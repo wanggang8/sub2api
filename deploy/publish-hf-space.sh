@@ -9,6 +9,7 @@ REMOTE_NAME="${REMOTE_NAME:-space}"
 TARGET_BRANCH="${TARGET_BRANCH:-main}"
 MAX_FILE_BYTES="${MAX_FILE_BYTES:-10485760}" # 10 MiB (HF hard limit for normal git blobs)
 DRY_RUN="${DRY_RUN:-0}"
+HF_PACKAGE_URL="${HF_PACKAGE_URL:-}"
 
 info() {
   printf '[INFO] %s\n' "$1"
@@ -122,6 +123,82 @@ EOF
   info "injected HF Space metadata into README.md"
 }
 
+write_hf_readme() {
+  local output_dir
+  output_dir="$1"
+  cat >"${output_dir}/README.md" <<'EOF'
+---
+title: Sub2API
+emoji: "🚀"
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+---
+
+# Sub2API
+
+This Hugging Face Space runs a prebuilt Sub2API package.
+EOF
+}
+
+write_package_dockerfile() {
+  local output_dir package_url
+  output_dir="$1"
+  package_url="$2"
+  [[ -n "${package_url}" ]] || fail "HF_PACKAGE_URL is required for package mode"
+
+  cat >"${output_dir}/Dockerfile" <<EOF
+FROM alpine:3.21
+
+RUN apk add --no-cache \\
+    ca-certificates \\
+    tzdata \\
+    redis \\
+    su-exec \\
+    libpq \\
+    zstd-libs \\
+    lz4-libs \\
+    krb5-libs \\
+    libldap \\
+    libedit \\
+    wget \\
+    tar \\
+    && rm -rf /var/cache/apk/*
+
+WORKDIR /app
+
+RUN wget -O /tmp/sub2api-hf.tar.gz "${package_url}" \\
+    && tar -xzf /tmp/sub2api-hf.tar.gz -C /app \\
+    && rm /tmp/sub2api-hf.tar.gz \\
+    && chmod +x /app/sub2api /app/docker-entrypoint.sh
+
+RUN mkdir -p /app/data /data && chown -R 1000:1000 /app /data
+
+ENV AUTO_SETUP=true \\
+    EMBEDDED_REDIS_ENABLED=true \\
+    EMBEDDED_REDIS_CONFIG=/app/redis-hf.conf \\
+    SERVER_HOST=0.0.0.0 \\
+    SERVER_PORT=7860
+
+EXPOSE 7860
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \\
+    CMD wget -q -T 5 -O /dev/null http://localhost:\${SERVER_PORT:-7860}/health || exit 1
+
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
+CMD ["/app/sub2api"]
+EOF
+}
+
+prepare_package_snapshot() {
+  local output_dir package_url
+  output_dir="$1"
+  package_url="$2"
+  write_hf_readme "${output_dir}"
+  write_package_dockerfile "${output_dir}" "${package_url}"
+}
+
 main() {
   require_clean_tree
 
@@ -136,14 +213,21 @@ main() {
   info "publishing snapshot from ${head_sha} to ${REMOTE_NAME}/${TARGET_BRANCH}"
   info "temporary snapshot repo: ${temp_dir}"
 
-  git -C "${REPO_ROOT}" archive --format=tar HEAD | tar -xf - -C "${temp_dir}"
+  if [[ -n "${HF_PACKAGE_URL}" ]]; then
+    info "package mode enabled; HF will download ${HF_PACKAGE_URL}"
+    prepare_package_snapshot "${temp_dir}" "${HF_PACKAGE_URL}"
+  else
+    git -C "${REPO_ROOT}" archive --format=tar HEAD | tar -xf - -C "${temp_dir}"
+  fi
 
   (
     cd "${temp_dir}"
     git init -b "${TARGET_BRANCH}" >/dev/null
     configure_snapshot_identity
-    remove_hf_disallowed_binaries
-    ensure_hf_readme_front_matter
+    if [[ -z "${HF_PACKAGE_URL}" ]]; then
+      remove_hf_disallowed_binaries
+      ensure_hf_readme_front_matter
+    fi
     check_large_files
     git add -A
     commit_msg="HF deployment snapshot from ${head_sha}"
