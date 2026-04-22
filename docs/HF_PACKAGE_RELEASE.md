@@ -8,7 +8,7 @@ the frontend and Go backend inside the Space builder.
 The local `space` remote should point to the target Space:
 
 ```bash
-git remote set-url space https://Vick888888@huggingface.co/spaces/Vick888888/VickLuckeyMe
+git remote set-url space https://Vick888888@huggingface.co/spaces/Vick888888/VickLuckey
 ```
 
 ## Publish a new package
@@ -17,7 +17,7 @@ Push your code to `myfork/main`. The `HF Package` GitHub Actions workflow builds
 and uploads this fixed release asset:
 
 ```text
-https://github.com/wanggang8/sub2api/releases/download/hf-latest/sub2api-hf-linux-amd64.tar.gz
+https://github.com/wanggang8/sub2api/releases/download/hf-latest/gatewayTestSub-hf-linux-amd64.tar.gz
 ```
 
 You can also run the workflow manually from GitHub Actions when you want to
@@ -28,7 +28,7 @@ refresh the package without another code push.
 After the GitHub Action has uploaded the package, publish the Space snapshot:
 
 ```bash
-HF_PACKAGE_URL="https://github.com/wanggang8/sub2api/releases/download/hf-latest/sub2api-hf-linux-amd64.tar.gz" \
+HF_PACKAGE_URL="https://github.com/wanggang8/sub2api/releases/download/hf-latest/gatewayTestSub-hf-linux-amd64.tar.gz" \
 bash deploy/publish-hf-space.sh
 ```
 

@@ -30,9 +30,9 @@ if [[ -z "${VERSION_VALUE}" ]]; then
 fi
 DATE_VALUE="${DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 
-PKG_NAME="${PKG_NAME:-sub2api-hf-${HEAD_SHA}-${TARGET_OS}-${TARGET_ARCH}.tar.gz}"
+PKG_NAME="${PKG_NAME:-gatewayTestSub-hf-${HEAD_SHA}-${TARGET_OS}-${TARGET_ARCH}.tar.gz}"
 PKG_PATH="${OUT_DIR}/${PKG_NAME}"
-WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sub2api-hf-package.XXXXXX")"
+WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/gatewayTestSub-hf-package.XXXXXX")"
 trap 'rm -rf "${WORK_DIR:-}"' EXIT
 
 info "building frontend"
@@ -49,7 +49,7 @@ mkdir -p "${WORK_DIR}/app"
     -tags embed \
     -ldflags="-s -w -X main.Version=${VERSION_VALUE} -X main.Commit=${HEAD_SHA} -X main.Date=${DATE_VALUE} -X main.BuildType=release" \
     -trimpath \
-    -o "${WORK_DIR}/app/sub2api" \
+    -o "${WORK_DIR}/app/gatewayTestSub" \
     ./cmd/server
 )
 
@@ -58,7 +58,7 @@ cp -R "${REPO_ROOT}/backend/resources" "${WORK_DIR}/app/resources"
 cp "${REPO_ROOT}/deploy/docker-entrypoint.sh" "${WORK_DIR}/app/docker-entrypoint.sh"
 mkdir -p "${WORK_DIR}/app"
 cp "${REPO_ROOT}/deploy/redis/redis-hf.conf" "${WORK_DIR}/app/redis-hf.conf"
-chmod +x "${WORK_DIR}/app/sub2api" "${WORK_DIR}/app/docker-entrypoint.sh"
+chmod +x "${WORK_DIR}/app/gatewayTestSub" "${WORK_DIR}/app/docker-entrypoint.sh"
 
 mkdir -p "${OUT_DIR}"
 info "creating ${PKG_PATH}"

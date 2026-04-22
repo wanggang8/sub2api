@@ -109,7 +109,7 @@ ensure_hf_readme_front_matter() {
   tmpfile="$(mktemp "${TMPDIR:-/tmp}/hf-readme.XXXXXX")"
   cat >"${tmpfile}" <<'EOF'
 ---
-title: Sub2API
+title: gatewayTestSub
 emoji: "🚀"
 colorFrom: blue
 colorTo: indigo
@@ -128,7 +128,7 @@ write_hf_readme() {
   output_dir="$1"
   cat >"${output_dir}/README.md" <<'EOF'
 ---
-title: Sub2API
+title: gatewayTestSub
 emoji: "🚀"
 colorFrom: blue
 colorTo: indigo
@@ -136,9 +136,9 @@ sdk: docker
 app_port: 7860
 ---
 
-# Sub2API
+# gatewayTestSub
 
-This Hugging Face Space runs a prebuilt Sub2API package.
+This Hugging Face Space runs a prebuilt gatewayTestSub package.
 EOF
 }
 
@@ -166,17 +166,17 @@ RUN apk add --no-cache \\
     tar \\
     && rm -rf /var/cache/apk/*
 
-RUN addgroup -g 1000 sub2api \\
-    && adduser -u 1000 -G sub2api -s /bin/sh -D sub2api
+RUN addgroup -g 1000 gatewayTestSub \\
+    && adduser -u 1000 -G gatewayTestSub -s /bin/sh -D gatewayTestSub
 
 WORKDIR /app
 
-RUN wget -O /tmp/sub2api-hf.tar.gz "${package_url}" \\
-    && tar -xzf /tmp/sub2api-hf.tar.gz -C /app \\
-    && rm /tmp/sub2api-hf.tar.gz \\
-    && chmod +x /app/sub2api /app/docker-entrypoint.sh
+RUN wget -O /tmp/gatewayTestSub-hf.tar.gz "${package_url}" \\
+    && tar -xzf /tmp/gatewayTestSub-hf.tar.gz -C /app \\
+    && rm /tmp/gatewayTestSub-hf.tar.gz \\
+    && chmod +x /app/gatewayTestSub /app/docker-entrypoint.sh
 
-RUN mkdir -p /app/data /data && chown -R sub2api:sub2api /app /data
+RUN mkdir -p /app/data /data && chown -R gatewayTestSub:gatewayTestSub /app /data
 
 ENV AUTO_SETUP=true \\
     EMBEDDED_REDIS_ENABLED=true \\
@@ -190,7 +190,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \\
     CMD wget -q -T 5 -O /dev/null http://localhost:\${SERVER_PORT:-7860}/health || exit 1
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
-CMD ["/app/sub2api"]
+CMD ["/app/gatewayTestSub"]
 EOF
 }
 

@@ -52,7 +52,7 @@ jobs:
 
       - name: Build HF package
         env:
-          PKG_NAME: sub2api-hf-linux-amd64.tar.gz
+          PKG_NAME: gatewayTestSub-hf-linux-amd64.tar.gz
           TARGET_OS: linux
           TARGET_ARCH: amd64
         run: bash deploy/build-hf-package.sh
@@ -61,7 +61,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: hf-latest
-          ASSET: release/hf/sub2api-hf-linux-amd64.tar.gz
+          ASSET: release/hf/gatewayTestSub-hf-linux-amd64.tar.gz
         run: |
           set -euo pipefail
           git tag -f "${TAG}" "${GITHUB_SHA}"

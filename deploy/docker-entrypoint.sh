@@ -67,16 +67,16 @@ apply_hf_runtime_defaults() {
 
 # Fix data directory permissions when running as root.
 # Docker named volumes / host bind-mounts may be owned by root,
-# preventing the non-root sub2api user from writing files.
+# preventing the non-root gatewayTestSub user from writing files.
 if [ "$(id -u)" = "0" ]; then
     data_dir="$(resolve_data_dir)"
     export DATA_DIR="${data_dir}"
     mkdir -p "${data_dir}" /app/data
     # Use || true to avoid failure on read-only mounted files (e.g. config.yaml:ro)
-    chown -R sub2api:sub2api "${data_dir}" /app/data 2>/dev/null || true
-    # Re-invoke this script as sub2api so the flag-detection below
+    chown -R gatewayTestSub:gatewayTestSub "${data_dir}" /app/data 2>/dev/null || true
+    # Re-invoke this script as gatewayTestSub so the flag-detection below
     # also runs under the correct user.
-    exec su-exec sub2api "$0" "$@"
+    exec su-exec gatewayTestSub "$0" "$@"
 fi
 
 export DATA_DIR="$(resolve_data_dir)"
@@ -84,9 +84,9 @@ apply_hf_runtime_defaults
 
 # Compatibility: if the first arg looks like a flag (e.g. --help),
 # prepend the default binary so it behaves the same as the old
-# ENTRYPOINT ["/app/sub2api"] style.
+# ENTRYPOINT ["/app/gatewayTestSub"] style.
 if [ "${1#-}" != "$1" ]; then
-    set -- /app/sub2api "$@"
+    set -- /app/gatewayTestSub "$@"
 fi
 
 start_embedded_redis
