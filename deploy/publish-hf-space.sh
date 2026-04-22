@@ -166,6 +166,9 @@ RUN apk add --no-cache \\
     tar \\
     && rm -rf /var/cache/apk/*
 
+RUN addgroup -g 1000 sub2api \\
+    && adduser -u 1000 -G sub2api -s /bin/sh -D sub2api
+
 WORKDIR /app
 
 RUN wget -O /tmp/sub2api-hf.tar.gz "${package_url}" \\
@@ -173,7 +176,7 @@ RUN wget -O /tmp/sub2api-hf.tar.gz "${package_url}" \\
     && rm /tmp/sub2api-hf.tar.gz \\
     && chmod +x /app/sub2api /app/docker-entrypoint.sh
 
-RUN mkdir -p /app/data /data && chown -R 1000:1000 /app /data
+RUN mkdir -p /app/data /data && chown -R sub2api:sub2api /app /data
 
 ENV AUTO_SETUP=true \\
     EMBEDDED_REDIS_ENABLED=true \\
