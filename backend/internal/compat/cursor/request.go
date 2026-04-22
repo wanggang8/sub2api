@@ -322,7 +322,7 @@ func responsesInputToChatMessages(raw json.RawMessage) ([]apicompat.ChatMessage,
 			messages = append(messages, apicompat.ChatMessage{
 				Role:       "tool",
 				ToolCallID: item.CallID,
-				Content:    mustMarshal(item.Output),
+				Content:    mustMarshal(responsesFunctionOutputText(item.Output)),
 			})
 			i++
 		default:
@@ -347,7 +347,7 @@ type cursorResponsesInputItem struct {
 	Name      string                   `json:"name,omitempty"`
 	Arguments string                   `json:"arguments,omitempty"`
 	ID        string                   `json:"id,omitempty"`
-	Output    string                   `json:"output,omitempty"`
+	Output    json.RawMessage          `json:"output,omitempty"`
 	Summary   []cursorResponsesSummary `json:"summary,omitempty"`
 }
 
@@ -660,6 +660,41 @@ func responsesReasoningText(item cursorResponsesInputItem) string {
 		}
 	}
 	return builder.String()
+}
+
+func responsesFunctionOutputText(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return text
+	}
+
+	var parts []map[string]any
+	if err := json.Unmarshal(raw, &parts); err == nil {
+		out := make([]string, 0, len(parts))
+		for _, part := range parts {
+			if t, _ := part["text"].(string); strings.TrimSpace(t) != "" {
+				out = append(out, t)
+				continue
+			}
+			if b, err := json.Marshal(part); err == nil {
+				out = append(out, string(b))
+			}
+		}
+		return strings.Join(out, "\n")
+	}
+
+	var value any
+	if err := json.Unmarshal(raw, &value); err == nil {
+		if b, err := json.Marshal(value); err == nil {
+			return string(b)
+		}
+		return fmt.Sprint(value)
+	}
+	return string(raw)
 }
 
 func unmarshalStringOrEmpty(raw json.RawMessage) string {

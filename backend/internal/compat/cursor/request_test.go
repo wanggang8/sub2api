@@ -43,6 +43,55 @@ func TestNormalizeChatCompletionsRequestBodyMixedInput(t *testing.T) {
 	require.Equal(t, "done", toolMsg["content"])
 }
 
+func TestNormalizeChatCompletionsRequestBodyFunctionOutputStringPreserved(t *testing.T) {
+	raw := []byte(`{
+		"model": "gpt-5.4",
+		"input": [
+			{"type": "function_call_output", "call_id": "call_1", "output": "plain result"}
+		]
+	}`)
+
+	normalized, err := NormalizeChatCompletionsRequestBody(raw)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(normalized, &payload))
+	messages := payload["messages"].([]any)
+	require.Len(t, messages, 1)
+	toolMsg := messages[0].(map[string]any)
+	require.Equal(t, "tool", toolMsg["role"])
+	require.Equal(t, "call_1", toolMsg["tool_call_id"])
+	require.Equal(t, "plain result", toolMsg["content"])
+}
+
+func TestNormalizeChatCompletionsRequestBodyFunctionOutputArrayText(t *testing.T) {
+	raw := []byte(`{
+		"model": "gpt-5.4",
+		"input": [
+			{
+				"type": "function_call_output",
+				"call_id": "call_1",
+				"output": [
+					{"type": "text", "text": "line one"},
+					{"type": "output_text", "text": "line two"}
+				]
+			}
+		]
+	}`)
+
+	normalized, err := NormalizeChatCompletionsRequestBody(raw)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(normalized, &payload))
+	messages := payload["messages"].([]any)
+	require.Len(t, messages, 1)
+	toolMsg := messages[0].(map[string]any)
+	require.Equal(t, "tool", toolMsg["role"])
+	require.Equal(t, "call_1", toolMsg["tool_call_id"])
+	require.Equal(t, "line one\nline two", toolMsg["content"])
+}
+
 func TestNormalizeChatCompletionsRequestBodyPreservesMultipleTools(t *testing.T) {
 	raw := []byte(`{
 		"model": "gpt-4.1",
