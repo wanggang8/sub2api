@@ -254,6 +254,9 @@ func (s *OpenAIGatewayService) forwardOpenAIChatCompletionsDirect(
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
 	forwardBody := body
+	if reqStream {
+		forwardBody = ensureChatCompletionsStreamUsage(forwardBody)
+	}
 	if upstreamModel != "" && upstreamModel != originalModel {
 		if patched, err := sjson.SetBytes(forwardBody, "model", upstreamModel); err == nil {
 			forwardBody = patched
@@ -285,6 +288,17 @@ func (s *OpenAIGatewayService) forwardOpenAIChatCompletionsDirect(
 		result.UpstreamModel = upstreamModel
 	}
 	return result, err
+}
+
+func ensureChatCompletionsStreamUsage(body []byte) []byte {
+	if len(body) == 0 || gjson.GetBytes(body, "stream_options.include_usage").Bool() {
+		return body
+	}
+	patched, err := sjson.SetBytes(body, "stream_options.include_usage", true)
+	if err != nil {
+		return body
+	}
+	return patched
 }
 
 func (s *OpenAIGatewayService) handleChatCompletionsErrorResponse(resp *http.Response, c *gin.Context, account *Account) (*OpenAIForwardResult, error) {

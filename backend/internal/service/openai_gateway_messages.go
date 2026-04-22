@@ -376,6 +376,8 @@ func (s *OpenAIGatewayService) forwardOpenAIMessagesDirect(
 		c.Writer.Header().Set("Connection", "keep-alive")
 		c.Writer.Header().Set("X-Accel-Buffering", "no")
 		c.Writer.WriteHeader(http.StatusOK)
+		usage := OpenAIUsage{}
+		var outputEstimate strings.Builder
 		scanner := bufio.NewScanner(resp.Body)
 		maxLineSize := defaultMaxLineSize
 		if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
@@ -385,6 +387,12 @@ func (s *OpenAIGatewayService) forwardOpenAIMessagesDirect(
 		rewriteModel := upstreamModel != "" && upstreamModel != originalModel
 		for scanner.Scan() {
 			line := scanner.Text()
+			if data, ok := extractAnthropicSSEDataLine(line); ok {
+				parseAnthropicSSEUsageIntoOpenAI(data, &usage)
+				if usage.OutputTokens <= 0 {
+					outputEstimate.WriteString(extractAnthropicOutputEstimateTextFromJSON([]byte(data)))
+				}
+			}
 			if rewriteModel {
 				line = replaceAnthropicSSEMessageModel(line, upstreamModel, originalModel)
 			}
@@ -396,7 +404,8 @@ func (s *OpenAIGatewayService) forwardOpenAIMessagesDirect(
 		if err := scanner.Err(); err != nil {
 			return nil, fmt.Errorf("read upstream stream: %w", err)
 		}
-		return &OpenAIForwardResult{RequestID: requestID, Usage: OpenAIUsage{}, Model: originalModel, BillingModel: billingModel, UpstreamModel: upstreamModel, Stream: true, Duration: time.Since(startTime)}, nil
+		usage = fillMissingOpenAIUsageEstimate(usage, forwardBody, outputEstimate.String())
+		return &OpenAIForwardResult{RequestID: requestID, Usage: usage, Model: originalModel, BillingModel: billingModel, UpstreamModel: upstreamModel, Stream: true, Duration: time.Since(startTime)}, nil
 	}
 
 	respBody, err := io.ReadAll(resp.Body)
@@ -413,8 +422,82 @@ func (s *OpenAIGatewayService) forwardOpenAIMessagesDirect(
 		contentType = "application/json"
 	}
 	c.Data(http.StatusOK, contentType, respBody)
-	usage := OpenAIUsage{}
+	usage := parseAnthropicResponseUsageIntoOpenAI(respBody)
+	usage = fillMissingOpenAIUsageEstimate(usage, forwardBody, extractAnthropicOutputEstimateTextFromJSON(respBody))
 	return &OpenAIForwardResult{RequestID: requestID, Usage: usage, Model: originalModel, BillingModel: billingModel, UpstreamModel: upstreamModel, Stream: false, Duration: time.Since(startTime)}, nil
+}
+
+func parseAnthropicSSEUsageIntoOpenAI(data string, usage *OpenAIUsage) {
+	if usage == nil || strings.TrimSpace(data) == "" || strings.TrimSpace(data) == "[DONE]" {
+		return
+	}
+	parsed := gjson.Parse(data)
+	switch parsed.Get("type").String() {
+	case "message_start":
+		mergeAnthropicUsageIntoOpenAI(usage, parsed.Get("message.usage"), true)
+	case "message_delta":
+		mergeAnthropicUsageIntoOpenAI(usage, parsed.Get("usage"), false)
+	}
+}
+
+func parseAnthropicResponseUsageIntoOpenAI(body []byte) OpenAIUsage {
+	usage := OpenAIUsage{}
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return usage
+	}
+	mergeAnthropicUsageIntoOpenAI(&usage, gjson.GetBytes(body, "usage"), true)
+	return usage
+}
+
+func mergeAnthropicUsageIntoOpenAI(usage *OpenAIUsage, usageNode gjson.Result, overwrite bool) {
+	if usage == nil || !usageNode.Exists() || usageNode.Type != gjson.JSON {
+		return
+	}
+	if v := usageNode.Get("input_tokens"); v.Exists() && (overwrite || v.Int() > 0) {
+		usage.InputTokens = int(v.Int())
+	}
+	if v := usageNode.Get("output_tokens"); v.Exists() && (overwrite || v.Int() > 0) {
+		usage.OutputTokens = int(v.Int())
+	}
+	if v := usageNode.Get("cache_creation_input_tokens"); v.Exists() && (overwrite || v.Int() > 0) {
+		usage.CacheCreationInputTokens = int(v.Int())
+	}
+	if v := usageNode.Get("cache_read_input_tokens"); v.Exists() && (overwrite || v.Int() > 0) {
+		usage.CacheReadInputTokens = int(v.Int())
+	}
+	if usage.CacheReadInputTokens == 0 {
+		if cached := usageNode.Get("cached_tokens"); cached.Exists() && cached.Int() > 0 {
+			usage.CacheReadInputTokens = int(cached.Int())
+		}
+	}
+}
+
+func extractAnthropicOutputEstimateTextFromJSON(body []byte) string {
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return ""
+	}
+	var out strings.Builder
+	appendValue := func(v gjson.Result) {
+		if s := strings.TrimSpace(v.String()); s != "" {
+			out.WriteString(s)
+			out.WriteByte('\n')
+		}
+	}
+	gjson.GetBytes(body, "content").ForEach(func(_, block gjson.Result) bool {
+		for _, path := range []string{"text", "thinking", "input"} {
+			appendValue(block.Get(path))
+		}
+		return true
+	})
+	for _, path := range []string{
+		"delta.text",
+		"delta.thinking",
+		"delta.partial_json",
+		"message.content.0.text",
+	} {
+		appendValue(gjson.GetBytes(body, path))
+	}
+	return out.String()
 }
 
 func replaceAnthropicSSEMessageModel(line, fromModel, toModel string) string {
