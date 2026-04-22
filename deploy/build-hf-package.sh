@@ -30,7 +30,7 @@ if [[ -z "${VERSION_VALUE}" ]]; then
 fi
 DATE_VALUE="${DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 
-PKG_NAME="sub2api-hf-${HEAD_SHA}-${TARGET_OS}-${TARGET_ARCH}.tar.gz"
+PKG_NAME="${PKG_NAME:-sub2api-hf-${HEAD_SHA}-${TARGET_OS}-${TARGET_ARCH}.tar.gz}"
 PKG_PATH="${OUT_DIR}/${PKG_NAME}"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sub2api-hf-package.XXXXXX")"
 trap 'rm -rf "${WORK_DIR:-}"' EXIT
