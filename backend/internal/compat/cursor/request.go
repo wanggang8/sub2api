@@ -22,19 +22,35 @@ func NormalizeResponsesRequestBody(raw []byte) ([]byte, error) {
 		return nil, err
 	}
 	if len(probe.Input) > 0 {
-		normalizedInput, changed, err := normalizeResponsesInputFunctionOutputs(probe.Input)
+		normalizedBody := raw
+		changed := false
+
+		normalizedInput, inputChanged, err := normalizeResponsesInputFunctionOutputs(probe.Input)
 		if err != nil {
 			return nil, err
 		}
-		if !changed {
-			return raw, nil
+		if inputChanged {
+			var payload map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &payload); err != nil {
+				return nil, err
+			}
+			payload["input"] = normalizedInput
+			normalizedBody, err = json.Marshal(payload)
+			if err != nil {
+				return nil, err
+			}
+			changed = true
 		}
-		var payload map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &payload); err != nil {
+
+		var toolsChanged bool
+		normalizedBody, toolsChanged, err = normalizeCursorResponsesEditingTools(normalizedBody)
+		if err != nil {
 			return nil, err
 		}
-		payload["input"] = normalizedInput
-		return json.Marshal(payload)
+		if changed || toolsChanged {
+			return normalizedBody, nil
+		}
+		return raw, nil
 	}
 	if len(probe.Messages) == 0 {
 		return raw, nil
@@ -89,6 +105,146 @@ func normalizeResponsesInputFunctionOutputs(raw json.RawMessage) (json.RawMessag
 		return nil, false, fmt.Errorf("marshal normalized responses input: %w", err)
 	}
 	return normalized, true, nil
+}
+
+func normalizeCursorResponsesEditingTools(raw []byte) ([]byte, bool, error) {
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, false, err
+	}
+	if _, ok := payload["input"].([]any); !ok {
+		return raw, false, nil
+	}
+
+	rawTools, _ := payload["tools"].([]any)
+	normalizedTools := make([]any, 0, len(rawTools)+2)
+	nestedFunctionStyle := false
+	hasWrite := false
+	hasStrReplace := false
+	changed := false
+
+	for _, rawTool := range rawTools {
+		tool, ok := rawTool.(map[string]any)
+		if !ok {
+			normalizedTools = append(normalizedTools, rawTool)
+			continue
+		}
+		if _, ok := tool["function"].(map[string]any); ok {
+			nestedFunctionStyle = true
+		}
+		name := cursorToolName(tool)
+		if isCursorApplyPatchToolName(name) {
+			changed = true
+			continue
+		}
+		switch name {
+		case "Write":
+			hasWrite = true
+		case "StrReplace":
+			hasStrReplace = true
+		}
+		normalizedTools = append(normalizedTools, rawTool)
+	}
+
+	if !hasWrite {
+		normalizedTools = append(normalizedTools, cursorEditingToolDefinition("Write", nestedFunctionStyle))
+		changed = true
+	}
+	if !hasStrReplace {
+		normalizedTools = append(normalizedTools, cursorEditingToolDefinition("StrReplace", nestedFunctionStyle))
+		changed = true
+	}
+	if !changed {
+		return raw, false, nil
+	}
+	payload["tools"] = normalizedTools
+	normalized, err := json.Marshal(payload)
+	if err != nil {
+		return nil, false, err
+	}
+	return normalized, true, nil
+}
+
+func cursorToolName(tool map[string]any) string {
+	if fn, ok := tool["function"].(map[string]any); ok {
+		if name, _ := fn["name"].(string); strings.TrimSpace(name) != "" {
+			return strings.TrimSpace(name)
+		}
+	}
+	if name, _ := tool["name"].(string); strings.TrimSpace(name) != "" {
+		return strings.TrimSpace(name)
+	}
+	return ""
+}
+
+func isCursorApplyPatchToolName(name string) bool {
+	normalized := strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.ToLower(strings.TrimSpace(name)))
+	return normalized == "applypatch"
+}
+
+func cursorEditingToolDefinition(name string, nestedFunctionStyle bool) map[string]any {
+	description, parameters := cursorEditingToolSchema(name)
+	if nestedFunctionStyle {
+		return map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":        name,
+				"description": description,
+				"parameters":  parameters,
+			},
+		}
+	}
+	return map[string]any{
+		"type":        "function",
+		"name":        name,
+		"description": description,
+		"parameters":  parameters,
+	}
+}
+
+func cursorEditingToolSchema(name string) (string, map[string]any) {
+	switch name {
+	case "Write":
+		return "Writes a file to the local filesystem.", map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"path": map[string]any{
+					"type":        "string",
+					"description": "The absolute path to the file to modify.",
+				},
+				"contents": map[string]any{
+					"type":        "string",
+					"description": "The contents to write to the file.",
+				},
+			},
+			"required": []string{"path", "contents"},
+		}
+	case "StrReplace":
+		return "Performs exact string replacements in files.", map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"path": map[string]any{
+					"type":        "string",
+					"description": "The absolute path to the file to modify.",
+				},
+				"old_string": map[string]any{
+					"type":        "string",
+					"description": "The text to replace.",
+				},
+				"new_string": map[string]any{
+					"type":        "string",
+					"description": "The text to replace it with.",
+				},
+				"replace_all": map[string]any{
+					"type":        "boolean",
+					"description": "Replace all occurrences of old_string.",
+				},
+			},
+			"required": []string{"path", "old_string", "new_string"},
+		}
+	default:
+		return "", map[string]any{"type": "object", "properties": map[string]any{}}
+	}
 }
 
 func NormalizeChatCompletionsRequestBody(raw []byte) ([]byte, error) {
