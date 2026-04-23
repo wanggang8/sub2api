@@ -387,15 +387,27 @@ func convertChatToolsToResponses(tools []ChatTool, functions []ChatFunction) []R
 	var out []ResponsesTool
 
 	for _, t := range tools {
-		if t.Type != "function" || t.Function == nil {
+		if t.Type != "function" {
+			continue
+		}
+		fn := t.Function
+		if fn == nil {
+			fn = &ChatFunction{
+				Name:        t.Name,
+				Description: t.Description,
+				Parameters:  t.Parameters,
+				Strict:      t.Strict,
+			}
+		}
+		if strings.TrimSpace(fn.Name) == "" {
 			continue
 		}
 		rt := ResponsesTool{
 			Type:        "function",
-			Name:        t.Function.Name,
-			Description: t.Function.Description,
-			Parameters:  t.Function.Parameters,
-			Strict:      t.Function.Strict,
+			Name:        fn.Name,
+			Description: fn.Description,
+			Parameters:  fn.Parameters,
+			Strict:      fn.Strict,
 		}
 		out = append(out, rt)
 	}

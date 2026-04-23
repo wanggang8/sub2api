@@ -390,8 +390,17 @@ type ChatImageURL struct {
 
 // ChatTool describes a tool available to the model.
 type ChatTool struct {
-	Type     string        `json:"type"` // "function"
+	Type string `json:"type"` // "function"
+
+	// Chat Completions style: {"type":"function","function":{...}}
 	Function *ChatFunction `json:"function,omitempty"`
+
+	// Responses style sometimes appears on Cursor Chat requests:
+	// {"type":"function","name":"...","parameters":{...}}
+	Name        string          `json:"name,omitempty"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
+	Strict      *bool           `json:"strict,omitempty"`
 }
 
 // ChatFunction describes a function tool definition.

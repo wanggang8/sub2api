@@ -283,6 +283,36 @@ func TestChatCompletionsToResponses_LegacyFunctions(t *testing.T) {
 	assert.Equal(t, "function", tc["type"])
 }
 
+func TestChatCompletionsToResponses_ResponsesStyleTools(t *testing.T) {
+	raw := []byte(`{
+		"model": "gpt-5.4",
+		"messages": [{"role":"user","content":"hi"}],
+		"tools": [
+			{"type":"function","name":"Read","description":"Read a file","parameters":{"type":"object","properties":{"path":{"type":"string"}}},"strict":true}
+		],
+		"tool_choice": {"type":"function","name":"Read"}
+	}`)
+
+	var req ChatCompletionsRequest
+	require.NoError(t, json.Unmarshal(raw, &req))
+	resp, err := ChatCompletionsToResponses(&req)
+	require.NoError(t, err)
+
+	require.Len(t, resp.Tools, 1)
+	assert.Equal(t, "function", resp.Tools[0].Type)
+	assert.Equal(t, "Read", resp.Tools[0].Name)
+	assert.Equal(t, "Read a file", resp.Tools[0].Description)
+	require.NotNil(t, resp.Tools[0].Strict)
+	assert.True(t, *resp.Tools[0].Strict)
+	assert.JSONEq(t, `{"type":"object","properties":{"path":{"type":"string"}}}`, string(resp.Tools[0].Parameters))
+
+	require.NotNil(t, resp.ToolChoice)
+	var choice map[string]any
+	require.NoError(t, json.Unmarshal(resp.ToolChoice, &choice))
+	assert.Equal(t, "function", choice["type"])
+	assert.Equal(t, "Read", choice["name"])
+}
+
 func TestChatCompletionsToResponses_ServiceTier(t *testing.T) {
 	req := &ChatCompletionsRequest{
 		Model:       "gpt-4o",
