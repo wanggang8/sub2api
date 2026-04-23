@@ -186,20 +186,37 @@ func normalizeResponsesToolsToChatTools(raw json.RawMessage) (json.RawMessage, e
 		return nil, fmt.Errorf("parse responses tools: %w", err)
 	}
 	for _, tool := range probe {
-		if _, ok := tool["function"]; ok {
-			return raw, nil
-		}
 		if toolType, _ := tool["type"].(string); toolType != "function" {
 			return raw, nil
 		}
 	}
 
-	var responseTools []apicompat.ResponsesTool
-	if err := json.Unmarshal(raw, &responseTools); err != nil {
-		return nil, fmt.Errorf("parse responses tools: %w", err)
-	}
-	chatTools := make([]apicompat.ChatTool, 0, len(responseTools))
-	for _, tool := range responseTools {
+	chatTools := make([]apicompat.ChatTool, 0, len(probe))
+	for _, rawTool := range probe {
+		if rawFn, ok := rawTool["function"]; ok {
+			fnJSON, err := json.Marshal(rawFn)
+			if err != nil {
+				return nil, fmt.Errorf("marshal chat tool function: %w", err)
+			}
+			var fn apicompat.ChatFunction
+			if err := json.Unmarshal(fnJSON, &fn); err != nil {
+				return nil, fmt.Errorf("parse chat tool function: %w", err)
+			}
+			chatTools = append(chatTools, apicompat.ChatTool{
+				Type:     "function",
+				Function: &fn,
+			})
+			continue
+		}
+
+		toolJSON, err := json.Marshal(rawTool)
+		if err != nil {
+			return nil, fmt.Errorf("marshal responses tool: %w", err)
+		}
+		var tool apicompat.ResponsesTool
+		if err := json.Unmarshal(toolJSON, &tool); err != nil {
+			return nil, fmt.Errorf("parse responses tool: %w", err)
+		}
 		chatTools = append(chatTools, apicompat.ChatTool{
 			Type: "function",
 			Function: &apicompat.ChatFunction{
@@ -209,6 +226,9 @@ func normalizeResponsesToolsToChatTools(raw json.RawMessage) (json.RawMessage, e
 				Strict:      tool.Strict,
 			},
 		})
+	}
+	if len(chatTools) == 0 {
+		return raw, nil
 	}
 	return mustMarshal(chatTools), nil
 }
@@ -578,15 +598,27 @@ func chatToolsToResponsesTools(tools []apicompat.ChatTool, functions []apicompat
 	}
 	converted := make([]apicompat.ResponsesTool, 0, len(tools)+len(functions))
 	for _, tool := range tools {
-		if strings.TrimSpace(tool.Type) != "function" || tool.Function == nil {
+		if strings.TrimSpace(tool.Type) != "function" {
+			continue
+		}
+		fn := tool.Function
+		if fn == nil {
+			fn = &apicompat.ChatFunction{
+				Name:        tool.Name,
+				Description: tool.Description,
+				Parameters:  tool.Parameters,
+				Strict:      tool.Strict,
+			}
+		}
+		if strings.TrimSpace(fn.Name) == "" {
 			continue
 		}
 		converted = append(converted, apicompat.ResponsesTool{
 			Type:        "function",
-			Name:        tool.Function.Name,
-			Description: tool.Function.Description,
-			Parameters:  tool.Function.Parameters,
-			Strict:      tool.Function.Strict,
+			Name:        fn.Name,
+			Description: fn.Description,
+			Parameters:  fn.Parameters,
+			Strict:      fn.Strict,
 		})
 	}
 	for _, function := range functions {
