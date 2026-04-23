@@ -77,6 +77,10 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 				responsesBody = stripped
 			}
 		}
+		responsesBody, _, err = normalizeOpenAIResponsesFunctionCallOutputStrings(responsesBody)
+		if err != nil {
+			return nil, fmt.Errorf("normalize function_call_output output in responses-shape body: %w", err)
+		}
 		responsesBody, normalizedServiceTier, err := normalizeResponsesBodyServiceTier(responsesBody)
 		if err != nil {
 			return nil, fmt.Errorf("normalize service_tier in responses-shape body: %w", err)

@@ -1921,6 +1921,86 @@ func (s *OpenAIGatewayService) handleFailoverSideEffects(ctx context.Context, re
 	s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, body)
 }
 
+func normalizeOpenAIResponsesFunctionCallOutputStrings(body []byte) ([]byte, bool, error) {
+	if len(body) == 0 || !gjson.GetBytes(body, `input.#(type=="function_call_output")`).Exists() {
+		return body, false, nil
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return body, false, nil
+	}
+
+	input, ok := payload["input"].([]any)
+	if !ok {
+		return body, false, nil
+	}
+
+	changed := false
+	for _, raw := range input {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if itemType, _ := item["type"].(string); itemType != "function_call_output" {
+			continue
+		}
+		output, exists := item["output"]
+		if !exists {
+			continue
+		}
+		if _, ok := output.(string); ok {
+			continue
+		}
+		item["output"] = stringifyOpenAIResponsesFunctionCallOutput(output)
+		changed = true
+	}
+	if !changed {
+		return body, false, nil
+	}
+
+	normalized, err := json.Marshal(payload)
+	if err != nil {
+		return nil, false, fmt.Errorf("normalize function_call_output output: %w", err)
+	}
+	return normalized, true, nil
+}
+
+func stringifyOpenAIResponsesFunctionCallOutput(output any) string {
+	switch v := output.(type) {
+	case nil:
+		return ""
+	case string:
+		return v
+	case []any:
+		parts := make([]string, 0, len(v))
+		for _, raw := range v {
+			block, ok := raw.(map[string]any)
+			if !ok {
+				if text := strings.TrimSpace(fmt.Sprint(raw)); text != "" {
+					parts = append(parts, text)
+				}
+				continue
+			}
+			if text, _ := block["text"].(string); strings.TrimSpace(text) != "" {
+				parts = append(parts, text)
+				continue
+			}
+			data, err := json.Marshal(block)
+			if err == nil {
+				parts = append(parts, string(data))
+			}
+		}
+		return strings.Join(parts, "\n")
+	default:
+		data, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Sprint(v)
+		}
+		return string(data)
+	}
+}
+
 // Forward forwards request to OpenAI API
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
 	startTime := time.Now()
@@ -1939,6 +2019,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 
 	originalBody := body
+	if normalizedBody, normalized, normalizeErr := normalizeOpenAIResponsesFunctionCallOutputStrings(body); normalizeErr != nil {
+		return nil, normalizeErr
+	} else if normalized {
+		body = normalizedBody
+		originalBody = normalizedBody
+	}
 	reqModel, reqStream, promptCacheKey := extractOpenAIRequestMetaFromBody(body)
 	originalModel := reqModel
 
