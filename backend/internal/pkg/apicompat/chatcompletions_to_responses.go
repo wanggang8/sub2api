@@ -28,7 +28,7 @@ func ChatCompletionsToResponses(req *ChatCompletionsRequest) (*ResponsesRequest,
 
 	out := &ResponsesRequest{
 		Model:        req.Model,
-		Instructions: req.Instructions,
+		Instructions: mergeChatTopLevelSystemInstructions(req.System, req.Instructions),
 		Input:        inputJSON,
 		Temperature:  req.Temperature,
 		TopP:         req.TopP,
@@ -82,6 +82,19 @@ func ChatCompletionsToResponses(req *ChatCompletionsRequest) (*ResponsesRequest,
 	}
 
 	return out, nil
+}
+
+func mergeChatTopLevelSystemInstructions(system json.RawMessage, instructions string) string {
+	parts := make([]string, 0, 2)
+	if len(system) > 0 && string(system) != "null" {
+		if systemText, err := parseAnthropicSystemPrompt(system); err == nil && strings.TrimSpace(systemText) != "" {
+			parts = append(parts, strings.TrimSpace(systemText))
+		}
+	}
+	if strings.TrimSpace(instructions) != "" {
+		parts = append(parts, strings.TrimSpace(instructions))
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 func normalizeChatToolChoiceToResponses(raw json.RawMessage) json.RawMessage {

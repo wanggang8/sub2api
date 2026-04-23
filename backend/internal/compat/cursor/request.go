@@ -101,6 +101,13 @@ func NormalizeChatCompletionsRequestBody(raw []byte) ([]byte, error) {
 		return nil, err
 	}
 	if _, ok := payload["messages"]; ok {
+		normalized, changed, err := normalizeChatCompletionsMessagesPayload(payload)
+		if err != nil {
+			return nil, err
+		}
+		if changed {
+			return normalized, nil
+		}
 		return raw, nil
 	}
 	inputRaw, ok := payload["input"]
@@ -158,6 +165,107 @@ func NormalizeChatCompletionsRequestBody(raw []byte) ([]byte, error) {
 	}
 
 	return json.Marshal(payload)
+}
+
+func normalizeChatCompletionsMessagesPayload(payload map[string]json.RawMessage) ([]byte, bool, error) {
+	if len(payload) == 0 || chatToolsContainName(payload["tools"], "multi_tool_use.parallel") {
+		return nil, false, nil
+	}
+	messagesRaw, ok := payload["messages"]
+	if !ok || len(messagesRaw) == 0 {
+		return nil, false, nil
+	}
+	var messages []map[string]any
+	if err := json.Unmarshal(messagesRaw, &messages); err != nil {
+		return nil, false, fmt.Errorf("parse chat messages: %w", err)
+	}
+	changed := false
+	for _, message := range messages {
+		role, _ := message["role"].(string)
+		if role != "system" && role != "developer" {
+			continue
+		}
+		if normalizeParallelToolInstructionInMessage(message) {
+			changed = true
+		}
+	}
+	if !changed {
+		return nil, false, nil
+	}
+	payload["messages"] = mustMarshal(messages)
+	normalized, err := json.Marshal(payload)
+	if err != nil {
+		return nil, false, fmt.Errorf("marshal normalized chat messages: %w", err)
+	}
+	return normalized, true, nil
+}
+
+func chatToolsContainName(raw json.RawMessage, name string) bool {
+	if len(raw) == 0 || strings.TrimSpace(name) == "" {
+		return false
+	}
+	var tools []map[string]any
+	if err := json.Unmarshal(raw, &tools); err != nil {
+		return false
+	}
+	for _, tool := range tools {
+		if strings.TrimSpace(fmt.Sprint(tool["name"])) == name {
+			return true
+		}
+		if fn, ok := tool["function"].(map[string]any); ok && strings.TrimSpace(fmt.Sprint(fn["name"])) == name {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeParallelToolInstructionInMessage(message map[string]any) bool {
+	content, ok := message["content"]
+	if !ok {
+		return false
+	}
+	switch value := content.(type) {
+	case string:
+		normalized, changed := normalizeMissingParallelToolInstruction(value)
+		if changed {
+			message["content"] = normalized
+		}
+		return changed
+	case []any:
+		changed := false
+		for _, rawBlock := range value {
+			block, ok := rawBlock.(map[string]any)
+			if !ok {
+				continue
+			}
+			text, ok := block["text"].(string)
+			if !ok {
+				continue
+			}
+			normalized, blockChanged := normalizeMissingParallelToolInstruction(text)
+			if blockChanged {
+				block["text"] = normalized
+				changed = true
+			}
+		}
+		return changed
+	default:
+		return false
+	}
+}
+
+func normalizeMissingParallelToolInstruction(text string) (string, bool) {
+	if !strings.Contains(text, "multi_tool_use.parallel") {
+		return text, false
+	}
+	normalized := strings.ReplaceAll(
+		text,
+		"Use `multi_tool_use.parallel` to parallelize tool calls and only this.",
+		"Parallelize independent tool work by emitting multiple tool_calls in the same assistant response.",
+	)
+	normalized = strings.ReplaceAll(normalized, "`multi_tool_use.parallel`", "multiple tool_calls in the same assistant response")
+	normalized = strings.ReplaceAll(normalized, "multi_tool_use.parallel", "multiple tool_calls in the same assistant response")
+	return normalized, normalized != text
 }
 
 func normalizeResponsesReasoningEffort(raw json.RawMessage) (json.RawMessage, bool, error) {

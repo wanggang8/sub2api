@@ -333,7 +333,7 @@ func (s *OpenAIGatewayService) forwardOpenAIChatCompletionsDirect(
 	reqStream bool,
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
-	forwardBody := body
+	forwardBody := normalizeChatCompletionsBodyForDirectUpstream(body)
 	if reqStream {
 		forwardBody = ensureChatCompletionsStreamUsage(forwardBody)
 	}
@@ -368,6 +368,48 @@ func (s *OpenAIGatewayService) forwardOpenAIChatCompletionsDirect(
 		result.UpstreamModel = upstreamModel
 	}
 	return result, err
+}
+
+func normalizeChatCompletionsBodyForDirectUpstream(body []byte) []byte {
+	if len(body) == 0 || !gjson.GetBytes(body, "system").Exists() || !gjson.GetBytes(body, "messages").IsArray() {
+		return body
+	}
+	systemText := extractAnthropicSystemTextFromBody(body)
+	if strings.TrimSpace(systemText) == "" {
+		if stripped, err := sjson.DeleteBytes(body, "system"); err == nil {
+			return stripped
+		}
+		return body
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return body
+	}
+	rawMessages, ok := payload["messages"].([]any)
+	if !ok {
+		return body
+	}
+	payload["messages"] = append([]any{map[string]any{"role": "system", "content": systemText}}, rawMessages...)
+	delete(payload, "system")
+
+	normalized, err := json.Marshal(payload)
+	if err != nil {
+		return body
+	}
+	return normalized
+}
+
+func extractAnthropicSystemTextFromBody(body []byte) string {
+	raw := gjson.GetBytes(body, "system")
+	if !raw.Exists() {
+		return ""
+	}
+	var value any
+	if err := json.Unmarshal([]byte(raw.Raw), &value); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(extractAnthropicSystemText(value))
 }
 
 func ensureChatCompletionsStreamUsage(body []byte) []byte {

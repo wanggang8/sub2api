@@ -51,6 +51,30 @@ func TestChatCompletionsToResponses_SystemMessage(t *testing.T) {
 	assert.Equal(t, "user", items[1].Role)
 }
 
+func TestChatCompletionsToResponses_TopLevelSystemPreserved(t *testing.T) {
+	raw := []byte(`{
+		"model":"gpt-5.4",
+		"system":[{"type":"text","text":"Use actual tool calls."},{"type":"text","text":"Never print tool JSON."}],
+		"messages":[{"role":"user","content":"hi"}],
+		"tools":[
+			{"type":"function","function":{"name":"Read","parameters":{"type":"object"}}},
+			{"type":"function","function":{"name":"Grep","parameters":{"type":"object"}}}
+		],
+		"tool_choice":"auto"
+	}`)
+
+	var req ChatCompletionsRequest
+	require.NoError(t, json.Unmarshal(raw, &req))
+	resp, err := ChatCompletionsToResponses(&req)
+	require.NoError(t, err)
+
+	assert.Contains(t, resp.Instructions, "Use actual tool calls.")
+	assert.Contains(t, resp.Instructions, "Never print tool JSON.")
+	require.Len(t, resp.Tools, 2)
+	assert.Equal(t, "Read", resp.Tools[0].Name)
+	assert.Equal(t, "Grep", resp.Tools[1].Name)
+}
+
 func TestChatCompletionsToResponses_ToolCalls(t *testing.T) {
 	req := &ChatCompletionsRequest{
 		Model: "gpt-4o",

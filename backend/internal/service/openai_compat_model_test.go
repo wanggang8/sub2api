@@ -442,6 +442,66 @@ func TestForwardAsChatCompletions_DirectsToUpstreamChatCompletionsWhenResponsesU
 	require.False(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").Exists())
 }
 
+func TestForwardAsChatCompletions_DirectChatNormalizesTopLevelSystem(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{
+		"model":"gpt-5.4",
+		"system":[{"type":"text","text":"Use tools as tool calls."}],
+		"messages":[{"role":"user","content":"hello"}],
+		"tools":[{"type":"function","function":{"name":"Read","parameters":{"type":"object"}}}],
+		"stream":false
+	}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid_chat_direct_system"}},
+		Body: io.NopCloser(strings.NewReader(`{
+			"id":"chatcmpl_1",
+			"object":"chat.completion",
+			"model":"gpt-5.4",
+			"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],
+			"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}
+		}`)),
+	}}
+
+	svc := &OpenAIGatewayService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{},
+	}
+	account := &Account{
+		ID:          1,
+		Name:        "openai-apikey",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "api-key",
+			"base_url": "https://relay.example.com",
+		},
+		Extra: map[string]any{
+			"openai_upstream_supports_responses":        false,
+			"openai_upstream_supports_chat_completions": true,
+			"openai_upstream_supports_messages":         false,
+		},
+	}
+
+	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "/v1/chat/completions", upstream.lastReq.URL.Path)
+	require.False(t, gjson.GetBytes(upstream.lastBody, "system").Exists())
+	require.Equal(t, "system", gjson.GetBytes(upstream.lastBody, "messages.0.role").String())
+	require.Equal(t, "Use tools as tool calls.", gjson.GetBytes(upstream.lastBody, "messages.0.content").String())
+	require.Equal(t, "user", gjson.GetBytes(upstream.lastBody, "messages.1.role").String())
+	require.Len(t, gjson.GetBytes(upstream.lastBody, "tools").Array(), 1)
+}
+
 func TestForwardAsChatCompletions_DirectChatConvertsResponsesShape(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)

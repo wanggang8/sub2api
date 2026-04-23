@@ -158,6 +158,33 @@ func TestNormalizeChatCompletionsRequestBodyPreservesMultipleTools(t *testing.T)
 	require.Equal(t, "required", payload["tool_choice"])
 }
 
+func TestNormalizeChatCompletionsRequestBodyRewritesMissingParallelToolInstruction(t *testing.T) {
+	raw := []byte(`{
+		"model": "gpt-5.4",
+		"messages": [
+			{"role": "system", "content": "Use ` + "`multi_tool_use.parallel`" + ` to parallelize tool calls and only this."},
+			{"role": "user", "content": "hi"}
+		],
+		"tools": [
+			{"type": "function", "function": {"name": "ReadFile", "parameters": {"type": "object"}}},
+			{"type": "function", "function": {"name": "rg", "parameters": {"type": "object"}}}
+		],
+		"tool_choice": "auto"
+	}`)
+
+	normalized, err := NormalizeChatCompletionsRequestBody(raw)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(normalized, &payload))
+	messages := payload["messages"].([]any)
+	system := messages[0].(map[string]any)
+	content := system["content"].(string)
+	require.NotContains(t, content, "multi_tool_use.parallel")
+	require.Contains(t, content, "multiple tool_calls in the same assistant response")
+	require.Len(t, payload["tools"].([]any), 2)
+}
+
 func TestNormalizeMessagesRequestBodyStructuredInputPreserved(t *testing.T) {
 	raw := []byte(`{
 		"model": "claude-sonnet",

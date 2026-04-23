@@ -338,6 +338,7 @@ type ResponsesStreamEvent struct {
 // ChatCompletionsRequest is the request body for POST /v1/chat/completions.
 type ChatCompletionsRequest struct {
 	Model               string             `json:"model"`
+	System              json.RawMessage    `json:"system,omitempty"` // Cursor may send Anthropic-style system blocks to chat completions
 	Messages            []ChatMessage      `json:"messages"`
 	Instructions        string             `json:"instructions,omitempty"` // OpenAI Responses API compat
 	MaxTokens           *int               `json:"max_tokens,omitempty"`
