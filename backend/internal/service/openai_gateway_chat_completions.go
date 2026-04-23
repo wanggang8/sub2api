@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	cursorcompat "github.com/Wei-Shaw/sub2api/internal/compat/cursor"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
@@ -81,6 +82,10 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		if err != nil {
 			return nil, fmt.Errorf("normalize function_call_output output in responses-shape body: %w", err)
 		}
+		responsesBody, _, err = normalizeOpenAIResponsesRequestTools(responsesBody)
+		if err != nil {
+			return nil, fmt.Errorf("normalize responses tools in responses-shape body: %w", err)
+		}
 		responsesBody, normalizedServiceTier, err := normalizeResponsesBodyServiceTier(responsesBody)
 		if err != nil {
 			return nil, fmt.Errorf("normalize service_tier in responses-shape body: %w", err)
@@ -128,7 +133,14 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		if c != nil {
 			c.Set("openai_upstream_endpoint_override", "/v1/chat/completions")
 		}
-		return s.forwardOpenAIChatCompletionsDirect(ctx, c, account, body, originalModel, billingModel, upstreamModel, promptCacheKey, clientStream, startTime)
+		directBody := body
+		if isResponsesShape {
+			directBody, err = normalizeResponsesShapeForChatCompletionsDirect(body)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return s.forwardOpenAIChatCompletionsDirect(ctx, c, account, directBody, originalModel, billingModel, upstreamModel, promptCacheKey, clientStream, startTime)
 	}
 
 	if account.Type == AccountTypeOAuth || promptCacheKey != "" {
@@ -285,6 +297,28 @@ func normalizedOpenAIServiceTierValue(raw string) string {
 		return ""
 	}
 	return *normalized
+}
+
+func normalizeResponsesShapeForChatCompletionsDirect(body []byte) ([]byte, error) {
+	normalized, err := cursorcompat.NormalizeChatCompletionsRequestBody(body)
+	if err != nil {
+		return nil, fmt.Errorf("normalize responses-shape body for chat completions upstream: %w", err)
+	}
+	for _, field := range []string{
+		"previous_response_id",
+		"prompt_cache_retention",
+		"safety_identifier",
+		"metadata",
+		"include",
+		"truncation",
+		"text",
+		"store",
+	} {
+		if stripped, derr := sjson.DeleteBytes(normalized, field); derr == nil {
+			normalized = stripped
+		}
+	}
+	return normalized, nil
 }
 
 func (s *OpenAIGatewayService) forwardOpenAIChatCompletionsDirect(

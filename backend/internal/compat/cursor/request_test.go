@@ -126,9 +126,11 @@ func TestNormalizeChatCompletionsRequestBodyPreservesMultipleTools(t *testing.T)
 		"input": [{"role": "user", "content": [{"type": "input_text", "text": "hello"}]}],
 		"tools": [
 			{"type": "function", "name": "tool_a", "parameters": {"type": "object"}},
-			{"type": "function", "function": {"name": "tool_b", "parameters": {"type": "object"}}}
+			{"type": "function", "function": {"name": "tool_b", "parameters": {"type": "object"}}},
+			{"name": "tool_c", "description": "Claude style", "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}}},
+			{"type": "web_search"}
 		],
-		"tool_choice": {"type": "function", "name": "tool_b"}
+		"tool_choice": {"type": "any"}
 	}`)
 
 	normalized, err := NormalizeChatCompletionsRequestBody(raw)
@@ -138,7 +140,7 @@ func TestNormalizeChatCompletionsRequestBodyPreservesMultipleTools(t *testing.T)
 	require.NoError(t, json.Unmarshal(normalized, &payload))
 	tools, ok := payload["tools"].([]any)
 	require.True(t, ok)
-	require.Len(t, tools, 2)
+	require.Len(t, tools, 4)
 	toolA := tools[0].(map[string]any)
 	toolAFn := toolA["function"].(map[string]any)
 	require.Equal(t, "tool_a", toolAFn["name"])
@@ -146,9 +148,14 @@ func TestNormalizeChatCompletionsRequestBodyPreservesMultipleTools(t *testing.T)
 	toolB := tools[1].(map[string]any)
 	toolBFn := toolB["function"].(map[string]any)
 	require.Equal(t, "tool_b", toolBFn["name"])
-	toolChoice, ok := payload["tool_choice"].(map[string]any)
-	require.True(t, ok)
-	require.Equal(t, "function", toolChoice["type"])
+	toolC := tools[2].(map[string]any)
+	toolCFn := toolC["function"].(map[string]any)
+	require.Equal(t, "tool_c", toolCFn["name"])
+	require.Equal(t, "Claude style", toolCFn["description"])
+	require.Contains(t, toolCFn, "parameters")
+	toolD := tools[3].(map[string]any)
+	require.Equal(t, "web_search", toolD["type"])
+	require.Equal(t, "required", payload["tool_choice"])
 }
 
 func TestNormalizeMessagesRequestBodyStructuredInputPreserved(t *testing.T) {

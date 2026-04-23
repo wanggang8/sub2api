@@ -442,6 +442,98 @@ func TestForwardAsChatCompletions_DirectsToUpstreamChatCompletionsWhenResponsesU
 	require.False(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").Exists())
 }
 
+func TestForwardAsChatCompletions_DirectChatConvertsResponsesShape(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{
+		"model":"gpt-5.4",
+		"instructions":"system prompt",
+		"input":[{"role":"user","content":[{"type":"input_text","text":"hello"}]}],
+		"tools":[
+			{"name":"Read","description":"Read file","input_schema":{"type":"object","properties":{"path":{"type":"string"}}}},
+			{"type":"function","function":{"name":"Grep","parameters":{"type":"object","properties":{"pattern":{"type":"string"}}}}},
+			{"type":"web_search"}
+		],
+		"tool_choice":{"type":"any"},
+		"max_output_tokens":64,
+		"reasoning":{"effort":"high"},
+		"previous_response_id":"resp_ignored",
+		"prompt_cache_retention":"24h",
+		"include":["reasoning.encrypted_content"],
+		"truncation":"auto",
+		"text":{"format":{"type":"text"}},
+		"stream":false
+	}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid_chat_direct_responses_shape"}},
+		Body: io.NopCloser(strings.NewReader(`{
+			"id":"chatcmpl_1",
+			"object":"chat.completion",
+			"model":"gpt-5.4",
+			"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],
+			"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}
+		}`)),
+	}}
+
+	svc := &OpenAIGatewayService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{},
+	}
+	account := &Account{
+		ID:          1,
+		Name:        "openai-apikey",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "api-key",
+			"base_url": "https://relay.example.com",
+		},
+		Extra: map[string]any{
+			"openai_upstream_supports_responses":        false,
+			"openai_upstream_supports_chat_completions": true,
+			"openai_upstream_supports_messages":         false,
+		},
+	}
+
+	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "/v1/chat/completions", upstream.lastReq.URL.Path)
+	require.False(t, gjson.GetBytes(upstream.lastBody, "input").Exists())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "instructions").Exists())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "max_output_tokens").Exists())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "reasoning").Exists())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "previous_response_id").Exists())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_retention").Exists())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "include").Exists())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "truncation").Exists())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "text").Exists())
+	require.Equal(t, "system", gjson.GetBytes(upstream.lastBody, "messages.0.role").String())
+	require.Equal(t, "system prompt", gjson.GetBytes(upstream.lastBody, "messages.0.content").String())
+	require.Equal(t, "user", gjson.GetBytes(upstream.lastBody, "messages.1.role").String())
+	require.Equal(t, "hello", gjson.GetBytes(upstream.lastBody, "messages.1.content").String())
+	require.Equal(t, int64(64), gjson.GetBytes(upstream.lastBody, "max_completion_tokens").Int())
+	require.Equal(t, "high", gjson.GetBytes(upstream.lastBody, "reasoning_effort").String())
+	require.Equal(t, "required", gjson.GetBytes(upstream.lastBody, "tool_choice").String())
+
+	tools := gjson.GetBytes(upstream.lastBody, "tools").Array()
+	require.Len(t, tools, 3)
+	require.Equal(t, "function", tools[0].Get("type").String())
+	require.Equal(t, "Read", tools[0].Get("function.name").String())
+	require.Equal(t, "string", tools[0].Get("function.parameters.properties.path.type").String())
+	require.Equal(t, "function", tools[1].Get("type").String())
+	require.Equal(t, "Grep", tools[1].Get("function.name").String())
+	require.Equal(t, "web_search", tools[2].Get("type").String())
+}
+
 func TestForwardAsChatCompletionsResponsesShapeNormalizesFunctionCallOutputArray(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
@@ -502,6 +594,84 @@ func TestForwardAsChatCompletionsResponsesShapeNormalizesFunctionCallOutputArray
 	require.Equal(t, "/v1/responses", upstream.lastReq.URL.Path)
 	require.Equal(t, "line one\nline two", gjson.GetBytes(upstream.lastBody, "input.0.output").String())
 	require.Equal(t, gjson.String, gjson.GetBytes(upstream.lastBody, "input.0.output").Type)
+}
+
+func TestForwardAsChatCompletionsResponsesShapeNormalizesTools(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{
+		"model":"gpt-5.4",
+		"input":[{"role":"user","content":"hello"}],
+		"tools":[
+			{"name":"Read","description":"Read file","input_schema":{"type":"object","properties":{"path":{"type":"string"}}}},
+			{"type":"function","function":{"name":"Grep","description":"Search files","parameters":{"type":"object","properties":{"pattern":{"type":"string"}}},"strict":true}},
+			{"type":"web_search"}
+		],
+		"tool_choice":{"type":"any"},
+		"stream":false
+	}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstreamBody := strings.Join([]string{
+		`data: {"type":"response.completed","response":{"id":"resp_1","object":"response","model":"gpt-5.4","status":"completed","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_chat_responses_shape_tools"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+
+	svc := &OpenAIGatewayService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{},
+	}
+	account := &Account{
+		ID:          1,
+		Name:        "openai-apikey",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "api-key",
+			"base_url": "https://relay.example.com",
+		},
+		Extra: map[string]any{
+			"openai_upstream_supports_responses":        true,
+			"openai_upstream_supports_chat_completions": false,
+			"openai_upstream_supports_messages":         false,
+		},
+	}
+
+	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "/v1/responses", upstream.lastReq.URL.Path)
+
+	tools := gjson.GetBytes(upstream.lastBody, "tools").Array()
+	require.Len(t, tools, 3)
+	require.Equal(t, "function", tools[0].Get("type").String())
+	require.Equal(t, "Read", tools[0].Get("name").String())
+	require.Equal(t, "Read file", tools[0].Get("description").String())
+	require.Equal(t, "string", tools[0].Get("parameters.properties.path.type").String())
+	require.False(t, tools[0].Get("input_schema").Exists())
+	require.False(t, tools[0].Get("function").Exists())
+
+	require.Equal(t, "function", tools[1].Get("type").String())
+	require.Equal(t, "Grep", tools[1].Get("name").String())
+	require.Equal(t, "Search files", tools[1].Get("description").String())
+	require.Equal(t, "string", tools[1].Get("parameters.properties.pattern.type").String())
+	require.True(t, tools[1].Get("strict").Bool())
+	require.False(t, tools[1].Get("function").Exists())
+
+	require.Equal(t, "web_search", tools[2].Get("type").String())
+	require.Equal(t, "required", gjson.GetBytes(upstream.lastBody, "tool_choice").String())
 }
 
 func TestForwardAsChatCompletions_DirectStreamRequestsUsageAndParsesChatUsage(t *testing.T) {

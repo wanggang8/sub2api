@@ -396,10 +396,12 @@ type ChatTool struct {
 	Function *ChatFunction `json:"function,omitempty"`
 
 	// Responses style sometimes appears on Cursor Chat requests:
-	// {"type":"function","name":"...","parameters":{...}}
+	// {"type":"function","name":"...","parameters":{...}} or
+	// {"name":"...","input_schema":{...}}
 	Name        string          `json:"name,omitempty"`
 	Description string          `json:"description,omitempty"`
 	Parameters  json.RawMessage `json:"parameters,omitempty"`
+	InputSchema json.RawMessage `json:"input_schema,omitempty"`
 	Strict      *bool           `json:"strict,omitempty"`
 }
 

@@ -1966,6 +1966,161 @@ func normalizeOpenAIResponsesFunctionCallOutputStrings(body []byte) ([]byte, boo
 	return normalized, true, nil
 }
 
+func normalizeOpenAIResponsesRequestTools(body []byte) ([]byte, bool, error) {
+	if len(body) == 0 || (!gjson.GetBytes(body, "tools").Exists() && !gjson.GetBytes(body, "tool_choice").Exists()) {
+		return body, false, nil
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return body, false, nil
+	}
+
+	changed := false
+	if rawTools, ok := payload["tools"].([]any); ok {
+		normalized := make([]any, 0, len(rawTools))
+		for _, rawTool := range rawTools {
+			tool, toolChanged := normalizeOpenAIResponsesToolDefinition(rawTool)
+			normalized = append(normalized, tool)
+			changed = changed || toolChanged
+		}
+		if changed {
+			payload["tools"] = normalized
+		}
+	}
+	if rawChoice, ok := payload["tool_choice"]; ok {
+		if choice, choiceChanged := normalizeOpenAIResponsesToolChoice(rawChoice); choiceChanged {
+			payload["tool_choice"] = choice
+			changed = true
+		}
+	}
+	if !changed {
+		return body, false, nil
+	}
+
+	normalizedBody, err := json.Marshal(payload)
+	if err != nil {
+		return nil, false, fmt.Errorf("normalize responses tools: %w", err)
+	}
+	return normalizedBody, true, nil
+}
+
+func normalizeOpenAIResponsesToolDefinition(rawTool any) (any, bool) {
+	tool, ok := rawTool.(map[string]any)
+	if !ok {
+		return rawTool, false
+	}
+
+	toolType, _ := tool["type"].(string)
+	toolType = strings.TrimSpace(toolType)
+	if toolType != "" && toolType != "function" {
+		return rawTool, false
+	}
+
+	function, hasFunction := tool["function"].(map[string]any)
+	if hasFunction {
+		name := trimmedStringField(function, "name")
+		if name == "" {
+			return rawTool, false
+		}
+		normalized := map[string]any{
+			"type": "function",
+			"name": name,
+			"parameters": normalizeResponsesToolParameters(
+				firstPresent(function["parameters"], tool["parameters"], tool["input_schema"]),
+			),
+		}
+		if description := trimmedStringField(function, "description"); description != "" {
+			normalized["description"] = description
+		} else if description := trimmedStringField(tool, "description"); description != "" {
+			normalized["description"] = description
+		}
+		if strict, ok := function["strict"]; ok {
+			normalized["strict"] = strict
+		} else if strict, ok := tool["strict"]; ok {
+			normalized["strict"] = strict
+		}
+		return normalized, true
+	}
+
+	name := trimmedStringField(tool, "name")
+	if name == "" {
+		return rawTool, false
+	}
+
+	parameters, hasParameters := tool["parameters"]
+	if !hasParameters {
+		parameters = tool["input_schema"]
+	}
+	_, hasInputSchema := tool["input_schema"]
+	if toolType == "function" && hasParameters && !hasInputSchema {
+		return rawTool, false
+	}
+
+	normalized := map[string]any{
+		"type":       "function",
+		"name":       name,
+		"parameters": normalizeResponsesToolParameters(parameters),
+	}
+	if description := trimmedStringField(tool, "description"); description != "" {
+		normalized["description"] = description
+	}
+	if strict, ok := tool["strict"]; ok {
+		normalized["strict"] = strict
+	}
+	return normalized, true
+}
+
+func firstPresent(values ...any) any {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
+func normalizeResponsesToolParameters(parameters any) any {
+	if parameters == nil {
+		return map[string]any{"type": "object", "properties": map[string]any{}}
+	}
+	return parameters
+}
+
+func trimmedStringField(payload map[string]any, key string) string {
+	value, ok := payload[key].(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
+func normalizeOpenAIResponsesToolChoice(rawChoice any) (any, bool) {
+	choice, ok := rawChoice.(map[string]any)
+	if !ok {
+		return rawChoice, false
+	}
+	choiceType := trimmedStringField(choice, "type")
+	switch choiceType {
+	case "any":
+		return "required", true
+	case "auto", "none", "required":
+		return choiceType, true
+	case "function", "tool":
+		name := ""
+		if function, ok := choice["function"].(map[string]any); ok {
+			name = trimmedStringField(function, "name")
+		}
+		if name == "" {
+			name = trimmedStringField(choice, "name")
+		}
+		if name != "" {
+			return map[string]any{"type": "function", "name": name}, true
+		}
+	}
+	return rawChoice, false
+}
+
 func stringifyOpenAIResponsesFunctionCallOutput(output any) string {
 	switch v := output.(type) {
 	case nil:
@@ -2919,6 +3074,13 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	} else if normalized {
 		body = normalizedBody
 	}
+	if targetAPI == OpenAIUpstreamAPIResponses || targetAPI == OpenAIUpstreamAPIAny {
+		if normalizedBody, normalized, normalizeErr := normalizeOpenAIResponsesRequestTools(body); normalizeErr != nil {
+			return nil, normalizeErr
+		} else if normalized {
+			body = normalizedBody
+		}
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
@@ -3462,6 +3624,11 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	}
 	targetURL = appendOpenAIResponsesRequestPathSuffix(targetURL, openAIResponsesRequestPathSuffix(c))
 	if normalizedBody, normalized, normalizeErr := normalizeOpenAIResponsesFunctionCallOutputStrings(body); normalizeErr != nil {
+		return nil, normalizeErr
+	} else if normalized {
+		body = normalizedBody
+	}
+	if normalizedBody, normalized, normalizeErr := normalizeOpenAIResponsesRequestTools(body); normalizeErr != nil {
 		return nil, normalizeErr
 	} else if normalized {
 		body = normalizedBody

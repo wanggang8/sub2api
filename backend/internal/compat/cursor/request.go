@@ -185,14 +185,14 @@ func normalizeResponsesToolsToChatTools(raw json.RawMessage) (json.RawMessage, e
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		return nil, fmt.Errorf("parse responses tools: %w", err)
 	}
-	for _, tool := range probe {
-		if toolType, _ := tool["type"].(string); toolType != "function" {
-			return raw, nil
-		}
-	}
-
-	chatTools := make([]apicompat.ChatTool, 0, len(probe))
+	normalizedTools := make([]any, 0, len(probe))
+	changed := false
 	for _, rawTool := range probe {
+		toolType, _ := rawTool["type"].(string)
+		if toolType != "" && toolType != "function" {
+			normalizedTools = append(normalizedTools, rawTool)
+			continue
+		}
 		if rawFn, ok := rawTool["function"]; ok {
 			fnJSON, err := json.Marshal(rawFn)
 			if err != nil {
@@ -202,10 +202,14 @@ func normalizeResponsesToolsToChatTools(raw json.RawMessage) (json.RawMessage, e
 			if err := json.Unmarshal(fnJSON, &fn); err != nil {
 				return nil, fmt.Errorf("parse chat tool function: %w", err)
 			}
-			chatTools = append(chatTools, apicompat.ChatTool{
+			normalizedTools = append(normalizedTools, apicompat.ChatTool{
 				Type:     "function",
 				Function: &fn,
 			})
+			continue
+		}
+		if name, _ := rawTool["name"].(string); strings.TrimSpace(name) == "" {
+			normalizedTools = append(normalizedTools, rawTool)
 			continue
 		}
 
@@ -213,24 +217,41 @@ func normalizeResponsesToolsToChatTools(raw json.RawMessage) (json.RawMessage, e
 		if err != nil {
 			return nil, fmt.Errorf("marshal responses tool: %w", err)
 		}
-		var tool apicompat.ResponsesTool
+		var tool map[string]json.RawMessage
 		if err := json.Unmarshal(toolJSON, &tool); err != nil {
 			return nil, fmt.Errorf("parse responses tool: %w", err)
 		}
-		chatTools = append(chatTools, apicompat.ChatTool{
+		name := strings.TrimSpace(unmarshalStringOrEmpty(tool["name"]))
+		description := unmarshalStringOrEmpty(tool["description"])
+		parameters := tool["parameters"]
+		if len(parameters) == 0 {
+			parameters = tool["input_schema"]
+		}
+		if len(parameters) == 0 {
+			parameters = mustMarshal(map[string]any{"type": "object", "properties": map[string]any{}})
+		}
+		var strict *bool
+		if rawStrict, ok := tool["strict"]; ok && len(rawStrict) > 0 {
+			var strictValue bool
+			if err := json.Unmarshal(rawStrict, &strictValue); err == nil {
+				strict = &strictValue
+			}
+		}
+		normalizedTools = append(normalizedTools, apicompat.ChatTool{
 			Type: "function",
 			Function: &apicompat.ChatFunction{
-				Name:        tool.Name,
-				Description: tool.Description,
-				Parameters:  tool.Parameters,
-				Strict:      tool.Strict,
+				Name:        name,
+				Description: description,
+				Parameters:  parameters,
+				Strict:      strict,
 			},
 		})
+		changed = true
 	}
-	if len(chatTools) == 0 {
+	if !changed {
 		return raw, nil
 	}
-	return mustMarshal(chatTools), nil
+	return mustMarshal(normalizedTools), nil
 }
 
 func normalizeResponsesToolChoiceToChatToolChoice(raw json.RawMessage) (json.RawMessage, error) {
@@ -247,13 +268,20 @@ func normalizeResponsesToolChoiceToChatToolChoice(raw json.RawMessage) (json.Raw
 	if err := json.Unmarshal(raw, &choice); err != nil {
 		return nil, fmt.Errorf("parse responses tool_choice: %w", err)
 	}
-	if _, ok := choice["function"]; ok {
+	if choiceType, _ := choice["type"].(string); choiceType == "any" {
+		return mustMarshal("required"), nil
+	} else if choiceType == "auto" || choiceType == "none" || choiceType == "required" {
+		return mustMarshal(choiceType), nil
+	} else if choiceType != "function" && choiceType != "tool" {
 		return raw, nil
 	}
-	if choiceType, _ := choice["type"].(string); choiceType != "function" {
-		return raw, nil
+	name := ""
+	if fn, ok := choice["function"].(map[string]any); ok {
+		name, _ = fn["name"].(string)
 	}
-	name, _ := choice["name"].(string)
+	if name == "" {
+		name, _ = choice["name"].(string)
+	}
 	if name == "" {
 		return raw, nil
 	}

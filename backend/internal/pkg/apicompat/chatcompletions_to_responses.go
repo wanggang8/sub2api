@@ -72,7 +72,7 @@ func ChatCompletionsToResponses(req *ChatCompletionsRequest) (*ResponsesRequest,
 	// tool_choice: already compatible format — pass through directly.
 	// Legacy function_call needs mapping.
 	if len(req.ToolChoice) > 0 {
-		out.ToolChoice = req.ToolChoice
+		out.ToolChoice = normalizeChatToolChoiceToResponses(req.ToolChoice)
 	} else if len(req.FunctionCall) > 0 {
 		tc, err := convertChatFunctionCallToToolChoice(req.FunctionCall)
 		if err != nil {
@@ -82,6 +82,46 @@ func ChatCompletionsToResponses(req *ChatCompletionsRequest) (*ResponsesRequest,
 	}
 
 	return out, nil
+}
+
+func normalizeChatToolChoiceToResponses(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return nil
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return raw
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return raw
+	}
+	switch strings.TrimSpace(fmt.Sprint(payload["type"])) {
+	case "any":
+		return marshalJSONRaw("required")
+	case "auto", "none", "required":
+		return marshalJSONRaw(strings.TrimSpace(fmt.Sprint(payload["type"])))
+	case "function", "tool":
+		name := ""
+		if fn, ok := payload["function"].(map[string]any); ok {
+			name, _ = fn["name"].(string)
+		}
+		if name == "" {
+			name, _ = payload["name"].(string)
+		}
+		if strings.TrimSpace(name) != "" {
+			return marshalJSONRaw(map[string]any{"type": "function", "name": strings.TrimSpace(name)})
+		}
+	}
+	return raw
+}
+
+func marshalJSONRaw(value any) json.RawMessage {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	return raw
 }
 
 // convertChatMessagesToResponsesInput converts the Chat Completions messages
@@ -387,26 +427,35 @@ func convertChatToolsToResponses(tools []ChatTool, functions []ChatFunction) []R
 	var out []ResponsesTool
 
 	for _, t := range tools {
-		if t.Type != "function" {
+		toolType := strings.TrimSpace(t.Type)
+		if toolType != "" && toolType != "function" {
 			continue
 		}
 		fn := t.Function
 		if fn == nil {
+			parameters := t.Parameters
+			if len(parameters) == 0 {
+				parameters = t.InputSchema
+			}
 			fn = &ChatFunction{
 				Name:        t.Name,
 				Description: t.Description,
-				Parameters:  t.Parameters,
+				Parameters:  parameters,
 				Strict:      t.Strict,
 			}
 		}
 		if strings.TrimSpace(fn.Name) == "" {
 			continue
 		}
+		parameters := fn.Parameters
+		if len(parameters) == 0 {
+			parameters = marshalJSONRaw(map[string]any{"type": "object", "properties": map[string]any{}})
+		}
 		rt := ResponsesTool{
 			Type:        "function",
 			Name:        fn.Name,
 			Description: fn.Description,
-			Parameters:  fn.Parameters,
+			Parameters:  parameters,
 			Strict:      fn.Strict,
 		}
 		out = append(out, rt)
@@ -432,7 +481,7 @@ func convertChatToolsToResponses(tools []ChatTool, functions []ChatFunction) []R
 //
 //	"auto" → "auto"
 //	"none" → "none"
-//	{"name":"X"} → {"type":"function","function":{"name":"X"}}
+//	{"name":"X"} → {"type":"function","name":"X"}
 func convertChatFunctionCallToToolChoice(raw json.RawMessage) (json.RawMessage, error) {
 	// Try string first ("auto", "none", etc.) — pass through as-is.
 	var s string
@@ -448,7 +497,7 @@ func convertChatFunctionCallToToolChoice(raw json.RawMessage) (json.RawMessage, 
 		return nil, err
 	}
 	return json.Marshal(map[string]any{
-		"type":     "function",
-		"function": map[string]string{"name": obj.Name},
+		"type": "function",
+		"name": obj.Name,
 	})
 }

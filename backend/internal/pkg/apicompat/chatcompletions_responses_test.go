@@ -281,6 +281,8 @@ func TestChatCompletionsToResponses_LegacyFunctions(t *testing.T) {
 	var tc map[string]any
 	require.NoError(t, json.Unmarshal(resp.ToolChoice, &tc))
 	assert.Equal(t, "function", tc["type"])
+	assert.Equal(t, "get_weather", tc["name"])
+	assert.NotContains(t, tc, "function")
 }
 
 func TestChatCompletionsToResponses_ResponsesStyleTools(t *testing.T) {
@@ -288,9 +290,10 @@ func TestChatCompletionsToResponses_ResponsesStyleTools(t *testing.T) {
 		"model": "gpt-5.4",
 		"messages": [{"role":"user","content":"hi"}],
 		"tools": [
-			{"type":"function","name":"Read","description":"Read a file","parameters":{"type":"object","properties":{"path":{"type":"string"}}},"strict":true}
+			{"type":"function","name":"Read","description":"Read a file","parameters":{"type":"object","properties":{"path":{"type":"string"}}},"strict":true},
+			{"name":"Grep","description":"Search files","input_schema":{"type":"object","properties":{"pattern":{"type":"string"}}}}
 		],
-		"tool_choice": {"type":"function","name":"Read"}
+		"tool_choice": {"type":"any"}
 	}`)
 
 	var req ChatCompletionsRequest
@@ -298,19 +301,22 @@ func TestChatCompletionsToResponses_ResponsesStyleTools(t *testing.T) {
 	resp, err := ChatCompletionsToResponses(&req)
 	require.NoError(t, err)
 
-	require.Len(t, resp.Tools, 1)
+	require.Len(t, resp.Tools, 2)
 	assert.Equal(t, "function", resp.Tools[0].Type)
 	assert.Equal(t, "Read", resp.Tools[0].Name)
 	assert.Equal(t, "Read a file", resp.Tools[0].Description)
 	require.NotNil(t, resp.Tools[0].Strict)
 	assert.True(t, *resp.Tools[0].Strict)
 	assert.JSONEq(t, `{"type":"object","properties":{"path":{"type":"string"}}}`, string(resp.Tools[0].Parameters))
+	assert.Equal(t, "function", resp.Tools[1].Type)
+	assert.Equal(t, "Grep", resp.Tools[1].Name)
+	assert.Equal(t, "Search files", resp.Tools[1].Description)
+	assert.JSONEq(t, `{"type":"object","properties":{"pattern":{"type":"string"}}}`, string(resp.Tools[1].Parameters))
 
 	require.NotNil(t, resp.ToolChoice)
-	var choice map[string]any
+	var choice string
 	require.NoError(t, json.Unmarshal(resp.ToolChoice, &choice))
-	assert.Equal(t, "function", choice["type"])
-	assert.Equal(t, "Read", choice["name"])
+	assert.Equal(t, "required", choice)
 }
 
 func TestChatCompletionsToResponses_ServiceTier(t *testing.T) {
