@@ -2914,6 +2914,11 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	if targetAPI == OpenAIUpstreamAPIResponses || targetAPI == OpenAIUpstreamAPIAny {
 		targetURL = appendOpenAIResponsesRequestPathSuffix(targetURL, openAIResponsesRequestPathSuffix(c))
 	}
+	if normalizedBody, normalized, normalizeErr := normalizeOpenAIResponsesFunctionCallOutputStrings(body); normalizeErr != nil {
+		return nil, normalizeErr
+	} else if normalized {
+		body = normalizedBody
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
@@ -3456,6 +3461,11 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		targetURL = openaiPlatformAPIURL
 	}
 	targetURL = appendOpenAIResponsesRequestPathSuffix(targetURL, openAIResponsesRequestPathSuffix(c))
+	if normalizedBody, normalized, normalizeErr := normalizeOpenAIResponsesFunctionCallOutputStrings(body); normalizeErr != nil {
+		return nil, normalizeErr
+	} else if normalized {
+		body = normalizedBody
+	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(body))
 	if err != nil {
