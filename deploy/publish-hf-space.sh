@@ -175,7 +175,8 @@ RUN addgroup -g 1000 gatewayTestSub \\
 
 WORKDIR /app
 
-RUN wget -O /tmp/gatewayTestSub-hf.tar.gz "${package_url}" \\
+RUN echo "${package_revision}" > /tmp/gatewayTestSub-hf-revision \\
+    && wget -O /tmp/gatewayTestSub-hf.tar.gz "${package_url}" \\
     && tar -xzf /tmp/gatewayTestSub-hf.tar.gz -C /app \\
     && rm /tmp/gatewayTestSub-hf.tar.gz \\
     && chmod +x /app/gatewayTestSub /app/docker-entrypoint.sh
