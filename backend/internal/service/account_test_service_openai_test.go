@@ -227,7 +227,7 @@ func TestAccountTestService_OpenAIAPIKeyUsesSelectedUpstreamProtocolForTest(t *t
 			},
 		}
 
-		err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4")
+		err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "")
 		require.NoError(t, err)
 		require.Len(t, upstream.requests, 1)
 		require.Equal(t, "https://gateway.example/v1/responses", upstream.requests[0].URL.String())
@@ -266,7 +266,7 @@ func TestAccountTestService_OpenAIAPIKeyUsesSelectedUpstreamProtocolForTest(t *t
 			},
 		}
 
-		err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4")
+		err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "")
 		require.NoError(t, err)
 		require.Len(t, upstream.requests, 1)
 		require.Equal(t, "https://gateway.example/v1/chat/completions", upstream.requests[0].URL.String())
@@ -305,7 +305,7 @@ func TestAccountTestService_OpenAIAPIKeyUsesSelectedUpstreamProtocolForTest(t *t
 			},
 		}
 
-		err := svc.testOpenAIAccountConnection(ctx, account, "claude-opus-4-1")
+		err := svc.testOpenAIAccountConnection(ctx, account, "claude-opus-4-1", "")
 		require.NoError(t, err)
 		require.Len(t, upstream.requests, 1)
 		require.Equal(t, "https://gateway.example/v1/messages", upstream.requests[0].URL.String())
@@ -317,4 +317,40 @@ func TestAccountTestService_OpenAIAPIKeyUsesSelectedUpstreamProtocolForTest(t *t
 		require.Equal(t, "claude-opus-4-1", payload["model"])
 		require.Contains(t, recorder.Body.String(), "test_complete")
 	})
+}
+
+func TestAccountTestService_OpenAIOAuthAppliesModelMappingForTest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	resp := newJSONResponse(http.StatusOK, "")
+	resp.Body = io.NopCloser(strings.NewReader("data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\ndata: {\"type\":\"response.completed\"}\n\n"))
+
+	repo := &openAIAccountTestRepo{}
+	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
+	svc := &AccountTestService{
+		accountRepo:  repo,
+		httpUpstream: upstream,
+		cfg:          &config.Config{},
+	}
+	account := &Account{
+		ID:          103,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"access_token":  "test-token",
+			"model_mapping": map[string]any{"CustomModel": "gpt-5.4"},
+		},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "CustomModel", "")
+	require.NoError(t, err)
+	require.Len(t, upstream.requests, 1)
+	require.Equal(t, chatgptCodexAPIURL, upstream.requests[0].URL.String())
+
+	body, readErr := io.ReadAll(upstream.requests[0].Body)
+	require.NoError(t, readErr)
+	require.Equal(t, "gpt-5.4", gjson.GetBytes(body, "model").String())
+	require.Contains(t, recorder.Body.String(), "test_complete")
 }

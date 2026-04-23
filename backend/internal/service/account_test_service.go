@@ -435,10 +435,9 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		testModelID = openai.DefaultTestModel
 	}
 
-	// For API Key accounts with model mapping, map the model
-	if account.Type == "apikey" {
-		testModelID = account.GetMappedModel(testModelID)
-	}
+	// Keep account testing aligned with the normal OpenAI forwarding path:
+	// apply account model_mapping first, then normalize OAuth upstream models.
+	testModelID = normalizeOpenAIModelForUpstream(account, resolveOpenAIForwardModel(account, testModelID, ""))
 
 	// Route to image generation test if an image model is selected
 	if isOpenAIImageModel(testModelID) {

@@ -23,6 +23,7 @@ This directory contains files for deploying Sub2API on Linux servers.
 | `sub2api.service` | Systemd service unit file |
 | `sub2api-datamanagementd.service` | datamanagementd systemd service unit file |
 | `DATAMANAGEMENTD_CN.md` | datamanagementd 部署与联动说明（中文） |
+| `FORK_RELEASE_DEPLOY_CN.md` | 自己 fork 的二进制发布与普通机器部署说明（中文） |
 | `config.example.yaml` | Example configuration file |
 
 ---

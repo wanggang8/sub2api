@@ -16,7 +16,8 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Configuration
-GITHUB_REPO="Wei-Shaw/sub2api"
+DEFAULT_GITHUB_REPO="Wei-Shaw/sub2api"
+GITHUB_REPO="${SUB2API_GITHUB_REPO:-${GITHUB_REPO:-$DEFAULT_GITHUB_REPO}}"
 INSTALL_DIR="/opt/sub2api"
 SERVICE_NAME="sub2api"
 SERVICE_USER="sub2api"
@@ -308,6 +309,15 @@ print_warning() {
 
 print_error() {
     echo -e "${RED}[$(msg 'error')]${NC} $1"
+}
+
+# Validate GitHub repository in owner/repo form.
+validate_github_repo() {
+    if [[ ! "$GITHUB_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+        print_error "Invalid GitHub repository: $GITHUB_REPO"
+        print_error "Expected format: owner/repo"
+        exit 1
+    fi
 }
 
 # Check if running interactively (can access terminal)
@@ -998,6 +1008,23 @@ main() {
                 fi
                 shift
                 ;;
+            -r|--repo)
+                if [ -n "${2:-}" ] && [[ ! "$2" =~ ^- ]]; then
+                    GITHUB_REPO="$2"
+                    shift 2
+                else
+                    echo "Error: --repo requires an owner/repo argument"
+                    exit 1
+                fi
+                ;;
+            --repo=*)
+                GITHUB_REPO="${1#*=}"
+                if [ -z "$GITHUB_REPO" ]; then
+                    echo "Error: --repo requires an owner/repo argument"
+                    exit 1
+                fi
+                shift
+                ;;
             *)
                 positional_args+=("$1")
                 shift
@@ -1015,6 +1042,9 @@ main() {
     echo "=============================================="
     echo "       $(msg 'install_title')"
     echo "=============================================="
+    echo ""
+    validate_github_repo
+    print_info "GitHub repository: $GITHUB_REPO"
     echo ""
 
     # Parse commands
@@ -1114,13 +1144,19 @@ main() {
             echo ""
             echo "Options:"
             echo "  -v, --version <ver>  $(msg 'opt_version')"
+            echo "  -r, --repo <repo>    GitHub release repository (owner/repo)"
             echo "  -y, --yes            Skip confirmation prompts (for uninstall)"
+            echo ""
+            echo "Environment:"
+            echo "  SUB2API_GITHUB_REPO  GitHub release repository (owner/repo)"
             echo ""
             echo "Examples:"
             echo "  $0                        # Install latest version"
             echo "  $0 install -v v0.1.0      # Install specific version"
+            echo "  $0 --repo yourname/sub2api # Install latest from your fork"
             echo "  $0 upgrade                # Upgrade to latest"
             echo "  $0 upgrade -v v0.2.0      # Upgrade to specific version"
+            echo "  $0 upgrade --repo yourname/sub2api # Upgrade from your fork"
             echo "  $0 rollback v0.1.0        # Rollback to v0.1.0"
             echo "  $0 list-versions          # List available versions"
             echo ""
