@@ -143,13 +143,17 @@ EOF
 }
 
 write_package_dockerfile() {
-  local output_dir package_url
+  local output_dir package_url package_revision
   output_dir="$1"
   package_url="$2"
+  package_revision="$3"
   [[ -n "${package_url}" ]] || fail "HF_PACKAGE_URL is required for package mode"
+  [[ -n "${package_revision}" ]] || fail "package revision is required for package mode"
 
   cat >"${output_dir}/Dockerfile" <<EOF
 FROM alpine:3.21
+
+LABEL gatewayTestSub.snapshot_revision="${package_revision}"
 
 RUN apk add --no-cache \\
     ca-certificates \\
@@ -195,21 +199,23 @@ EOF
 }
 
 prepare_package_snapshot() {
-  local output_dir package_url
+  local output_dir package_url package_revision
   output_dir="$1"
   package_url="$2"
+  package_revision="$3"
   write_hf_readme "${output_dir}"
-  write_package_dockerfile "${output_dir}" "${package_url}"
+  write_package_dockerfile "${output_dir}" "${package_url}" "${package_revision}"
 }
 
 main() {
   require_clean_tree
 
-  local remote_url head_sha temp_dir commit_msg
+  local remote_url head_sha package_revision temp_dir commit_msg
   remote_url="$(resolve_remote_url)"
   [[ -n "${remote_url}" ]] || fail "remote '${REMOTE_NAME}' is not configured"
 
   head_sha="$(git -C "${REPO_ROOT}" rev-parse --short HEAD)"
+  package_revision="${HF_PACKAGE_REV:-${head_sha}}"
   temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/hf-publish.XXXXXX")"
   trap 'rm -rf "${temp_dir:-}"' EXIT
 
@@ -218,7 +224,8 @@ main() {
 
   if [[ -n "${HF_PACKAGE_URL}" ]]; then
     info "package mode enabled; HF will download ${HF_PACKAGE_URL}"
-    prepare_package_snapshot "${temp_dir}" "${HF_PACKAGE_URL}"
+    info "package cache-bust revision: ${package_revision}"
+    prepare_package_snapshot "${temp_dir}" "${HF_PACKAGE_URL}" "${package_revision}"
   else
     git -C "${REPO_ROOT}" archive --format=tar HEAD | tar -xf - -C "${temp_dir}"
   fi
