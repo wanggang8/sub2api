@@ -120,7 +120,7 @@ func TestNormalizeResponsesRequestBodyFunctionOutputArrayText(t *testing.T) {
 	require.Equal(t, "line one\nline two", item["output"])
 }
 
-func TestNormalizeResponsesRequestBodyReplacesApplyPatchForInputArray(t *testing.T) {
+func TestNormalizeResponsesRequestBodyPreservesToolsForInputArray(t *testing.T) {
 	raw := []byte(`{
 		"model": "gpt-5.4",
 		"input": [{"role": "user", "content": "update files"}],
@@ -151,10 +151,10 @@ func TestNormalizeResponsesRequestBodyReplacesApplyPatchForInputArray(t *testing
 	}
 
 	require.True(t, names["Read"])
-	require.True(t, names["Write"])
-	require.True(t, names["StrReplace"])
-	require.False(t, names["ApplyPatch"])
-	require.False(t, names["apply_patch"])
+	require.True(t, names["ApplyPatch"])
+	require.True(t, names["apply_patch"])
+	require.False(t, names["Write"])
+	require.False(t, names["StrReplace"])
 }
 
 func TestNormalizeResponsesRequestBodyDoesNotRewriteToolsForTextInput(t *testing.T) {
@@ -171,7 +171,7 @@ func TestNormalizeResponsesRequestBodyDoesNotRewriteToolsForTextInput(t *testing
 	require.JSONEq(t, string(raw), string(normalized))
 }
 
-func TestNormalizeChatCompletionsRequestBodyAddsCursorEditingToolsForInputArray(t *testing.T) {
+func TestNormalizeChatCompletionsRequestBodyPreservesCursorEditingToolsForInputArray(t *testing.T) {
 	raw := []byte(`{
 		"model": "gpt-5.4",
 		"input": [{"role": "user", "content": "update files"}],
@@ -196,9 +196,9 @@ func TestNormalizeChatCompletionsRequestBodyAddsCursorEditingToolsForInputArray(
 	}
 
 	require.True(t, names["Read"])
-	require.True(t, names["Write"])
-	require.True(t, names["StrReplace"])
-	require.False(t, names["ApplyPatch"])
+	require.True(t, names["ApplyPatch"])
+	require.False(t, names["Write"])
+	require.False(t, names["StrReplace"])
 }
 
 func TestNormalizeChatCompletionsRequestBodyPreservesMultipleTools(t *testing.T) {
@@ -221,7 +221,7 @@ func TestNormalizeChatCompletionsRequestBodyPreservesMultipleTools(t *testing.T)
 	require.NoError(t, json.Unmarshal(normalized, &payload))
 	tools, ok := payload["tools"].([]any)
 	require.True(t, ok)
-	require.Len(t, tools, 6)
+	require.Len(t, tools, 4)
 	toolA := tools[0].(map[string]any)
 	toolAFn := toolA["function"].(map[string]any)
 	require.Equal(t, "tool_a", toolAFn["name"])
@@ -236,12 +236,6 @@ func TestNormalizeChatCompletionsRequestBodyPreservesMultipleTools(t *testing.T)
 	require.Contains(t, toolCFn, "parameters")
 	toolD := tools[3].(map[string]any)
 	require.Equal(t, "web_search", toolD["type"])
-	toolE := tools[4].(map[string]any)
-	toolEFn := toolE["function"].(map[string]any)
-	require.Equal(t, "Write", toolEFn["name"])
-	toolF := tools[5].(map[string]any)
-	toolFFn := toolF["function"].(map[string]any)
-	require.Equal(t, "StrReplace", toolFFn["name"])
 	require.Equal(t, "required", payload["tool_choice"])
 }
 
