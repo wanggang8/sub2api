@@ -338,7 +338,7 @@ type ResponsesStreamEvent struct {
 // ChatCompletionsRequest is the request body for POST /v1/chat/completions.
 type ChatCompletionsRequest struct {
 	Model               string             `json:"model"`
-	System              json.RawMessage    `json:"system,omitempty"` // Cursor may send Anthropic-style system blocks to chat completions
+	System              json.RawMessage    `json:"system,omitempty"` // Some compatible clients send Anthropic-style system blocks to chat completions
 	Messages            []ChatMessage      `json:"messages"`
 	Instructions        string             `json:"instructions,omitempty"` // OpenAI Responses API compat
 	MaxTokens           *int               `json:"max_tokens,omitempty"`
@@ -396,7 +396,7 @@ type ChatTool struct {
 	// Chat Completions style: {"type":"function","function":{...}}
 	Function *ChatFunction `json:"function,omitempty"`
 
-	// Responses style sometimes appears on Cursor Chat requests:
+	// Responses-style tool definitions may appear on compatible Chat requests:
 	// {"type":"function","name":"...","parameters":{...}} or
 	// {"name":"...","input_schema":{...}}
 	Name        string          `json:"name,omitempty"`

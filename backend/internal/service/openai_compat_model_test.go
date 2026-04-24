@@ -898,8 +898,9 @@ func TestForwardAsChatCompletions_DirectChatPathStillAppliesForcedTemplateAndPre
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	body := []byte(`{"model":"CustomModel","messages":[{"role":"system","content":"client-system"},{"role":"user","content":"hello"}],"stream":false}`)
-	c.Request = httptest.NewRequest(http.MethodPost, "/cursor/v1/chat/completions", bytes.NewReader(body))
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
+	SetForcedCodexInstructionsEnabled(c, true)
 
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,
@@ -1032,8 +1033,9 @@ func TestForwardAsAnthropic_DirectMessagesPathStillAppliesForcedTemplateAndPrese
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	body := []byte(`{"model":"claude-opus-4-1","system":"client-system","max_tokens":16,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
-	c.Request = httptest.NewRequest(http.MethodPost, "/cursor/v1/messages", bytes.NewReader(body))
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
+	SetForcedCodexInstructionsEnabled(c, true)
 
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,

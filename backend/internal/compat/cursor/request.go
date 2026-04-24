@@ -266,61 +266,10 @@ func NormalizeChatCompletionsRequestBody(raw []byte) ([]byte, error) {
 		}
 		return raw, nil
 	}
-	inputRaw, ok := payload["input"]
-	if !ok {
+	if _, ok := payload["input"]; !ok {
 		return raw, nil
 	}
-
-	messages, err := responsesInputToChatMessages(inputRaw)
-	if err != nil {
-		return nil, err
-	}
-	if instructionsRaw, ok := payload["instructions"]; ok {
-		if instructions := strings.TrimSpace(unmarshalStringOrEmpty(instructionsRaw)); instructions != "" {
-			messages = append([]apicompat.ChatMessage{{Role: "system", Content: mustMarshal(instructions)}}, messages...)
-		}
-		delete(payload, "instructions")
-	}
-	payload["messages"] = mustMarshal(messages)
-	delete(payload, "input")
-
-	if maxOutputTokens, ok := payload["max_output_tokens"]; ok {
-		if _, exists := payload["max_completion_tokens"]; !exists {
-			payload["max_completion_tokens"] = maxOutputTokens
-		}
-		delete(payload, "max_output_tokens")
-	}
-
-	if reasoningRaw, ok := payload["reasoning"]; ok {
-		reasoningEffort, hasEffort, err := normalizeResponsesReasoningEffort(reasoningRaw)
-		if err != nil {
-			return nil, err
-		}
-		if hasEffort {
-			if _, exists := payload["reasoning_effort"]; !exists {
-				payload["reasoning_effort"] = reasoningEffort
-			}
-		}
-		delete(payload, "reasoning")
-	}
-
-	if toolsRaw, ok := payload["tools"]; ok {
-		normalizedTools, err := normalizeResponsesToolsToChatTools(toolsRaw)
-		if err != nil {
-			return nil, err
-		}
-		payload["tools"] = normalizedTools
-	}
-
-	if toolChoiceRaw, ok := payload["tool_choice"]; ok {
-		normalizedToolChoice, err := normalizeResponsesToolChoiceToChatToolChoice(toolChoiceRaw)
-		if err != nil {
-			return nil, err
-		}
-		payload["tool_choice"] = normalizedToolChoice
-	}
-
-	return json.Marshal(payload)
+	return apicompat.NormalizeResponsesShapeChatCompletionsBody(raw)
 }
 
 func normalizeChatCompletionsMessagesPayload(payload map[string]json.RawMessage) ([]byte, bool, error) {

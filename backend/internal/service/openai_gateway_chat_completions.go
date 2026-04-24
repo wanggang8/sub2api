@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	cursorcompat "github.com/Wei-Shaw/sub2api/internal/compat/cursor"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
@@ -300,7 +299,7 @@ func normalizedOpenAIServiceTierValue(raw string) string {
 }
 
 func normalizeResponsesShapeForChatCompletionsDirect(body []byte) ([]byte, error) {
-	normalized, err := cursorcompat.NormalizeChatCompletionsRequestBody(body)
+	normalized, err := apicompat.NormalizeResponsesShapeChatCompletionsBody(body)
 	if err != nil {
 		return nil, fmt.Errorf("normalize responses-shape body for chat completions upstream: %w", err)
 	}

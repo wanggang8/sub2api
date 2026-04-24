@@ -1,7 +1,6 @@
 package service
 
 import (
-	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -14,25 +13,24 @@ func TestShouldApplyForcedCodexInstructionsForRequest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {
-		name  string
-		path  string
-		model string
-		want  bool
+		name    string
+		enabled bool
+		model   string
+		want    bool
 	}{
-		{name: "cursor responses gpt5", path: "/cursor/v1/responses", model: "gpt-5.4", want: true},
-		{name: "cursor chat completions gpt5", path: "/cursor/v1/chat/completions", model: "gpt-5.2", want: true},
-		{name: "cursor anthropic compat gpt5", path: "/cursor/v1/messages", model: "gpt-5.1", want: true},
-		{name: "cursor path non gpt5", path: "/cursor/v1/responses", model: "gpt-4o", want: true},
-		{name: "cursor path custom model", path: "/cursor/v1/chat/completions", model: "CustomModel", want: true},
-		{name: "non cursor path gpt5", path: "/v1/responses", model: "gpt-5.4", want: false},
-		{name: "empty model", path: "/cursor/v1/responses", model: "", want: true},
+		{name: "enabled gpt5", enabled: true, model: "gpt-5.4", want: true},
+		{name: "enabled non gpt5", enabled: true, model: "gpt-4o", want: true},
+		{name: "enabled custom model", enabled: true, model: "CustomModel", want: true},
+		{name: "disabled gpt5", enabled: false, model: "gpt-5.4", want: false},
+		{name: "enabled empty model", enabled: true, model: "", want: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(rec)
-			c.Request = httptest.NewRequest(http.MethodPost, tt.path, nil)
+			c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+			SetForcedCodexInstructionsEnabled(c, tt.enabled)
 
 			require.Equal(t, tt.want, shouldApplyForcedCodexInstructionsForRequest(c, tt.model))
 		})

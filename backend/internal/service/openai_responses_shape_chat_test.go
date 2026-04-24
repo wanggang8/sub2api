@@ -10,21 +10,21 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// TestCursorMixedShapeDetection covers the core invariant of the Cursor
-// compatibility fix in ForwardAsChatCompletions: when a client POSTs a
+// TestResponsesShapeChatCompletionsDetection covers the core invariant of the
+// Responses-shape compatibility path in ForwardAsChatCompletions: when a client POSTs a
 // Responses-shaped body (has `input`, no `messages`) to /v1/chat/completions,
 // the request must be forwarded as-is with only the `model` field rewritten.
-// The raw `input` array (including Cursor's 80KB system prompt) must not be
+// The raw `input` array (including the raw system prompt) must not be
 // discarded or reshaped.
 //
 // Context:
 //
 //	Before the fix, the handler unmarshaled the body into ChatCompletionsRequest,
-//	which has no Input field, silently dropping Cursor's input. The subsequent
+//	which has no Input field, silently dropping the client's input. The subsequent
 //	conversion produced `input: null`, which Codex upstreams reject with
 //	"Invalid type for 'input': expected a string, but got an object".
-func TestCursorMixedShapeDetection(t *testing.T) {
-	// Representative Cursor cloud body — shape is what matters, content is
+func TestResponsesShapeChatCompletionsDetection(t *testing.T) {
+	// Representative Responses-shaped compatible body — shape is what matters, content is
 	// abridged. Notice: `input` is a Responses-API array, there is no
 	// `messages` field at all, and `user`/`stream` are at the top level.
 	cursorBody := []byte(`{
@@ -45,7 +45,7 @@ func TestCursorMixedShapeDetection(t *testing.T) {
 	isResponsesShape := !hasMessages && hasInput
 
 	require.True(t, isResponsesShape,
-		"Cursor body must be detected as Responses-shape (has input, no messages)")
+		"Responses-shaped body must be detected as Responses-shape (has input, no messages)")
 
 	// --- Step 2: Model rewrite (mirrors the sjson.SetBytes branch) ---
 	const upstreamModel = "gpt-5.1-codex"
@@ -81,11 +81,11 @@ func TestCursorMixedShapeDetection(t *testing.T) {
 		"rewritten body must not collapse input to null")
 }
 
-// TestCursorMixedShapeDetection_NormalChatCompletionsUnaffected guards that
+// TestResponsesShapeChatCompletionsDetection_NormalChatCompletionsUnaffected guards that
 // the shape detection does NOT misfire on a standard Chat Completions request
 // (one that has a `messages` array). Such requests must fall through to the
 // existing ChatCompletionsToResponses conversion path.
-func TestCursorMixedShapeDetection_NormalChatCompletionsUnaffected(t *testing.T) {
+func TestResponsesShapeChatCompletionsDetection_NormalChatCompletionsUnaffected(t *testing.T) {
 	body := []byte(`{
 		"model": "gpt-4o",
 		"messages": [{"role":"user","content":"hi"}],
@@ -100,12 +100,12 @@ func TestCursorMixedShapeDetection_NormalChatCompletionsUnaffected(t *testing.T)
 		"standard Chat Completions body must NOT be detected as Responses-shape")
 }
 
-// TestCursorMixedShapeDetection_BothFieldsPrefersMessages guards the
+// TestResponsesShapeChatCompletionsDetection_BothFieldsPrefersMessages guards the
 // ambiguous case where a client sends both `messages` and `input`. We fall
 // through to the normal conversion path (messages wins), since mixing the
 // two is almost certainly a client bug and messages is the documented
 // Chat Completions contract.
-func TestCursorMixedShapeDetection_BothFieldsPrefersMessages(t *testing.T) {
+func TestResponsesShapeChatCompletionsDetection_BothFieldsPrefersMessages(t *testing.T) {
 	body := []byte(`{
 		"model": "gpt-4o",
 		"messages": [{"role":"user","content":"hi"}],
@@ -117,13 +117,13 @@ func TestCursorMixedShapeDetection_BothFieldsPrefersMessages(t *testing.T) {
 	isResponsesShape := !hasMessages && hasInput
 
 	assert.False(t, isResponsesShape,
-		"when both messages and input are present, must not take the Cursor shortcut")
+		"when both messages and input are present, must not take the Responses-shape shortcut")
 }
 
-// TestCursorMixedShapeDetection_EmptyBody ensures a body with neither
-// messages nor input is NOT taken as Cursor-shape (would hit the normal
+// TestResponsesShapeChatCompletionsDetection_EmptyBody ensures a body with neither
+// messages nor input is NOT taken as Responses-shape (would hit the normal
 // conversion and fail on its own with a clearer error).
-func TestCursorMixedShapeDetection_EmptyBody(t *testing.T) {
+func TestResponsesShapeChatCompletionsDetection_EmptyBody(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","stream":true}`)
 
 	hasMessages := gjson.GetBytes(body, "messages").Exists()
@@ -131,13 +131,13 @@ func TestCursorMixedShapeDetection_EmptyBody(t *testing.T) {
 	isResponsesShape := !hasMessages && hasInput
 
 	assert.False(t, isResponsesShape,
-		"body with neither messages nor input must not be taken as Cursor shape")
+		"body with neither messages nor input must not be taken as Responses shape")
 }
 
-// TestCursorMixedShape_JSONRoundtrip ensures the rewritten body is still
+// TestResponsesShapeChatCompletionsJSONRoundtrip ensures the rewritten body is still
 // valid JSON and parseable back into a map without surprises — catches
 // any encoding drift from sjson.
-func TestCursorMixedShape_JSONRoundtrip(t *testing.T) {
+func TestResponsesShapeChatCompletionsJSONRoundtrip(t *testing.T) {
 	cursorBody := []byte(`{"model":"gpt-5.4","stream":true,"input":[{"role":"user","content":"hi"}]}`)
 
 	rewritten, err := sjson.SetBytes(cursorBody, "model", "gpt-5.1-codex")
@@ -154,13 +154,13 @@ func TestCursorMixedShape_JSONRoundtrip(t *testing.T) {
 	require.Len(t, inputArr, 1)
 }
 
-// TestCursorMixedShape_StripsUnsupportedFields mirrors the strip loop in
-// ForwardAsChatCompletions (isResponsesShape branch). Cursor cloud sends
+// TestResponsesShapeChatCompletionsStripsUnsupportedFields mirrors the strip loop in
+// ForwardAsChatCompletions (isResponsesShape branch). Compatible clients can send
 // prompt_cache_retention, safety_identifier, metadata and stream_options
 // as top-level Responses API parameters, which Codex upstreams reject with
 // "Unsupported parameter: ...". The fix must remove them from the raw body
 // before it is forwarded, for BOTH OAuth and API Key account types.
-func TestCursorMixedShape_StripsUnsupportedFields(t *testing.T) {
+func TestResponsesShapeChatCompletionsStripsUnsupportedFields(t *testing.T) {
 	cursorBody := []byte(`{
 		"model": "gpt-5.4",
 		"stream": true,
