@@ -38,48 +38,27 @@ func setupDefaultAdminConcurrency() int {
 }
 
 // GetDataDir returns the data directory for storing config and lock files.
-// Priority: DATA_DIR env > Hugging Face /data > /app/data > current directory
+// Priority: DATA_DIR env > /app/data (if exists and writable) > current directory
 func GetDataDir() string {
-	for _, dir := range dataDirCandidates() {
-		if dir == "." {
-			return dir
-		}
-		if isWritableDir(dir) {
-			return dir
+	// Check DATA_DIR environment variable first
+	if dir := os.Getenv("DATA_DIR"); dir != "" {
+		return dir
+	}
+
+	// Check if /app/data exists and is writable (Docker environment)
+	dockerDataDir := "/app/data"
+	if info, err := os.Stat(dockerDataDir); err == nil && info.IsDir() {
+		// Try to check if writable by creating a temp file
+		testFile := dockerDataDir + "/.write_test"
+		if f, err := os.Create(testFile); err == nil {
+			_ = f.Close()
+			_ = os.Remove(testFile)
+			return dockerDataDir
 		}
 	}
+
+	// Default to current directory
 	return "."
-}
-
-func dataDirCandidates() []string {
-	if dir := strings.TrimSpace(os.Getenv("DATA_DIR")); dir != "" {
-		return []string{dir, "."}
-	}
-	candidates := make([]string, 0, 3)
-	if isHuggingFaceSpaceRuntime() {
-		candidates = append(candidates, "/data")
-	}
-	candidates = append(candidates, "/app/data", ".")
-	return candidates
-}
-
-func isWritableDir(dir string) bool {
-	info, err := os.Stat(dir)
-	if err != nil || !info.IsDir() {
-		return false
-	}
-	testFile := dir + "/.write_test"
-	f, err := os.Create(testFile)
-	if err != nil {
-		return false
-	}
-	_ = f.Close()
-	_ = os.Remove(testFile)
-	return true
-}
-
-func isHuggingFaceSpaceRuntime() bool {
-	return strings.TrimSpace(os.Getenv("SPACE_ID")) != "" || strings.TrimSpace(os.Getenv("SPACE_HOST")) != ""
 }
 
 // GetConfigFilePath returns the full path to config.yaml
@@ -366,7 +345,7 @@ func initializeDatabase(cfg *SetupConfig) error {
 		}
 	}()
 
-	migrationCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	migrationCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	return repository.ApplyMigrations(migrationCtx, db)
 }
@@ -552,25 +531,20 @@ func getEnvIntOrDefault(key string, defaultValue int) int {
 	return defaultValue
 }
 
-func embeddedRedisEnabled() bool {
-	return strings.EqualFold(strings.TrimSpace(os.Getenv("EMBEDDED_REDIS_ENABLED")), "true")
-}
+// AutoSetupFromEnv performs automatic setup using environment variables
+// This is designed for Docker deployment where all config is passed via env vars
+func AutoSetupFromEnv() error {
+	logger.LegacyPrintf("setup", "%s", "Auto setup enabled, configuring from environment variables...")
+	logger.LegacyPrintf("setup", "Data directory: %s", GetDataDir())
 
-func defaultRedisHostFromEnv() string {
-	if embeddedRedisEnabled() {
-		return "127.0.0.1"
-	}
-	return "localhost"
-}
-
-func buildSetupConfigFromEnv() *SetupConfig {
 	// Get timezone from TZ or TIMEZONE env var (TZ is standard for Docker)
 	tz := getEnvOrDefault("TZ", "")
 	if tz == "" {
 		tz = getEnvOrDefault("TIMEZONE", "Asia/Shanghai")
 	}
 
-	return &SetupConfig{
+	// Build config from environment variables
+	cfg := &SetupConfig{
 		Database: DatabaseConfig{
 			Host:     getEnvOrDefault("DATABASE_HOST", "localhost"),
 			Port:     getEnvIntOrDefault("DATABASE_PORT", 5432),
@@ -580,7 +554,7 @@ func buildSetupConfigFromEnv() *SetupConfig {
 			SSLMode:  getEnvOrDefault("DATABASE_SSLMODE", "disable"),
 		},
 		Redis: RedisConfig{
-			Host:      getEnvOrDefault("REDIS_HOST", defaultRedisHostFromEnv()),
+			Host:      getEnvOrDefault("REDIS_HOST", "localhost"),
 			Port:      getEnvIntOrDefault("REDIS_PORT", 6379),
 			Password:  getEnvOrDefault("REDIS_PASSWORD", ""),
 			DB:        getEnvIntOrDefault("REDIS_DB", 0),
@@ -601,15 +575,6 @@ func buildSetupConfigFromEnv() *SetupConfig {
 		},
 		Timezone: tz,
 	}
-}
-
-// AutoSetupFromEnv performs automatic setup using environment variables
-// This is designed for Docker deployment where all config is passed via env vars
-func AutoSetupFromEnv() error {
-	logger.LegacyPrintf("setup", "%s", "Auto setup enabled, configuring from environment variables...")
-	logger.LegacyPrintf("setup", "Data directory: %s", GetDataDir())
-
-	cfg := buildSetupConfigFromEnv()
 
 	// Generate JWT secret if not provided
 	if cfg.JWT.Secret == "" {
