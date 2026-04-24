@@ -141,6 +141,21 @@ func TestGetModelPricing_CustomModelMatchesCaseInsensitiveEntry(t *testing.T) {
 	require.InDelta(t, 1.5e-5, got.OutputCostPerToken, 1e-12)
 }
 
+func TestGetModelPricing_ImageModelDoesNotFallbackToTextModel(t *testing.T) {
+	imagePricing := &LiteLLMModelPricing{InputCostPerToken: 3}
+	textPricing := &LiteLLMModelPricing{InputCostPerToken: 9}
+
+	svc := &PricingService{
+		pricingData: map[string]*LiteLLMModelPricing{
+			"gpt-image-2": imagePricing,
+			"gpt-5.4":     textPricing,
+		},
+	}
+
+	got := svc.GetModelPricing("gpt-image-3")
+	require.Same(t, imagePricing, got)
+}
+
 func TestParsePricingData_PreservesPriorityAndServiceTierFields(t *testing.T) {
 	raw := map[string]any{
 		"gpt-5.4": map[string]any{
