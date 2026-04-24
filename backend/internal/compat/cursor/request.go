@@ -269,7 +269,11 @@ func NormalizeChatCompletionsRequestBody(raw []byte) ([]byte, error) {
 	if _, ok := payload["input"]; !ok {
 		return raw, nil
 	}
-	return apicompat.NormalizeResponsesShapeChatCompletionsBody(raw)
+	normalizedBody, _, err := normalizeCursorResponsesEditingTools(raw)
+	if err != nil {
+		return nil, err
+	}
+	return apicompat.NormalizeResponsesShapeChatCompletionsBody(normalizedBody)
 }
 
 func normalizeChatCompletionsMessagesPayload(payload map[string]json.RawMessage) ([]byte, bool, error) {

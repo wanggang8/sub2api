@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/config"
 	cursorcompat "github.com/Wei-Shaw/sub2api/internal/compat/cursor"
 	executorcompat "github.com/Wei-Shaw/sub2api/internal/compat/executor"
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -353,14 +353,14 @@ func TestNormalizeCursorRequestBodyRewritesResponsesInput(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodPost, "/cursor/v1/chat/completions", strings.NewReader(`{"model":"gpt-4.1","input":[{"role":"user","content":"hi"}],"instructions":"sys","max_output_tokens":64,"reasoning":{"effort":"high"},"tools":[{"type":"function","name":"lookup","description":"d","parameters":{"type":"object"}}],"tool_choice":{"type":"function","name":"lookup"}}`))
+	c.Request = httptest.NewRequest(http.MethodPost, "/cursor/v1/chat/completions", strings.NewReader(`{"model":"gpt-4.1","input":[{"role":"user","content":"hi"}],"instructions":"sys","max_output_tokens":64,"reasoning":{"effort":"high"},"tools":[{"type":"function","name":"lookup","description":"d","parameters":{"type":"object"}},{"type":"function","name":"ApplyPatch","parameters":{"type":"object"}}],"tool_choice":{"type":"function","name":"lookup"}}`))
 
 	ok := normalizeCursorRequestBody(c, cursorcompat.NormalizeChatCompletionsRequestBody)
 	require.True(t, ok)
 
 	body, err := io.ReadAll(c.Request.Body)
 	require.NoError(t, err)
-	require.JSONEq(t, `{"model":"gpt-4.1","messages":[{"role":"system","content":"sys"},{"role":"user","content":"hi"}],"max_completion_tokens":64,"reasoning_effort":"high","tools":[{"type":"function","function":{"name":"lookup","description":"d","parameters":{"type":"object"}}}],"tool_choice":{"type":"function","function":{"name":"lookup"}}}`, string(body))
+	require.JSONEq(t, `{"model":"gpt-4.1","messages":[{"role":"system","content":"sys"},{"role":"user","content":"hi"}],"max_completion_tokens":64,"reasoning_effort":"high","tools":[{"type":"function","function":{"name":"lookup","description":"d","parameters":{"type":"object"}}},{"type":"function","function":{"name":"Write","description":"Writes a file to the local filesystem.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"The absolute path to the file to modify."},"contents":{"type":"string","description":"The contents to write to the file."}},"required":["path","contents"]}}},{"type":"function","function":{"name":"StrReplace","description":"Performs exact string replacements in files.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"The absolute path to the file to modify."},"old_string":{"type":"string","description":"The text to replace."},"new_string":{"type":"string","description":"The text to replace it with."},"replace_all":{"type":"boolean","description":"Replace all occurrences of old_string."}},"required":["path","old_string","new_string"]}}}],"tool_choice":{"type":"function","function":{"name":"lookup"}}}`, string(body))
 }
 
 func TestNormalizeCursorRequestBodyRepairsMessagesToolUseInput(t *testing.T) {

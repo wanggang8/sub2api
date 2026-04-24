@@ -171,12 +171,13 @@ func TestNormalizeResponsesRequestBodyDoesNotRewriteToolsForTextInput(t *testing
 	require.JSONEq(t, string(raw), string(normalized))
 }
 
-func TestNormalizeChatCompletionsRequestBodyDoesNotAddCursorEditingTools(t *testing.T) {
+func TestNormalizeChatCompletionsRequestBodyAddsCursorEditingToolsForInputArray(t *testing.T) {
 	raw := []byte(`{
 		"model": "gpt-5.4",
 		"input": [{"role": "user", "content": "update files"}],
 		"tools": [
-			{"type": "function", "function": {"name": "Read", "parameters": {"type": "object"}}}
+			{"type": "function", "function": {"name": "Read", "parameters": {"type": "object"}}},
+			{"type": "function", "function": {"name": "ApplyPatch", "parameters": {"type": "object"}}}
 		]
 	}`)
 
@@ -195,8 +196,9 @@ func TestNormalizeChatCompletionsRequestBodyDoesNotAddCursorEditingTools(t *test
 	}
 
 	require.True(t, names["Read"])
-	require.False(t, names["Write"])
-	require.False(t, names["StrReplace"])
+	require.True(t, names["Write"])
+	require.True(t, names["StrReplace"])
+	require.False(t, names["ApplyPatch"])
 }
 
 func TestNormalizeChatCompletionsRequestBodyPreservesMultipleTools(t *testing.T) {
@@ -219,7 +221,7 @@ func TestNormalizeChatCompletionsRequestBodyPreservesMultipleTools(t *testing.T)
 	require.NoError(t, json.Unmarshal(normalized, &payload))
 	tools, ok := payload["tools"].([]any)
 	require.True(t, ok)
-	require.Len(t, tools, 4)
+	require.Len(t, tools, 6)
 	toolA := tools[0].(map[string]any)
 	toolAFn := toolA["function"].(map[string]any)
 	require.Equal(t, "tool_a", toolAFn["name"])
@@ -234,6 +236,12 @@ func TestNormalizeChatCompletionsRequestBodyPreservesMultipleTools(t *testing.T)
 	require.Contains(t, toolCFn, "parameters")
 	toolD := tools[3].(map[string]any)
 	require.Equal(t, "web_search", toolD["type"])
+	toolE := tools[4].(map[string]any)
+	toolEFn := toolE["function"].(map[string]any)
+	require.Equal(t, "Write", toolEFn["name"])
+	toolF := tools[5].(map[string]any)
+	toolFFn := toolF["function"].(map[string]any)
+	require.Equal(t, "StrReplace", toolFFn["name"])
 	require.Equal(t, "required", payload["tool_choice"])
 }
 
