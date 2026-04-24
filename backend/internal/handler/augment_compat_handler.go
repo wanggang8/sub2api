@@ -233,6 +233,16 @@ func augmentCompatError(c *gin.Context, status int, message string) {
 	})
 }
 
+// AugmentErrorWriter emits Augment compat errors for shared middleware.
+func AugmentErrorWriter(c *gin.Context, status int, message string) {
+	augmentCompatError(c, status, message)
+}
+
+// AugmentAuthErrorWriter emits Augment auth errors while preserving compat shape.
+func AugmentAuthErrorWriter(c *gin.Context, status int, code, message string) {
+	AugmentErrorWriter(c, status, message)
+}
+
 func augmentCompatStreamError(c *gin.Context, status int, message string) {
 	if c == nil {
 		return

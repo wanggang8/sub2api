@@ -27,6 +27,21 @@ func cursorCompatTypedError(c *gin.Context, status int, errType, message string)
 	})
 }
 
+// CursorErrorWriter emits Cursor/OpenAI-shaped compat errors for shared middleware.
+func CursorErrorWriter(c *gin.Context, status int, message string) {
+	c.JSON(status, gin.H{
+		"error": gin.H{
+			"message": message,
+			"type":    "invalid_request_error",
+		},
+	})
+}
+
+// CursorAuthErrorWriter emits Cursor auth errors while preserving compat shape.
+func CursorAuthErrorWriter(c *gin.Context, status int, code, message string) {
+	CursorErrorWriter(c, status, message)
+}
+
 func rewriteCursorCompatRequestBody(c *gin.Context, body []byte) {
 	if c == nil || c.Request == nil {
 		return
