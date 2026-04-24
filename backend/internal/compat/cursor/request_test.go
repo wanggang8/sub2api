@@ -120,6 +120,85 @@ func TestNormalizeResponsesRequestBodyFunctionOutputArrayText(t *testing.T) {
 	require.Equal(t, "line one\nline two", item["output"])
 }
 
+func TestNormalizeResponsesRequestBodyReplacesApplyPatchForInputArray(t *testing.T) {
+	raw := []byte(`{
+		"model": "gpt-5.4",
+		"input": [{"role": "user", "content": "update files"}],
+		"tools": [
+			{"type": "function", "function": {"name": "Read", "parameters": {"type": "object"}}},
+			{"type": "function", "function": {"name": "ApplyPatch", "parameters": {"type": "object"}}},
+			{"type": "custom", "name": "apply_patch", "custom": {"description": "Patch files", "input_schema": {"type": "object"}}}
+		]
+	}`)
+
+	normalized, err := NormalizeResponsesRequestBody(raw)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(normalized, &payload))
+	tools := payload["tools"].([]any)
+
+	names := make(map[string]bool)
+	for _, rawTool := range tools {
+		tool := rawTool.(map[string]any)
+		if fn, ok := tool["function"].(map[string]any); ok {
+			names[fn["name"].(string)] = true
+			continue
+		}
+		if name, ok := tool["name"].(string); ok {
+			names[name] = true
+		}
+	}
+
+	require.True(t, names["Read"])
+	require.True(t, names["Write"])
+	require.True(t, names["StrReplace"])
+	require.False(t, names["ApplyPatch"])
+	require.False(t, names["apply_patch"])
+}
+
+func TestNormalizeResponsesRequestBodyDoesNotRewriteToolsForTextInput(t *testing.T) {
+	raw := []byte(`{
+		"model": "gpt-5.4",
+		"input": "update files",
+		"tools": [
+			{"type": "function", "function": {"name": "ApplyPatch", "parameters": {"type": "object"}}}
+		]
+	}`)
+
+	normalized, err := NormalizeResponsesRequestBody(raw)
+	require.NoError(t, err)
+	require.JSONEq(t, string(raw), string(normalized))
+}
+
+func TestNormalizeChatCompletionsRequestBodyDoesNotAddCursorEditingTools(t *testing.T) {
+	raw := []byte(`{
+		"model": "gpt-5.4",
+		"input": [{"role": "user", "content": "update files"}],
+		"tools": [
+			{"type": "function", "function": {"name": "Read", "parameters": {"type": "object"}}}
+		]
+	}`)
+
+	normalized, err := NormalizeChatCompletionsRequestBody(raw)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(normalized, &payload))
+	tools := payload["tools"].([]any)
+
+	names := make(map[string]bool)
+	for _, rawTool := range tools {
+		tool := rawTool.(map[string]any)
+		fn := tool["function"].(map[string]any)
+		names[fn["name"].(string)] = true
+	}
+
+	require.True(t, names["Read"])
+	require.False(t, names["Write"])
+	require.False(t, names["StrReplace"])
+}
+
 func TestNormalizeChatCompletionsRequestBodyPreservesMultipleTools(t *testing.T) {
 	raw := []byte(`{
 		"model": "gpt-4.1",

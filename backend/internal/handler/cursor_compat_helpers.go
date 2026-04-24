@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	cursorcompat "github.com/Wei-Shaw/sub2api/internal/compat/cursor"
 	executorcompat "github.com/Wei-Shaw/sub2api/internal/compat/executor"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -26,6 +27,21 @@ func cursorCompatTypedError(c *gin.Context, status int, errType, message string)
 	})
 }
 
+// CursorErrorWriter emits Cursor/OpenAI-shaped compat errors for shared middleware.
+func CursorErrorWriter(c *gin.Context, status int, message string) {
+	c.JSON(status, gin.H{
+		"error": gin.H{
+			"message": message,
+			"type":    "invalid_request_error",
+		},
+	})
+}
+
+// CursorAuthErrorWriter emits Cursor auth errors while preserving compat shape.
+func CursorAuthErrorWriter(c *gin.Context, status int, code, message string) {
+	CursorErrorWriter(c, status, message)
+}
+
 func rewriteCursorCompatRequestBody(c *gin.Context, body []byte) {
 	if c == nil || c.Request == nil {
 		return
@@ -35,13 +51,14 @@ func rewriteCursorCompatRequestBody(c *gin.Context, body []byte) {
 }
 
 func applyCursorCompatSession(c *gin.Context, body []byte) []byte {
+	service.SetForcedCodexInstructionsEnabled(c, true)
 	platform := getCompatGroupPlatform(c)
 	switch platform {
 	case service.PlatformOpenAI:
-		promptCacheKey := service.ResolveCursorCompatPromptCacheKey(c, body)
-		return service.InjectOpenAIPromptCacheKeyIfMissing(body, promptCacheKey)
+		promptCacheKey := cursorcompat.ResolveOpenAIPromptCacheKey(c, body)
+		return cursorcompat.InjectOpenAIPromptCacheKeyIfMissing(body, promptCacheKey)
 	case service.PlatformAnthropic:
-		patched, _ := service.ApplyCursorCompatAnthropicSession(c, body)
+		patched, _ := cursorcompat.ApplyAnthropicSession(c, body)
 		return patched
 	default:
 		return body

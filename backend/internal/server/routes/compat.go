@@ -41,7 +41,7 @@ func registerCursorCompatRoutes(
 	middlewares := compatRouteMiddlewares(apiKeyAuth, opsService, cfg)
 	if apiKeyService != nil {
 		middlewares = compatRouteMiddlewares(
-			middleware.NewAPIKeyAuthMiddlewareWithWriter(apiKeyService, subscriptionService, cfg, middleware.CursorAuthErrorWriter),
+			middleware.NewAPIKeyAuthMiddlewareWithWriter(apiKeyService, subscriptionService, cfg, handler.CursorAuthErrorWriter),
 			opsService,
 			cfg,
 		)
@@ -49,7 +49,7 @@ func registerCursorCompatRoutes(
 	cursor := r.Group("/cursor/v1")
 	cursor.Use(middlewares...)
 	if settingService != nil {
-		cursor.Use(middleware.RequireGroupAssignment(settingService, middleware.CursorErrorWriter))
+		cursor.Use(middleware.RequireGroupAssignment(settingService, handler.CursorErrorWriter))
 	}
 	{
 		cursor.POST("/chat/completions", cursorCompat.ChatCompletions)
@@ -78,13 +78,13 @@ func registerAugmentCompatRoutes(
 	middlewares := compatRouteMiddlewares(apiKeyAuth, opsService, cfg)
 	if apiKeyService != nil {
 		middlewares = compatRouteMiddlewares(
-			middleware.NewAPIKeyAuthMiddlewareWithWriter(apiKeyService, subscriptionService, cfg, middleware.AugmentAuthErrorWriter),
+			middleware.NewAPIKeyAuthMiddlewareWithWriter(apiKeyService, subscriptionService, cfg, handler.AugmentAuthErrorWriter),
 			opsService,
 			cfg,
 		)
 	}
 	if settingService != nil {
-		middlewares = append(middlewares, middleware.RequireGroupAssignment(settingService, middleware.AugmentErrorWriter))
+		middlewares = append(middlewares, middleware.RequireGroupAssignment(settingService, handler.AugmentErrorWriter))
 	}
 
 	r.POST("/chat-stream", compatRouteHandlers(middlewares, augmentCompat.ChatStream)...)

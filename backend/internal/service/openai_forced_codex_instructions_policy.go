@@ -2,10 +2,18 @@ package service
 
 import "github.com/gin-gonic/gin"
 
+const forcedCodexInstructionsEnabledContextKey = "openai_forced_codex_instructions_enabled"
+
+func SetForcedCodexInstructionsEnabled(c *gin.Context, enabled bool) {
+	if c == nil {
+		return
+	}
+	c.Set(forcedCodexInstructionsEnabledContextKey, enabled)
+}
+
 func shouldApplyForcedCodexInstructionsForRequest(c *gin.Context, _ string) bool {
-	if c == nil || c.Request == nil {
+	if c == nil {
 		return false
 	}
-	path := c.Request.URL.Path
-	return isCursorOpenAICompatPath(path) || isCursorAnthropicCompatPath(path)
+	return c.GetBool(forcedCodexInstructionsEnabledContextKey)
 }

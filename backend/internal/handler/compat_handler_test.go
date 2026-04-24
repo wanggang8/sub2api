@@ -271,7 +271,7 @@ func TestCursorCompatHandlerChatCompletionsOpenAIResponsesBridgeInjectsInstructi
 			ForcedCodexInstructionsTemplate: "cursor-handler-template",
 		},
 	}
-	billingCacheService := service.NewBillingCacheService(nil, nil, nil, nil, cfg)
+	billingCacheService := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg)
 	defer billingCacheService.Stop()
 
 	gatewayService := service.NewOpenAIGatewayService(

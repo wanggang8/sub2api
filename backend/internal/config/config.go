@@ -19,13 +19,6 @@ const (
 	RunModeSimple   = "simple"
 )
 
-const (
-	hfDBMaxOpenConnsDefault    = 20
-	hfDBMaxIdleConnsDefault    = 10
-	hfDBConnMaxLifetimeMinutes = 15
-	hfDBConnMaxIdleTimeMinutes = 3
-)
-
 // 使用量记录队列溢出策略
 const (
 	UsageRecordOverflowPolicyDrop   = "drop"
@@ -1208,9 +1201,19 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
 
-	for _, path := range configSearchPaths() {
-		viper.AddConfigPath(path)
+	// Add config paths in priority order
+	// 1. DATA_DIR environment variable (highest priority)
+	if dataDir := os.Getenv("DATA_DIR"); dataDir != "" {
+		viper.AddConfigPath(dataDir)
 	}
+	// 2. Docker data directory
+	viper.AddConfigPath("/app/data")
+	// 3. Current directory
+	viper.AddConfigPath(".")
+	// 4. Config subdirectory
+	viper.AddConfigPath("./config")
+	// 5. System config directory
+	viper.AddConfigPath("/etc/sub2api")
 
 	// 环境变量支持
 	viper.AutomaticEnv()
@@ -1492,26 +1495,16 @@ func setDefaults() {
 	viper.SetDefault("oidc_connect.userinfo_username_path", "")
 
 	// Database
-	dbMaxOpenConnsDefault := 256
-	dbMaxIdleConnsDefault := 128
-	dbConnMaxLifetimeDefault := 30
-	dbConnMaxIdleTimeDefault := 5
-	if isHuggingFaceSpaceRuntime() {
-		dbMaxOpenConnsDefault = hfDBMaxOpenConnsDefault
-		dbMaxIdleConnsDefault = hfDBMaxIdleConnsDefault
-		dbConnMaxLifetimeDefault = hfDBConnMaxLifetimeMinutes
-		dbConnMaxIdleTimeDefault = hfDBConnMaxIdleTimeMinutes
-	}
 	viper.SetDefault("database.host", "localhost")
 	viper.SetDefault("database.port", 5432)
 	viper.SetDefault("database.user", "postgres")
 	viper.SetDefault("database.password", "postgres")
 	viper.SetDefault("database.dbname", "sub2api")
 	viper.SetDefault("database.sslmode", "prefer")
-	viper.SetDefault("database.max_open_conns", dbMaxOpenConnsDefault)
-	viper.SetDefault("database.max_idle_conns", dbMaxIdleConnsDefault)
-	viper.SetDefault("database.conn_max_lifetime_minutes", dbConnMaxLifetimeDefault)
-	viper.SetDefault("database.conn_max_idle_time_minutes", dbConnMaxIdleTimeDefault)
+	viper.SetDefault("database.max_open_conns", 256)
+	viper.SetDefault("database.max_idle_conns", 128)
+	viper.SetDefault("database.conn_max_lifetime_minutes", 30)
+	viper.SetDefault("database.conn_max_idle_time_minutes", 5)
 
 	// Redis
 	viper.SetDefault("redis.host", "localhost")
@@ -2583,26 +2576,6 @@ func generateJWTSecret(byteLength int) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(buf), nil
-}
-
-func isHuggingFaceSpaceRuntime() bool {
-	return strings.TrimSpace(os.Getenv("SPACE_ID")) != "" || strings.TrimSpace(os.Getenv("SPACE_HOST")) != ""
-}
-
-func configSearchPaths() []string {
-	paths := make([]string, 0, 5)
-	if dataDir := strings.TrimSpace(os.Getenv("DATA_DIR")); dataDir != "" {
-		paths = append(paths, dataDir)
-	} else if isHuggingFaceSpaceRuntime() {
-		paths = append(paths, "/data")
-	}
-	paths = append(paths,
-		"/app/data",
-		".",
-		"./config",
-		"/etc/sub2api",
-	)
-	return paths
 }
 
 // GetServerAddress returns the server address (host:port) from config file or environment variable.

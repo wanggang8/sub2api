@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 
@@ -363,31 +362,6 @@ func TestAddToDirective(t *testing.T) {
 		assert.Contains(t, result, "script-src")
 		assert.Contains(t, result, "https://example.com")
 	})
-}
-
-func TestSecurityHeadersHuggingFaceEmbedding(t *testing.T) {
-	t.Setenv("SPACE_HOST", "demo.hf.space")
-	cfg := config.CSPConfig{Enabled: true, Policy: "default-src 'self'; frame-ancestors 'none'; script-src 'self' __CSP_NONCE__"}
-	middleware := SecurityHeaders(cfg, nil)
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
-
-	middleware(c)
-
-	assert.Empty(t, w.Header().Get("X-Frame-Options"))
-	csp := w.Header().Get("Content-Security-Policy")
-	assert.Contains(t, csp, "frame-ancestors 'self' https://huggingface.co https://*.huggingface.co")
-}
-
-func TestAllowHuggingFaceEmbedding(t *testing.T) {
-	_ = os.Setenv("SPACE_ID", "demo")
-	defer os.Unsetenv("SPACE_ID")
-	policy := "default-src 'self'; frame-ancestors 'none'; script-src 'self'"
-	result := allowHuggingFaceEmbedding(policy)
-	assert.Contains(t, result, "frame-ancestors 'self' https://huggingface.co https://*.huggingface.co")
-	assert.NotContains(t, result, "frame-ancestors 'none'")
 }
 
 // Benchmark tests

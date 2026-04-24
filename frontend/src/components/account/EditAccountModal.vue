@@ -2571,7 +2571,7 @@ watch(
 )
 
 
-const loadTLSProfiles = async () => {
+async function loadTLSProfiles() {
   try {
     const profiles = await adminAPI.tlsFingerprintProfiles.list()
     tlsFingerprintProfiles.value = profiles.map(p => ({ id: p.id, name: p.name }))
@@ -2967,7 +2967,7 @@ const handleClose = () => {
   emit('close')
 }
 
-const resetOpenAIFetchedModels = () => {
+function resetOpenAIFetchedModels() {
   openaiFetchedModels.value = null
   openaiFetchHint.value = ''
   openaiFetching.value = false

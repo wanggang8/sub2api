@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log"
-	"os"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -57,10 +56,6 @@ func SecurityHeaders(cfg config.CSPConfig, getFrameSrcOrigins func() []string) g
 
 	return func(c *gin.Context) {
 		finalPolicy := policy
-		allowHFEmbedding := isHuggingFaceSpaceRuntime()
-		if allowHFEmbedding {
-			finalPolicy = allowHuggingFaceEmbedding(finalPolicy)
-		}
 		if getFrameSrcOrigins != nil {
 			for _, origin := range getFrameSrcOrigins() {
 				if origin != "" {
@@ -70,9 +65,7 @@ func SecurityHeaders(cfg config.CSPConfig, getFrameSrcOrigins func() []string) g
 		}
 
 		c.Header("X-Content-Type-Options", "nosniff")
-		if !allowHFEmbedding {
-			c.Header("X-Frame-Options", "DENY")
-		}
+		c.Header("X-Frame-Options", "DENY")
 		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
 		if isAPIRoutePath(c) {
 			c.Next()
@@ -130,14 +123,6 @@ func enhanceCSPPolicy(policy string) string {
 	return policy
 }
 
-func isHuggingFaceSpaceRuntime() bool {
-	return strings.TrimSpace(os.Getenv("SPACE_ID")) != "" || strings.TrimSpace(os.Getenv("SPACE_HOST")) != ""
-}
-
-func allowHuggingFaceEmbedding(policy string) string {
-	return replaceDirective(policy, "frame-ancestors", "'self' https://huggingface.co https://*.huggingface.co")
-}
-
 // addToDirective adds a value to a specific CSP directive.
 // If the directive doesn't exist, it will be added after default-src.
 func addToDirective(policy, directive, value string) string {
@@ -172,20 +157,4 @@ func addToDirective(policy, directive, value string) string {
 	// Insert value before the semicolon
 	insertPos := idx + endIdx
 	return policy[:insertPos] + " " + value + policy[insertPos:]
-}
-
-func replaceDirective(policy, directive, value string) string {
-	directivePrefix := directive + " "
-	idx := strings.Index(policy, directivePrefix)
-	if idx == -1 {
-		return addToDirective(policy, directive, value)
-	}
-
-	endIdx := strings.Index(policy[idx:], ";")
-	if endIdx == -1 {
-		return policy[:idx] + directive + " " + value
-	}
-
-	absoluteEnd := idx + endIdx
-	return policy[:idx] + directive + " " + value + policy[absoluteEnd:]
 }
