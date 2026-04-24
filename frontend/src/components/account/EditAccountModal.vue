@@ -70,14 +70,14 @@
       </div>
 
       <div
-        v-if="account.platform === 'openai'"
+        v-if="showOpenAIUpstreamProtocol"
         class="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-dark-600 dark:bg-dark-700/40"
       >
         <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <label class="input-label mb-0">Upstream Models</label>
+            <label class="input-label mb-0">上游模型</label>
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              用当前 Base URL 和 API Key 读取上游模型，用于下面的模型白名单与映射候选项。
+              使用当前基础地址和 API Key 读取上游模型，用于下面的模型白名单与映射候选项。
             </p>
           </div>
           <button
@@ -87,7 +87,7 @@
             @click="fetchOpenAIUpstreamModels"
           >
             <span v-if="openaiFetching">读取中...</span>
-            <span v-else>Fetch Upstream Models</span>
+            <span v-else>读取上游模型</span>
           </button>
         </div>
         <p v-if="openaiFetchHint" class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ openaiFetchHint }}</p>
@@ -1128,13 +1128,13 @@
 
       <!-- OpenAI 上游协议（仅 API Key） -->
       <div
-        v-if="account?.platform === 'openai' && account?.type === 'apikey'"
+        v-if="showOpenAIUpstreamProtocol"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="mb-3">
-          <label class="input-label mb-0">OpenAI Upstream Protocol</label>
+          <label class="input-label mb-0">OpenAI 上游协议</label>
           <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            为自定义 OpenAI Base URL 指定上游实际支持的接口协议。
+            为自定义 OpenAI 基础地址指定上游实际支持的接口协议。
           </p>
         </div>
         <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -1148,7 +1148,7 @@
                 : 'border-gray-200 hover:border-green-300 dark:border-dark-600 dark:hover:border-green-700'
             ]"
           >
-            <div class="text-sm font-medium text-gray-900 dark:text-white">Responses</div>
+            <div class="text-sm font-medium text-gray-900 dark:text-white">响应接口</div>
             <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">默认 OpenAI 兼容接口</div>
           </button>
           <button
@@ -1161,8 +1161,8 @@
                 : 'border-gray-200 hover:border-green-300 dark:border-dark-600 dark:hover:border-green-700'
             ]"
           >
-            <div class="text-sm font-medium text-gray-900 dark:text-white">Chat Completions</div>
-            <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">兼容 `/v1/chat/completions`</div>
+            <div class="text-sm font-medium text-gray-900 dark:text-white">聊天补全接口</div>
+            <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">对应 `/v1/chat/completions`</div>
           </button>
           <button
             type="button"
@@ -1174,8 +1174,8 @@
                 : 'border-gray-200 hover:border-green-300 dark:border-dark-600 dark:hover:border-green-700'
             ]"
           >
-            <div class="text-sm font-medium text-gray-900 dark:text-white">Messages</div>
-            <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">兼容 `/v1/messages`</div>
+            <div class="text-sm font-medium text-gray-900 dark:text-white">消息接口</div>
+            <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">对应 `/v1/messages`</div>
           </button>
         </div>
       </div>
@@ -1936,7 +1936,7 @@ import ProxySelector from '@/components/common/ProxySelector.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
 import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
-import { applyInterceptWarmup } from '@/components/account/credentialsBuilder'
+import { applyInterceptWarmup, isCustomOpenAIBaseURL } from '@/components/account/credentialsBuilder'
 import { formatDateTimeLocalInput, parseDateTimeLocalInput } from '@/utils/format'
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
 import {
@@ -2138,6 +2138,16 @@ const canFetchOpenAIUpstreamModels = computed(() => (
   && (editBaseUrl.value.trim().length > 0 || defaultBaseUrl.value.trim().length > 0)
   && (editApiKey.value.trim().length > 0 || String(props.account?.credentials?.api_key || '').trim().length > 0)
 ))
+
+const effectiveOpenAIBaseURL = computed(() => editBaseUrl.value.trim() || defaultBaseUrl.value.trim())
+
+const hasCustomOpenAIAPIKeyBaseURL = computed(() => (
+  props.account?.platform === 'openai'
+  && props.account?.type === 'apikey'
+  && isCustomOpenAIBaseURL(effectiveOpenAIBaseURL.value)
+))
+
+const showOpenAIUpstreamProtocol = computed(() => hasCustomOpenAIAPIKeyBaseURL.value)
 
 const currentOpenAISelectableModels = computed(() => {
   if (props.account?.platform === 'openai' && props.account?.type === 'apikey' && openaiFetchedModels.value && openaiFetchedModels.value.length > 0) {
@@ -3379,18 +3389,24 @@ const handleSubmit = async () => {
         delete newExtra.openai_oauth_passthrough
       }
       if (props.account.type === 'apikey') {
-        if (openaiUpstreamCapability.value === 'responses') {
-          newExtra.openai_upstream_supports_responses = true
-          newExtra.openai_upstream_supports_chat_completions = false
-          newExtra.openai_upstream_supports_messages = false
-        } else if (openaiUpstreamCapability.value === 'chat_completions') {
-          newExtra.openai_upstream_supports_responses = false
-          newExtra.openai_upstream_supports_chat_completions = true
-          newExtra.openai_upstream_supports_messages = false
+        if (hasCustomOpenAIAPIKeyBaseURL.value) {
+          if (openaiUpstreamCapability.value === 'responses') {
+            newExtra.openai_upstream_supports_responses = true
+            newExtra.openai_upstream_supports_chat_completions = false
+            newExtra.openai_upstream_supports_messages = false
+          } else if (openaiUpstreamCapability.value === 'chat_completions') {
+            newExtra.openai_upstream_supports_responses = false
+            newExtra.openai_upstream_supports_chat_completions = true
+            newExtra.openai_upstream_supports_messages = false
+          } else {
+            newExtra.openai_upstream_supports_responses = false
+            newExtra.openai_upstream_supports_chat_completions = false
+            newExtra.openai_upstream_supports_messages = true
+          }
         } else {
-          newExtra.openai_upstream_supports_responses = false
-          newExtra.openai_upstream_supports_chat_completions = false
-          newExtra.openai_upstream_supports_messages = true
+          delete newExtra.openai_upstream_supports_responses
+          delete newExtra.openai_upstream_supports_chat_completions
+          delete newExtra.openai_upstream_supports_messages
         }
       }
 

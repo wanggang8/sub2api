@@ -939,6 +939,18 @@ func (a *Account) hasCustomOpenAIBaseURL() bool {
 	return normalized != "" && normalized != "https://api.openai.com" && normalized != "https://api.openai.com/v1"
 }
 
+func sanitizeOpenAIUpstreamCapabilityExtra(account *Account) {
+	if account == nil || account.Extra == nil {
+		return
+	}
+	if account.IsOpenAIApiKey() && account.hasCustomOpenAIBaseURL() {
+		return
+	}
+	delete(account.Extra, "openai_upstream_supports_responses")
+	delete(account.Extra, "openai_upstream_supports_chat_completions")
+	delete(account.Extra, "openai_upstream_supports_messages")
+}
+
 func (a *Account) GetOpenAIAccessToken() string {
 	if !a.IsOpenAI() {
 		return ""

@@ -644,9 +644,6 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		})
 	}
 	if len(filtered) == 0 {
-		if req.RequestedModel != "" {
-			return nil, 0, 0, 0, fmt.Errorf("%w: %s", ErrNoAvailableOpenAIAccountsForRequestedModel, req.RequestedModel)
-		}
 		return nil, 0, 0, 0, errors.New("no available OpenAI accounts")
 	}
 

@@ -113,6 +113,15 @@ function buildAccount() {
   } as any
 }
 
+function buildCustomBaseURLAccount() {
+  const account = buildAccount()
+  account.credentials = {
+    ...account.credentials,
+    base_url: 'https://gateway.example.com/v1'
+  }
+  return account
+}
+
 function mountModal(account = buildAccount()) {
   return mount(EditAccountModal, {
     props: {
@@ -135,6 +144,17 @@ function mountModal(account = buildAccount()) {
 }
 
 describe('EditAccountModal', () => {
+  it('shows upstream-only controls only for custom OpenAI API base URLs', () => {
+    const officialWrapper = mountModal(buildAccount())
+    expect(officialWrapper.text()).not.toContain('上游模型')
+    expect(officialWrapper.text()).not.toContain('OpenAI 上游协议')
+
+    const customWrapper = mountModal(buildCustomBaseURLAccount())
+    expect(customWrapper.text()).toContain('上游模型')
+    expect(customWrapper.text()).toContain('OpenAI 上游协议')
+    expect(customWrapper.text()).toContain('读取上游模型')
+  })
+
   it('reopening the same account rehydrates the OpenAI whitelist from props', async () => {
     const account = buildAccount()
     updateAccountMock.mockReset()

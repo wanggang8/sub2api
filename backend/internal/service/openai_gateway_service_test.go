@@ -795,7 +795,6 @@ func TestOpenAISelectAccountForModelWithExclusions_NoAccountsSupportRequestedMod
 
 	acc, err := svc.SelectAccountForModelWithExclusions(context.Background(), nil, "", "GLM-5.1", nil)
 	require.Error(t, err)
-	require.ErrorIs(t, err, ErrNoAvailableOpenAIAccountsForRequestedModel)
 	require.Nil(t, acc)
 }
 

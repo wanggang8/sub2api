@@ -19,8 +19,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
@@ -218,117 +216,6 @@ type OpenAIUsage struct {
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
 	ImageOutputTokens        int `json:"image_output_tokens,omitempty"`
-}
-
-func openAIUsageHasAnyTokens(usage OpenAIUsage) bool {
-	return usage.InputTokens > 0 ||
-		usage.OutputTokens > 0 ||
-		usage.CacheCreationInputTokens > 0 ||
-		usage.CacheReadInputTokens > 0 ||
-		usage.ImageOutputTokens > 0
-}
-
-func fillMissingOpenAIUsageEstimate(usage OpenAIUsage, requestBody []byte, outputText string) OpenAIUsage {
-	if usage.InputTokens <= 0 {
-		usage.InputTokens = estimateTokenCount(string(requestBody))
-	}
-	if usage.OutputTokens <= 0 {
-		usage.OutputTokens = estimateTokenCount(outputText)
-	}
-	return usage
-}
-
-func estimateTokenCount(text string) int {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return 0
-	}
-	asciiBytes := 0
-	otherBytes := 0
-	cjkRunes := 0
-	for _, r := range text {
-		switch {
-		case r <= unicode.MaxASCII:
-			asciiBytes++
-		case unicode.In(r, unicode.Han, unicode.Hiragana, unicode.Katakana, unicode.Hangul):
-			cjkRunes++
-		default:
-			if n := utf8.RuneLen(r); n > 0 {
-				otherBytes += n
-			}
-		}
-	}
-	tokens := (asciiBytes+3)/4 + cjkRunes + (otherBytes+3)/4
-	if tokens == 0 {
-		return 1
-	}
-	return tokens
-}
-
-func extractOpenAIOutputEstimateTextFromJSONBytes(body []byte) string {
-	if len(body) == 0 || !gjson.ValidBytes(body) {
-		return ""
-	}
-	var out strings.Builder
-	appendValue := func(v gjson.Result) {
-		if s := strings.TrimSpace(v.String()); s != "" {
-			out.WriteString(s)
-			out.WriteByte('\n')
-		}
-	}
-	gjson.GetBytes(body, "choices").ForEach(func(_, choice gjson.Result) bool {
-		for _, path := range []string{
-			"delta.content",
-			"delta.reasoning_content",
-			"message.content",
-			"message.reasoning_content",
-		} {
-			appendValue(choice.Get(path))
-		}
-		choice.Get("delta.tool_calls").ForEach(func(_, toolCall gjson.Result) bool {
-			appendValue(toolCall.Get("function.arguments"))
-			return true
-		})
-		choice.Get("message.tool_calls").ForEach(func(_, toolCall gjson.Result) bool {
-			appendValue(toolCall.Get("function.arguments"))
-			return true
-		})
-		return true
-	})
-	appendResponsesOutputEstimateText(&out, gjson.GetBytes(body, "output"))
-	appendResponsesOutputEstimateText(&out, gjson.GetBytes(body, "response.output"))
-	for _, path := range []string{
-		"delta",
-		"arguments",
-		"response.output_text.delta",
-	} {
-		appendValue(gjson.GetBytes(body, path))
-	}
-	return out.String()
-}
-
-func appendResponsesOutputEstimateText(out *strings.Builder, output gjson.Result) {
-	if out == nil || !output.Exists() {
-		return
-	}
-	output.ForEach(func(_, item gjson.Result) bool {
-		item.Get("content").ForEach(func(_, part gjson.Result) bool {
-			for _, path := range []string{"text", "input"} {
-				if s := strings.TrimSpace(part.Get(path).String()); s != "" {
-					out.WriteString(s)
-					out.WriteByte('\n')
-				}
-			}
-			return true
-		})
-		for _, path := range []string{"arguments", "summary.0.text"} {
-			if s := strings.TrimSpace(item.Get(path).String()); s != "" {
-				out.WriteString(s)
-				out.WriteByte('\n')
-			}
-		}
-		return true
-	})
 }
 
 // OpenAIForwardResult represents the result of forwarding
@@ -1359,9 +1246,6 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.C
 	selected := s.selectBestAccount(ctx, groupID, accounts, requestedModel, excludedIDs)
 
 	if selected == nil {
-		if requestedModel != "" {
-			return nil, fmt.Errorf("%w: %s", ErrNoAvailableOpenAIAccountsForRequestedModel, requestedModel)
-		}
 		return nil, errors.New("no available OpenAI accounts")
 	}
 
@@ -3007,7 +2891,6 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 
 	var usage *OpenAIUsage
 	var firstTokenMs *int
-	outputEstimateText := ""
 	if reqStream {
 		result, err := s.handleStreamingResponsePassthrough(ctx, resp, c, account, startTime)
 		if err != nil {
@@ -3015,9 +2898,8 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 		usage = result.usage
 		firstTokenMs = result.firstTokenMs
-		outputEstimateText = result.outputEstimateText
 	} else {
-		usage, outputEstimateText, err = s.handleNonStreamingResponsePassthrough(ctx, resp, c)
+		usage, err = s.handleNonStreamingResponsePassthrough(ctx, resp, c)
 		if err != nil {
 			return nil, err
 		}
@@ -3030,8 +2912,6 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	if usage == nil {
 		usage = &OpenAIUsage{}
 	}
-	estimated := fillMissingOpenAIUsageEstimate(*usage, body, outputEstimateText)
-	usage = &estimated
 
 	return &OpenAIForwardResult{
 		RequestID:       resp.Header.Get("x-request-id"),
@@ -3369,9 +3249,8 @@ func collectOpenAIPassthroughTimeoutHeaders(h http.Header) []string {
 }
 
 type openaiStreamingResultPassthrough struct {
-	usage              *OpenAIUsage
-	firstTokenMs       *int
-	outputEstimateText string
+	usage        *OpenAIUsage
+	firstTokenMs *int
 }
 
 func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
@@ -3400,7 +3279,6 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 
 	usage := &OpenAIUsage{}
 	var firstTokenMs *int
-	var outputEstimate strings.Builder
 	clientDisconnected := false
 	sawDone := false
 	sawTerminalEvent := false
@@ -3432,9 +3310,6 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				firstTokenMs = &ms
 			}
 			s.parseSSEUsageBytes(dataBytes, usage)
-			if usage.OutputTokens <= 0 {
-				outputEstimate.WriteString(extractOpenAIOutputEstimateTextFromJSONBytes(dataBytes))
-			}
 		}
 
 		if !clientDisconnected {
@@ -3451,17 +3326,17 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	}
 	if err := scanner.Err(); err != nil {
 		if sawTerminalEvent {
-			return &openaiStreamingResultPassthrough{usage: usage, firstTokenMs: firstTokenMs, outputEstimateText: outputEstimate.String()}, nil
+			return &openaiStreamingResultPassthrough{usage: usage, firstTokenMs: firstTokenMs}, nil
 		}
 		if clientDisconnected {
-			return &openaiStreamingResultPassthrough{usage: usage, firstTokenMs: firstTokenMs, outputEstimateText: outputEstimate.String()}, fmt.Errorf("stream usage incomplete after disconnect: %w", err)
+			return &openaiStreamingResultPassthrough{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream usage incomplete after disconnect: %w", err)
 		}
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return &openaiStreamingResultPassthrough{usage: usage, firstTokenMs: firstTokenMs, outputEstimateText: outputEstimate.String()}, fmt.Errorf("stream usage incomplete: %w", err)
+			return &openaiStreamingResultPassthrough{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream usage incomplete: %w", err)
 		}
 		if errors.Is(err, bufio.ErrTooLong) {
 			logger.LegacyPrintf("service.openai_gateway", "[OpenAI passthrough] SSE line too long: account=%d max_size=%d error=%v", account.ID, maxLineSize, err)
-			return &openaiStreamingResultPassthrough{usage: usage, firstTokenMs: firstTokenMs, outputEstimateText: outputEstimate.String()}, err
+			return &openaiStreamingResultPassthrough{usage: usage, firstTokenMs: firstTokenMs}, err
 		}
 		logger.LegacyPrintf("service.openai_gateway",
 			"[OpenAI passthrough] 流读取异常中断: account=%d request_id=%s err=%v",
@@ -3469,7 +3344,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			upstreamRequestID,
 			err,
 		)
-		return &openaiStreamingResultPassthrough{usage: usage, firstTokenMs: firstTokenMs, outputEstimateText: outputEstimate.String()}, fmt.Errorf("stream read error: %w", err)
+		return &openaiStreamingResultPassthrough{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream read error: %w", err)
 	}
 	if !clientDisconnected && !sawDone && !sawTerminalEvent && ctx.Err() == nil {
 		logger.FromContext(ctx).With(
@@ -3477,20 +3352,20 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			zap.Int64("account_id", account.ID),
 			zap.String("upstream_request_id", upstreamRequestID),
 		).Info("OpenAI passthrough 上游流在未收到 [DONE] 时结束，疑似断流")
-		return &openaiStreamingResultPassthrough{usage: usage, firstTokenMs: firstTokenMs, outputEstimateText: outputEstimate.String()}, errors.New("stream usage incomplete: missing terminal event")
+		return &openaiStreamingResultPassthrough{usage: usage, firstTokenMs: firstTokenMs}, errors.New("stream usage incomplete: missing terminal event")
 	}
 
-	return &openaiStreamingResultPassthrough{usage: usage, firstTokenMs: firstTokenMs, outputEstimateText: outputEstimate.String()}, nil
+	return &openaiStreamingResultPassthrough{usage: usage, firstTokenMs: firstTokenMs}, nil
 }
 
 func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	ctx context.Context,
 	resp *http.Response,
 	c *gin.Context,
-) (*OpenAIUsage, string, error) {
+) (*OpenAIUsage, error) {
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 
 	// Detect SSE responses from upstream and convert to JSON.
@@ -3498,8 +3373,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	// stream=false was requested. Without this conversion the client would
 	// receive raw SSE text or a terminal event with empty output.
 	if isEventStreamResponse(resp.Header) {
-		usage, err := s.handlePassthroughSSEToJSON(resp, c, body)
-		return usage, extractOpenAIOutputEstimateTextFromJSONBytes(body), err
+		return s.handlePassthroughSSEToJSON(resp, c, body)
 	}
 
 	usage := &OpenAIUsage{}
@@ -3519,7 +3393,6 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	if rewriteModel {
 		body = s.replaceModelInResponseBody(body, rewriteFrom, rewriteTo)
 	}
-	outputEstimateText := extractOpenAIOutputEstimateTextFromJSONBytes(body)
 
 	writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 
@@ -3528,7 +3401,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 		contentType = "application/json"
 	}
 	c.Data(resp.StatusCode, contentType, body)
-	return usage, outputEstimateText, nil
+	return usage, nil
 }
 
 // handlePassthroughSSEToJSON converts an SSE response body into a JSON
@@ -5003,8 +4876,10 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		s.rateLimitService.ResetOpenAI403Counter(ctx, input.Account.ID)
 	}
 
-	// 跳过所有 token 均为零的用量记录；上游未返回 usage 时不应写入数据库。
-	if !openAIUsageHasAnyTokens(result.Usage) && result.ImageCount == 0 {
+	// 跳过所有 token 均为零的用量记录——上游未返回 usage 时不应写入数据库
+	if result.Usage.InputTokens == 0 && result.Usage.OutputTokens == 0 &&
+		result.Usage.CacheCreationInputTokens == 0 && result.Usage.CacheReadInputTokens == 0 &&
+		result.Usage.ImageOutputTokens == 0 && result.ImageCount == 0 {
 		return nil
 	}
 
@@ -5057,15 +4932,6 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if input.BillingModelSource == BillingModelSourceRequested && input.OriginalModel != "" {
 		billingModel = input.OriginalModel
 	}
-	requestedModel := result.Model
-	if input.OriginalModel != "" {
-		requestedModel = input.OriginalModel
-	}
-	if requestedPricing, pricingErr := s.billingService.GetModelPricing(requestedModel); (pricingErr != nil || requestedPricing == nil) && !hasChannelMappedBillingModel {
-		if upstreamModel := strings.TrimSpace(result.UpstreamModel); upstreamModel != "" {
-			billingModel = upstreamModel
-		}
-	}
 	serviceTier := ""
 	if result.ServiceTier != nil {
 		serviceTier = strings.TrimSpace(*result.ServiceTier)
@@ -5088,7 +4954,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	requestID := resolveUsageBillingRequestID(ctx, result.RequestID)
 
 	// 确定 RequestedModel（渠道映射前的原始模型）
-	requestedModel = result.Model
+	requestedModel := result.Model
 	if input.OriginalModel != "" {
 		requestedModel = input.OriginalModel
 	}

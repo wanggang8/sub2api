@@ -2090,6 +2090,7 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 		Status:      StatusActive,
 		Schedulable: true,
 	}
+	sanitizeOpenAIUpstreamCapabilityExtra(account)
 	// 预计算固定时间重置的下次重置时间
 	if account.Extra != nil {
 		if err := ValidateQuotaResetConfig(account.Extra); err != nil {
@@ -2249,6 +2250,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	if input.AutoPauseOnExpired != nil {
 		account.AutoPauseOnExpired = *input.AutoPauseOnExpired
 	}
+	sanitizeOpenAIUpstreamCapabilityExtra(account)
 
 	// 先验证分组是否存在（在任何写操作之前）
 	if input.GroupIDs != nil {

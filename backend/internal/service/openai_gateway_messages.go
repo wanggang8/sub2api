@@ -377,7 +377,6 @@ func (s *OpenAIGatewayService) forwardOpenAIMessagesDirect(
 		c.Writer.Header().Set("X-Accel-Buffering", "no")
 		c.Writer.WriteHeader(http.StatusOK)
 		usage := OpenAIUsage{}
-		var outputEstimate strings.Builder
 		scanner := bufio.NewScanner(resp.Body)
 		maxLineSize := defaultMaxLineSize
 		if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
@@ -389,9 +388,6 @@ func (s *OpenAIGatewayService) forwardOpenAIMessagesDirect(
 			line := scanner.Text()
 			if data, ok := extractAnthropicSSEDataLine(line); ok {
 				parseAnthropicSSEUsageIntoOpenAI(data, &usage)
-				if usage.OutputTokens <= 0 {
-					outputEstimate.WriteString(extractAnthropicOutputEstimateTextFromJSON([]byte(data)))
-				}
 			}
 			if rewriteModel {
 				line = replaceAnthropicSSEMessageModel(line, upstreamModel, originalModel)
@@ -404,7 +400,6 @@ func (s *OpenAIGatewayService) forwardOpenAIMessagesDirect(
 		if err := scanner.Err(); err != nil {
 			return nil, fmt.Errorf("read upstream stream: %w", err)
 		}
-		usage = fillMissingOpenAIUsageEstimate(usage, forwardBody, outputEstimate.String())
 		return &OpenAIForwardResult{RequestID: requestID, Usage: usage, Model: originalModel, BillingModel: billingModel, UpstreamModel: upstreamModel, Stream: true, Duration: time.Since(startTime)}, nil
 	}
 
@@ -423,7 +418,6 @@ func (s *OpenAIGatewayService) forwardOpenAIMessagesDirect(
 	}
 	c.Data(http.StatusOK, contentType, respBody)
 	usage := parseAnthropicResponseUsageIntoOpenAI(respBody)
-	usage = fillMissingOpenAIUsageEstimate(usage, forwardBody, extractAnthropicOutputEstimateTextFromJSON(respBody))
 	return &OpenAIForwardResult{RequestID: requestID, Usage: usage, Model: originalModel, BillingModel: billingModel, UpstreamModel: upstreamModel, Stream: false, Duration: time.Since(startTime)}, nil
 }
 
@@ -470,34 +464,6 @@ func mergeAnthropicUsageIntoOpenAI(usage *OpenAIUsage, usageNode gjson.Result, o
 			usage.CacheReadInputTokens = int(cached.Int())
 		}
 	}
-}
-
-func extractAnthropicOutputEstimateTextFromJSON(body []byte) string {
-	if len(body) == 0 || !gjson.ValidBytes(body) {
-		return ""
-	}
-	var out strings.Builder
-	appendValue := func(v gjson.Result) {
-		if s := strings.TrimSpace(v.String()); s != "" {
-			out.WriteString(s)
-			out.WriteByte('\n')
-		}
-	}
-	gjson.GetBytes(body, "content").ForEach(func(_, block gjson.Result) bool {
-		for _, path := range []string{"text", "thinking", "input"} {
-			appendValue(block.Get(path))
-		}
-		return true
-	})
-	for _, path := range []string{
-		"delta.text",
-		"delta.thinking",
-		"delta.partial_json",
-		"message.content.0.text",
-	} {
-		appendValue(gjson.GetBytes(body, path))
-	}
-	return out.String()
 }
 
 func replaceAnthropicSSEMessageModel(line, fromModel, toModel string) string {

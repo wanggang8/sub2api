@@ -660,7 +660,6 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_ReturnsModelSupportErro
 
 	selection, _, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "session_hash_no_model_support", "GLM-5.1", nil, OpenAIUpstreamTransportAny, OpenAIUpstreamCapabilityResponsesCompatibleChatCompletions)
 	require.Error(t, err)
-	require.ErrorIs(t, err, ErrNoAvailableOpenAIAccountsForRequestedModel)
 	require.Nil(t, selection)
 }
 

@@ -285,7 +285,7 @@ func TestForwardAsAnthropic_DirectMessagesParsesStreamingUsage(t *testing.T) {
 	require.Equal(t, 6, result.Usage.CacheReadInputTokens)
 }
 
-func TestForwardAsAnthropic_DirectMessagesEstimatesUsageWhenMissing(t *testing.T) {
+func TestForwardAsAnthropic_DirectMessagesLeavesUsageEmptyWhenMissing(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
 
@@ -333,11 +333,11 @@ func TestForwardAsAnthropic_DirectMessagesEstimatesUsageWhenMissing(t *testing.T
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.Greater(t, result.Usage.InputTokens, 0)
-	require.Greater(t, result.Usage.OutputTokens, 0)
+	require.Equal(t, 0, result.Usage.InputTokens)
+	require.Equal(t, 0, result.Usage.OutputTokens)
 }
 
-func TestForwardAsAnthropic_DirectMessagesEstimatesMissingOutputWhenInputUsagePresent(t *testing.T) {
+func TestForwardAsAnthropic_DirectMessagesKeepsMissingOutputWhenInputUsagePresent(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
 
@@ -388,7 +388,7 @@ func TestForwardAsAnthropic_DirectMessagesEstimatesMissingOutputWhenInputUsagePr
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, 19, result.Usage.InputTokens)
-	require.Greater(t, result.Usage.OutputTokens, 0)
+	require.Equal(t, 0, result.Usage.OutputTokens)
 }
 
 func TestForwardAsChatCompletions_DirectsToUpstreamChatCompletionsWhenResponsesUnsupported(t *testing.T) {
@@ -790,7 +790,7 @@ func TestForwardAsChatCompletions_DirectStreamRequestsUsageAndParsesChatUsage(t 
 	require.Equal(t, 2, result.Usage.CacheReadInputTokens)
 }
 
-func TestForwardAsChatCompletions_DirectStreamEstimatesUsageWhenMissing(t *testing.T) {
+func TestForwardAsChatCompletions_DirectStreamLeavesUsageEmptyWhenMissing(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
 
@@ -837,11 +837,11 @@ func TestForwardAsChatCompletions_DirectStreamEstimatesUsageWhenMissing(t *testi
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.Greater(t, result.Usage.InputTokens, 0)
-	require.Greater(t, result.Usage.OutputTokens, 0)
+	require.Equal(t, 0, result.Usage.InputTokens)
+	require.Equal(t, 0, result.Usage.OutputTokens)
 }
 
-func TestForwardAsChatCompletions_DirectNonStreamEstimatesOutputWhenUsageMissing(t *testing.T) {
+func TestForwardAsChatCompletions_DirectNonStreamLeavesUsageEmptyWhenMissing(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
 
@@ -887,8 +887,8 @@ func TestForwardAsChatCompletions_DirectNonStreamEstimatesOutputWhenUsageMissing
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.Greater(t, result.Usage.InputTokens, 0)
-	require.Greater(t, result.Usage.OutputTokens, 0)
+	require.Equal(t, 0, result.Usage.InputTokens)
+	require.Equal(t, 0, result.Usage.OutputTokens)
 }
 
 func TestForwardAsChatCompletions_DirectChatPathStillAppliesForcedTemplateAndPreservesClientModel(t *testing.T) {
