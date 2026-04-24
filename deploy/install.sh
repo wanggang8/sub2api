@@ -16,7 +16,7 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Configuration
-DEFAULT_GITHUB_REPO="Wei-Shaw/sub2api"
+DEFAULT_GITHUB_REPO="wanggang8/sub2api"
 GITHUB_REPO="${SUB2API_GITHUB_REPO:-${GITHUB_REPO:-$DEFAULT_GITHUB_REPO}}"
 INSTALL_DIR="/opt/sub2api"
 SERVICE_NAME="sub2api"
