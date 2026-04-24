@@ -641,7 +641,7 @@ func TestOpenAIGatewayServiceRecordUsage_GeneratesRequestIDWhenAllSourcesMissing
 	require.Equal(t, billingRepo.lastCmd.RequestID, usageRepo.lastLog.RequestID)
 }
 
-func TestOpenAIGatewayServiceRecordUsage_WritesZeroUsageLogWhenUpstreamUsageMissing(t *testing.T) {
+func TestOpenAIGatewayServiceRecordUsage_SkipsZeroUsageLogWhenUpstreamUsageMissing(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
 	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
@@ -659,11 +659,8 @@ func TestOpenAIGatewayServiceRecordUsage_WritesZeroUsageLogWhenUpstreamUsageMiss
 	})
 
 	require.NoError(t, err)
-	require.Equal(t, 1, usageRepo.calls)
-	require.Equal(t, 1, billingRepo.calls)
-	require.NotNil(t, usageRepo.lastLog)
-	require.Equal(t, 0, usageRepo.lastLog.TotalTokens())
-	require.Zero(t, usageRepo.lastLog.ActualCost)
+	require.Equal(t, 0, usageRepo.calls)
+	require.Equal(t, 0, billingRepo.calls)
 }
 
 func TestOpenAIGatewayServiceRecordUsage_BillingErrorSkipsUsageLogWrite(t *testing.T) {

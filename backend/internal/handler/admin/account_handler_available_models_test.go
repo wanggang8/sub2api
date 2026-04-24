@@ -103,3 +103,20 @@ func TestAccountHandlerGetAvailableModels_OpenAIOAuthPassthroughFallsBackToDefau
 	require.NotEmpty(t, resp.Data)
 	require.NotEqual(t, "gpt-5", resp.Data[0].ID)
 }
+
+func TestAccountHandlerFetchOpenAIUpstreamModelsAllowsLocalPreview(t *testing.T) {
+	handler := NewAccountHandler(newStubAdminService(), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/models", r.URL.Path)
+		require.Equal(t, "Bearer test-key", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"local-model","object":"model"}]}`))
+	}))
+	defer upstream.Close()
+
+	models, err := handler.fetchOpenAIUpstreamModels(context.Background(), upstream.URL+"/v1", "test-key")
+
+	require.NoError(t, err)
+	require.Len(t, models, 1)
+	require.Equal(t, "local-model", models[0].ID)
+}

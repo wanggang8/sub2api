@@ -5003,8 +5003,10 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		s.rateLimitService.ResetOpenAI403Counter(ctx, input.Account.ID)
 	}
 
-	// 上游可能不返回 usage（尤其是 OpenAI-compatible direct streaming）。
-	// 仍然写入 0-token 日志以保留请求审计，但费用保持为 0。
+	// 跳过所有 token 均为零的用量记录；上游未返回 usage 时不应写入数据库。
+	if !openAIUsageHasAnyTokens(result.Usage) && result.ImageCount == 0 {
+		return nil
+	}
 
 	apiKey := input.APIKey
 	user := input.User

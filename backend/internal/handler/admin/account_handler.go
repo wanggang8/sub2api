@@ -1780,6 +1780,8 @@ type openAIUpstreamModel struct {
 	OwnedBy string `json:"owned_by"`
 }
 
+const openAIUpstreamModelsPreviewTimeout = 10 * time.Second
+
 // SetSchedulable handles toggling account schedulable status
 // POST /api/v1/admin/accounts/:id/schedulable
 func (h *AccountHandler) SetSchedulable(c *gin.Context) {
@@ -1863,14 +1865,17 @@ func (h *AccountHandler) fetchOpenAIUpstreamModels(ctx context.Context, baseURL,
 		return nil, fmt.Errorf("invalid base_url: %w", err)
 	}
 	requestURL := buildOpenAIModelListURL(normalizedBaseURL)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+	reqCtx, cancel := context.WithTimeout(ctx, openAIUpstreamModelsPreviewTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+trimmedAPIKey)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{Timeout: openAIUpstreamModelsPreviewTimeout}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
