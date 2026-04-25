@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
+	"github.com/google/uuid"
 )
 
 // Cursor compat stays stateless on purpose and does not persist hidden reasoning caches.
@@ -112,63 +113,76 @@ func NormalizeChatCompletionsRequestBody(raw []byte) ([]byte, error) {
 		return nil, err
 	}
 	if _, ok := payload["messages"]; ok {
-		normalized, changed, err := normalizeChatCompletionsMessagesPayload(payload)
-		if err != nil {
-			return nil, err
-		}
-		if changed {
-			return normalized, nil
-		}
-		return raw, nil
+		return normalizeCursorChatCompletionsBody(raw)
 	}
 	if _, ok := payload["input"]; !ok {
 		return raw, nil
 	}
-	return apicompat.NormalizeResponsesShapeChatCompletionsBody(raw)
+	normalized, err := apicompat.NormalizeResponsesShapeChatCompletionsBody(raw)
+	if err != nil {
+		return nil, err
+	}
+	return stripResponsesOnlyChatFields(normalized)
 }
 
-func normalizeChatCompletionsMessagesPayload(payload map[string]json.RawMessage) ([]byte, bool, error) {
-	if len(payload) == 0 || chatToolsContainName(payload["tools"], "multi_tool_use.parallel") {
-		return nil, false, nil
+func normalizeCursorChatCompletionsBody(raw []byte) ([]byte, error) {
+	payload, ok := decodeCursorJSONObject(raw)
+	if !ok {
+		return raw, nil
 	}
-	messagesRaw, ok := payload["messages"]
-	if !ok || len(messagesRaw) == 0 {
-		return nil, false, nil
+
+	normalizeCursorChatTopLevelSystem(payload)
+	if messages, ok := payload["messages"].([]any); ok {
+		payload["messages"] = normalizeCursorChatMessages(messages)
 	}
-	var messages []map[string]any
-	if err := json.Unmarshal(messagesRaw, &messages); err != nil {
-		return nil, false, fmt.Errorf("parse chat messages: %w", err)
-	}
-	changed := false
-	for _, message := range messages {
-		role, _ := message["role"].(string)
-		if role != "system" && role != "developer" {
-			continue
+	if tools, ok := payload["tools"].([]any); ok {
+		normalizedTools := make([]any, 0, len(tools))
+		for _, tool := range tools {
+			normalizedTools = append(normalizedTools, normalizeCursorToolDefinition(tool))
 		}
-		if normalizeParallelToolInstructionInMessage(message) {
-			changed = true
+		payload["tools"] = normalizedTools
+	}
+	normalizeCursorToolChoice(payload)
+	dropResponsesOnlyChatFieldsFromMap(payload)
+	if messages, ok := payload["messages"].([]any); ok && !cursorPayloadContainsToolName(payload, "multi_tool_use.parallel") {
+		changed := false
+		for _, rawMessage := range messages {
+			message, ok := rawMessage.(map[string]any)
+			if !ok {
+				continue
+			}
+			role, _ := message["role"].(string)
+			if role != "system" && role != "developer" {
+				continue
+			}
+			if normalizeParallelToolInstructionInMessage(message) {
+				changed = true
+			}
+		}
+		if changed {
+			payload["messages"] = messages
 		}
 	}
-	if !changed {
-		return nil, false, nil
-	}
-	payload["messages"] = mustMarshal(messages)
 	normalized, err := json.Marshal(payload)
 	if err != nil {
-		return nil, false, fmt.Errorf("marshal normalized chat messages: %w", err)
+		return nil, fmt.Errorf("marshal normalized chat payload: %w", err)
 	}
-	return normalized, true, nil
+	return normalized, nil
 }
 
-func chatToolsContainName(raw json.RawMessage, name string) bool {
-	if len(raw) == 0 || strings.TrimSpace(name) == "" {
+func cursorPayloadContainsToolName(payload map[string]any, name string) bool {
+	if len(payload) == 0 || strings.TrimSpace(name) == "" {
 		return false
 	}
-	var tools []map[string]any
-	if err := json.Unmarshal(raw, &tools); err != nil {
+	rawTools, ok := payload["tools"].([]any)
+	if !ok {
 		return false
 	}
-	for _, tool := range tools {
+	for _, rawTool := range rawTools {
+		tool, ok := rawTool.(map[string]any)
+		if !ok {
+			continue
+		}
 		if strings.TrimSpace(fmt.Sprint(tool["name"])) == name {
 			return true
 		}
@@ -226,6 +240,334 @@ func normalizeMissingParallelToolInstruction(text string) (string, bool) {
 	normalized = strings.ReplaceAll(normalized, "`multi_tool_use.parallel`", "multiple tool_calls in the same assistant response")
 	normalized = strings.ReplaceAll(normalized, "multi_tool_use.parallel", "multiple tool_calls in the same assistant response")
 	return normalized, normalized != text
+}
+
+func decodeCursorJSONObject(body []byte) (map[string]any, bool) {
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, false
+	}
+	return payload, true
+}
+
+func cloneCursorJSONObject(payload map[string]any) map[string]any {
+	if payload == nil {
+		return map[string]any{}
+	}
+	cloned := make(map[string]any, len(payload))
+	for key, value := range payload {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func normalizeCursorChatTopLevelSystem(payload map[string]any) {
+	if payload == nil {
+		return
+	}
+	rawSystem, exists := payload["system"]
+	if !exists {
+		return
+	}
+	delete(payload, "system")
+
+	systemText := flattenCursorOpenAIText(rawSystem)
+	if systemText == "" {
+		return
+	}
+
+	rawMessages, _ := payload["messages"].([]any)
+	if len(rawMessages) > 0 {
+		if firstMessage, ok := rawMessages[0].(map[string]any); ok && strings.TrimSpace(fmt.Sprint(firstMessage["role"])) == "system" {
+			firstMessage["content"] = mergeCursorSystemMessageContent(systemText, firstMessage["content"])
+			payload["messages"] = rawMessages
+			return
+		}
+	}
+
+	systemMessage := map[string]any{
+		"role":    "system",
+		"content": systemText,
+	}
+	payload["messages"] = append([]any{systemMessage}, rawMessages...)
+}
+
+func normalizeCursorChatMessages(messages []any) []any {
+	normalized := make([]any, 0, len(messages))
+	for _, rawMessage := range messages {
+		message, ok := rawMessage.(map[string]any)
+		if !ok {
+			normalized = append(normalized, rawMessage)
+			continue
+		}
+		content, ok := message["content"].([]any)
+		if !ok {
+			normalized = append(normalized, message)
+			continue
+		}
+
+		hasToolUse := false
+		hasToolResult := false
+		for _, rawBlock := range content {
+			block, ok := rawBlock.(map[string]any)
+			if !ok {
+				continue
+			}
+			switch strings.TrimSpace(fmt.Sprint(block["type"])) {
+			case "tool_use":
+				hasToolUse = true
+			case "tool_result":
+				hasToolResult = true
+			}
+		}
+
+		role := strings.TrimSpace(fmt.Sprint(message["role"]))
+		if role == "assistant" && hasToolUse {
+			normalized = append(normalized, convertCursorAssistantToolUseMessage(content))
+			continue
+		}
+		if hasToolResult {
+			normalized = append(normalized, convertCursorToolResultMessage(role, content)...)
+			continue
+		}
+		cloned := make(map[string]any, len(message))
+		for key, value := range message {
+			cloned[key] = value
+		}
+		cloned["content"] = normalizeCursorOpenAIContentBlocks(content)
+		normalized = append(normalized, cloned)
+	}
+	return normalized
+}
+
+func convertCursorAssistantToolUseMessage(content []any) map[string]any {
+	textParts := make([]string, 0)
+	toolCalls := make([]any, 0)
+	for _, rawBlock := range content {
+		block, ok := rawBlock.(map[string]any)
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(fmt.Sprint(block["type"])) {
+		case "text":
+			if text := strings.TrimSpace(fmt.Sprint(block["text"])); text != "" {
+				textParts = append(textParts, text)
+			}
+		case "tool_use":
+			inputData, _ := block["input"].(map[string]any)
+			inputData = applyCursorToolArgFixes(strings.TrimSpace(fmt.Sprint(block["name"])), inputData)
+			inputJSON, _ := json.Marshal(inputData)
+			callID := strings.TrimSpace(fmt.Sprint(block["id"]))
+			if callID == "" {
+				callID = "call_" + uuid.NewString()
+			}
+			toolCalls = append(toolCalls, map[string]any{
+				"id":   callID,
+				"type": "function",
+				"function": map[string]any{
+					"name":      strings.TrimSpace(fmt.Sprint(block["name"])),
+					"arguments": string(inputJSON),
+				},
+			})
+		}
+	}
+
+	message := map[string]any{"role": "assistant"}
+	if len(textParts) > 0 {
+		message["content"] = strings.Join(textParts, "\n")
+	} else {
+		message["content"] = nil
+	}
+	if len(toolCalls) > 0 {
+		message["tool_calls"] = toolCalls
+	}
+	return message
+}
+
+func convertCursorToolResultMessage(role string, content []any) []any {
+	converted := make([]any, 0)
+	otherParts := make([]any, 0)
+	for _, rawBlock := range content {
+		block, ok := rawBlock.(map[string]any)
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(fmt.Sprint(block["type"])) == "tool_result" {
+			converted = append(converted, map[string]any{
+				"role":         "tool",
+				"tool_call_id": strings.TrimSpace(fmt.Sprint(block["tool_use_id"])),
+				"content":      stringifyCursorToolResultContent(block["content"]),
+			})
+			continue
+		}
+		otherParts = append(otherParts, block)
+	}
+	if len(otherParts) > 0 {
+		converted = append(converted, map[string]any{
+			"role":    role,
+			"content": otherParts,
+		})
+	}
+	return converted
+}
+
+func stringifyCursorToolResultContent(content any) string {
+	switch value := content.(type) {
+	case string:
+		return value
+	case []any:
+		parts := make([]string, 0)
+		for _, rawBlock := range value {
+			block, ok := rawBlock.(map[string]any)
+			if !ok {
+				continue
+			}
+			if strings.TrimSpace(fmt.Sprint(block["type"])) == "text" {
+				if text := strings.TrimSpace(fmt.Sprint(block["text"])); text != "" {
+					parts = append(parts, text)
+				}
+			}
+		}
+		return strings.Join(parts, "\n")
+	default:
+		return fmt.Sprint(content)
+	}
+}
+
+func normalizeCursorToolDefinition(tool any) any {
+	toolMap, ok := tool.(map[string]any)
+	if !ok {
+		return tool
+	}
+	if strings.TrimSpace(fmt.Sprint(toolMap["type"])) == "function" {
+		if _, ok := toolMap["function"].(map[string]any); ok {
+			return tool
+		}
+		return tool
+	}
+	if name := strings.TrimSpace(fmt.Sprint(toolMap["name"])); name != "" {
+		normalized := map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":        name,
+				"description": strings.TrimSpace(fmt.Sprint(toolMap["description"])),
+			},
+		}
+		functionData := normalized["function"].(map[string]any)
+		if inputSchema, exists := toolMap["input_schema"]; exists {
+			functionData["parameters"] = inputSchema
+		} else if parameters, exists := toolMap["parameters"]; exists {
+			functionData["parameters"] = parameters
+		} else {
+			functionData["parameters"] = map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+			}
+		}
+		return normalized
+	}
+	return tool
+}
+
+func normalizeCursorToolChoice(payload map[string]any) {
+	toolChoice, ok := payload["tool_choice"].(map[string]any)
+	if !ok {
+		return
+	}
+	switch strings.TrimSpace(fmt.Sprint(toolChoice["type"])) {
+	case "auto":
+		payload["tool_choice"] = "auto"
+	case "any":
+		payload["tool_choice"] = "required"
+	}
+}
+
+func mergeCursorSystemMessageContent(prefix string, existing any) any {
+	if prefix == "" {
+		return existing
+	}
+	switch value := existing.(type) {
+	case string:
+		if strings.TrimSpace(value) == "" {
+			return prefix
+		}
+		return prefix + "\n\n" + value
+	case []any:
+		return append([]any{map[string]any{"type": "text", "text": prefix}}, normalizeCursorOpenAIContentBlocks(value)...)
+	default:
+		if text := flattenCursorOpenAIText(existing); text != "" {
+			return prefix + "\n\n" + text
+		}
+		return prefix
+	}
+}
+
+func normalizeCursorOpenAIContentBlocks(content []any) []any {
+	normalized := make([]any, 0, len(content))
+	for _, rawBlock := range content {
+		switch block := rawBlock.(type) {
+		case string:
+			normalized = append(normalized, map[string]any{
+				"type": "text",
+				"text": block,
+			})
+		case map[string]any:
+			cloned := cloneCursorJSONObject(block)
+			delete(cloned, "cache_control")
+			if _, hasType := cloned["type"]; !hasType && cloned["text"] != nil {
+				cloned["type"] = "text"
+			}
+			normalized = append(normalized, cloned)
+		default:
+			normalized = append(normalized, rawBlock)
+		}
+	}
+	return normalized
+}
+
+func flattenCursorOpenAIText(content any) string {
+	switch value := content.(type) {
+	case string:
+		return strings.TrimSpace(value)
+	case []any:
+		parts := make([]string, 0, len(value))
+		for _, rawPart := range value {
+			switch part := rawPart.(type) {
+			case string:
+				text := strings.TrimSpace(part)
+				if text != "" {
+					parts = append(parts, text)
+				}
+			case map[string]any:
+				text := strings.TrimSpace(fmt.Sprint(part["text"]))
+				if text != "" {
+					parts = append(parts, text)
+				}
+			}
+		}
+		return strings.Join(parts, "\n\n")
+	case map[string]any:
+		return strings.TrimSpace(fmt.Sprint(value["text"]))
+	default:
+		return ""
+	}
+}
+
+func stripResponsesOnlyChatFields(body []byte) ([]byte, error) {
+	payload, ok := decodeCursorJSONObject(body)
+	if !ok {
+		return body, nil
+	}
+	dropResponsesOnlyChatFieldsFromMap(payload)
+	normalized, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return normalized, nil
+}
+
+func dropResponsesOnlyChatFieldsFromMap(payload map[string]any) {
+	delete(payload, "previous_response_id")
 }
 
 func NormalizeMessagesRequestBody(raw []byte) ([]byte, error) {

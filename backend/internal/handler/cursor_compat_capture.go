@@ -53,3 +53,11 @@ func patchCursorMessagesResponseBody(body []byte) []byte {
 	}
 	return patched
 }
+
+func patchCursorChatResponseBody(body []byte, clientModel string) []byte {
+	patched, err := cursorcompat.PatchChatResponseBody(body, clientModel)
+	if err != nil {
+		return body
+	}
+	return patched
+}

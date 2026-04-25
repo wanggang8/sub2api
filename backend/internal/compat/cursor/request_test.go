@@ -201,6 +201,91 @@ func TestNormalizeChatCompletionsRequestBodyPreservesCursorEditingToolsForInputA
 	require.False(t, names["StrReplace"])
 }
 
+func TestNormalizeChatCompletionsRequestBodyNormalizesTopLevelSystemAndAnthropicToolBlocks(t *testing.T) {
+	raw := []byte(`{
+		"model": "gpt-5.4",
+		"system": [{"type":"text","text":"system prompt"}],
+		"messages": [
+			{"role":"assistant","content":[
+				{"type":"text","text":"Working on it"},
+				{"type":"tool_use","id":"call_1","name":"ApplyPatch","input":{"input":"*** Begin Patch"}}
+			]},
+			{"role":"user","content":[
+				{"type":"tool_result","tool_use_id":"call_1","content":[{"type":"text","text":"ok"}]}
+			]}
+		],
+		"tools": [{"name":"ApplyPatch","description":"Patch files","input_schema":{"type":"object"}}],
+		"tool_choice": {"type":"any"},
+		"previous_response_id":"resp_123"
+	}`)
+
+	normalized, err := NormalizeChatCompletionsRequestBody(raw)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(normalized, &payload))
+	require.NotContains(t, payload, "system")
+	require.NotContains(t, payload, "previous_response_id")
+	require.Equal(t, "required", payload["tool_choice"])
+
+	messages := payload["messages"].([]any)
+	require.Len(t, messages, 3)
+
+	systemMsg := messages[0].(map[string]any)
+	require.Equal(t, "system", systemMsg["role"])
+	require.Equal(t, "system prompt", systemMsg["content"])
+
+	assistantMsg := messages[1].(map[string]any)
+	require.Equal(t, "assistant", assistantMsg["role"])
+	require.Equal(t, "Working on it", assistantMsg["content"])
+	toolCalls := assistantMsg["tool_calls"].([]any)
+	require.Len(t, toolCalls, 1)
+	require.Equal(t, "ApplyPatch", toolCalls[0].(map[string]any)["function"].(map[string]any)["name"])
+
+	toolMsg := messages[2].(map[string]any)
+	require.Equal(t, "tool", toolMsg["role"])
+	require.Equal(t, "call_1", toolMsg["tool_call_id"])
+	require.Equal(t, "ok", toolMsg["content"])
+
+	tools := payload["tools"].([]any)
+	require.Len(t, tools, 1)
+	function := tools[0].(map[string]any)["function"].(map[string]any)
+	require.Equal(t, "ApplyPatch", function["name"])
+	require.Equal(t, "Patch files", function["description"])
+}
+
+func TestNormalizeChatCompletionsRequestBodyNormalizesArrayContentBlocks(t *testing.T) {
+	raw := []byte(`{
+		"model": "gpt-5.4",
+		"messages": [
+			{"role":"user","content":["hello",{"text":"world","cache_control":{"type":"ephemeral"}},{"type":"image_url","image_url":{"url":"https://example.com/x.png"}}]}
+		]
+	}`)
+
+	normalized, err := NormalizeChatCompletionsRequestBody(raw)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(normalized, &payload))
+	messages := payload["messages"].([]any)
+	require.Len(t, messages, 1)
+	content := messages[0].(map[string]any)["content"].([]any)
+	require.Len(t, content, 3)
+
+	first := content[0].(map[string]any)
+	require.Equal(t, "text", first["type"])
+	require.Equal(t, "hello", first["text"])
+
+	second := content[1].(map[string]any)
+	require.Equal(t, "text", second["type"])
+	require.Equal(t, "world", second["text"])
+	_, hasCacheControl := second["cache_control"]
+	require.False(t, hasCacheControl)
+
+	third := content[2].(map[string]any)
+	require.Equal(t, "image_url", third["type"])
+}
+
 func TestNormalizeChatCompletionsRequestBodyPreservesMultipleTools(t *testing.T) {
 	raw := []byte(`{
 		"model": "gpt-4.1",

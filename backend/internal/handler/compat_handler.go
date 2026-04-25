@@ -104,6 +104,8 @@ func (h *CursorCompatHandler) ChatCompletions(c *gin.Context) {
 			return
 		}
 		if stream {
+			writer := newCursorChatStreamWriter(c.Writer, cursorCompatRequestModelFromBody(body))
+			c.Writer = writer
 			h.openaiChatCompletionsAction(c)
 			return
 		}
@@ -121,7 +123,7 @@ func (h *CursorCompatHandler) ChatCompletions(c *gin.Context) {
 			cursorCompatError(c, status, message)
 			return
 		}
-		writeCursorCompatCapturedResponse(c, result, result.Body)
+		writeCursorCompatCapturedResponse(c, result, patchCursorChatResponseBody(result.Body, cursorCompatRequestModelFromBody(body)))
 		return
 	}
 	if h == nil || h.chatCompletionsAction == nil {
@@ -129,6 +131,8 @@ func (h *CursorCompatHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 	if stream {
+		writer := newCursorChatStreamWriter(c.Writer, cursorCompatRequestModelFromBody(body))
+		c.Writer = writer
 		h.chatCompletionsAction(c)
 		return
 	}
@@ -145,7 +149,7 @@ func (h *CursorCompatHandler) ChatCompletions(c *gin.Context) {
 		writeCursorCompatAnthropicError(c, result)
 		return
 	}
-	writeCursorCompatCapturedResponse(c, result, result.Body)
+	writeCursorCompatCapturedResponse(c, result, patchCursorChatResponseBody(result.Body, cursorCompatRequestModelFromBody(body)))
 }
 
 func (h *CursorCompatHandler) Messages(c *gin.Context) {

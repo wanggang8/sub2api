@@ -619,6 +619,30 @@ func TestCursorCompatHandlerChatCompletionsMarksOpenAIActionAsCursorCompat(t *te
 	require.Equal(t, http.StatusOK, w.Code)
 }
 
+func TestCursorCompatHandlerChatCompletionsStreamPatchesThinkTagsAndToolBoundaries(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/cursor/v1/chat/completions", strings.NewReader(`{"model":"gpt-4.1","stream":true,"input":"hi"}`))
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{Group: &service.Group{Platform: service.PlatformOpenAI}})
+
+	h := &CursorCompatHandler{openaiChatCompletionsAction: func(c *gin.Context) {
+		c.Header("Content-Type", "text/event-stream")
+		_, _ = c.Writer.Write([]byte(`data: {"id":"cmpl_1","object":"chat.completion.chunk","model":"upstream","choices":[{"index":0,"delta":{"content":"<think>reason"},"finish_reason":null}]}` + "\n\n"))
+		_, _ = c.Writer.Write([]byte(`data: {"id":"cmpl_1","object":"chat.completion.chunk","model":"upstream","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{}"}}]},"finish_reason":null}]}` + "\n\n"))
+		_, _ = c.Writer.Write([]byte("data: [DONE]\n\n"))
+	}}
+
+	h.ChatCompletions(c)
+
+	body := w.Body.String()
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"reasoning_content":"reason"`)
+	require.Contains(t, body, `"\n\u003c/think\u003e\n\n"`)
+	require.Contains(t, body, `"tool_calls":[`)
+	require.Contains(t, body, `data: [DONE]`)
+}
+
 func TestCursorCompatHandlerChatCompletionsCapturesOpenAINonStreamResponse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
@@ -639,7 +663,49 @@ func TestCursorCompatHandlerChatCompletionsCapturesOpenAINonStreamResponse(t *te
 
 	require.True(t, called)
 	require.Equal(t, http.StatusOK, w.Code)
-	require.JSONEq(t, `{"ok":true}`, w.Body.String())
+	require.JSONEq(t, `{"ok":true,"model":"gpt-4.1"}`, w.Body.String())
+}
+
+func TestCursorCompatHandlerChatCompletionsPatchesNonStreamOpenAIResponse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/cursor/v1/chat/completions", strings.NewReader(`{"model":"gpt-4.1","input":"hi"}`))
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{Group: &service.Group{Platform: service.PlatformOpenAI}})
+
+	h := &CursorCompatHandler{
+		facade: executorcompat.New(64 * 1024),
+		openaiChatCompletionsAction: func(c *gin.Context) {
+			c.Header("Content-Type", "application/json")
+			c.JSON(http.StatusOK, gin.H{
+				"id":    "chatcmpl_1",
+				"model": "upstream-model",
+				"choices": []gin.H{{
+					"index": 0,
+					"message": gin.H{
+						"role":             "assistant",
+						"content":          "<think>plan</think>Hello",
+						"reasoningContent": "plan",
+						"function_call": gin.H{
+							"name":      "read_file",
+							"arguments": `{"path":"README.md"}`,
+						},
+					},
+					"finish_reason": "function_call",
+				}},
+			})
+		},
+	}
+
+	h.ChatCompletions(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, w.Body.String(), `"model":"gpt-4.1"`)
+	require.Contains(t, w.Body.String(), `"reasoning_content":"plan"`)
+	require.Contains(t, w.Body.String(), `"tool_calls":[`)
+	require.Contains(t, w.Body.String(), `"finish_reason":"tool_calls"`)
+	require.NotContains(t, w.Body.String(), `"reasoningContent"`)
+	require.NotContains(t, w.Body.String(), `"function_call"`)
 }
 
 func TestCursorCompatHandlerChatCompletionsOpenAIErrorUsesNormalizedShape(t *testing.T) {
