@@ -6,6 +6,7 @@ import (
 
 	cursorcompat "github.com/Wei-Shaw/sub2api/internal/compat/cursor"
 	executorcompat "github.com/Wei-Shaw/sub2api/internal/compat/executor"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -18,6 +19,7 @@ func normalizeCursorRequestBodyBytes(c *gin.Context, fn func([]byte) ([]byte, er
 	if c == nil || c.Request == nil || fn == nil {
 		return nil, true
 	}
+	service.MarkCursorCompatRequest(c)
 	raw, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		cursorCompatTypedError(c, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")

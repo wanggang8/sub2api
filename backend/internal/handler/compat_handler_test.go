@@ -601,6 +601,24 @@ func TestCursorCompatHandlerChatCompletionsUsesOpenAIAction(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 }
 
+func TestCursorCompatHandlerChatCompletionsMarksOpenAIActionAsCursorCompat(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/cursor/v1/chat/completions", strings.NewReader(`{"model":"gpt-4.1","input":"hi"}`))
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{Group: &service.Group{Platform: service.PlatformOpenAI}})
+
+	marked := false
+	h := &CursorCompatHandler{openaiChatCompletionsAction: func(c *gin.Context) {
+		marked = service.IsCursorCompatRequest(c)
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	}}
+	h.ChatCompletions(c)
+
+	require.True(t, marked)
+	require.Equal(t, http.StatusOK, w.Code)
+}
+
 func TestCursorCompatHandlerChatCompletionsCapturesOpenAINonStreamResponse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()

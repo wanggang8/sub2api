@@ -522,7 +522,7 @@ func TestOpenAISelectAccountForModelWithExclusions_NoModelSupport(t *testing.T) 
 	if acc != nil {
 		t.Fatalf("expected nil account for unsupported model")
 	}
-	if !strings.Contains(err.Error(), "supporting model") {
+	if !strings.Contains(err.Error(), "no available OpenAI accounts") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

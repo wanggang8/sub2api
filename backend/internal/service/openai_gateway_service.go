@@ -3439,7 +3439,7 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 		}
 		body = finalResponse
 		// Correct tool calls in final response
-		body = s.correctToolCallsInResponseBody(body)
+		body = s.correctToolCallsInResponseBodyForContext(c, body)
 		if rewriteModel {
 			body = s.replaceModelInResponseBody(body, rewriteFrom, rewriteTo)
 		}
@@ -4066,10 +4066,12 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 			}
 
 			// Correct Codex tool calls if needed (apply_patch -> edit, etc.)
-			if correctedData, corrected := s.toolCorrector.CorrectToolCallsInSSEBytes(dataBytes); corrected {
-				dataBytes = correctedData
-				data = string(correctedData)
-				line = "data: " + data
+			if !shouldSkipCodexToolCorrection(c) {
+				if correctedData, corrected := s.toolCorrector.CorrectToolCallsInSSEBytes(dataBytes); corrected {
+					dataBytes = correctedData
+					data = string(correctedData)
+					line = "data: " + data
+				}
 			}
 
 			// 写入客户端（客户端断开后继续 drain 上游）
@@ -4270,6 +4272,13 @@ func (s *OpenAIGatewayService) correctToolCallsInResponseBody(body []byte) []byt
 	return body
 }
 
+func (s *OpenAIGatewayService) correctToolCallsInResponseBodyForContext(c *gin.Context, body []byte) []byte {
+	if shouldSkipCodexToolCorrection(c) {
+		return body
+	}
+	return s.correctToolCallsInResponseBody(body)
+}
+
 func (s *OpenAIGatewayService) parseSSEUsage(data string, usage *OpenAIUsage) {
 	s.parseSSEUsageBytes([]byte(data), usage)
 }
@@ -4409,7 +4418,7 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 			body = s.replaceModelInResponseBody(body, mappedModel, originalModel)
 		}
 		// Correct tool calls in final response
-		body = s.correctToolCallsInResponseBody(body)
+		body = s.correctToolCallsInResponseBodyForContext(c, body)
 	} else {
 		terminalType, terminalPayload, terminalOK := extractOpenAISSETerminalEvent(bodyText)
 		if terminalOK && terminalType == "response.failed" {
