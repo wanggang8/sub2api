@@ -357,6 +357,7 @@ export default {
     proxies: 'IP管理',
     redeemCodes: '兑换码',
     ops: '运维监控',
+    cursorDebug: 'Cursor 调试',
     promoCodes: '优惠码',
     settings: '系统设置',
     myAccount: '我的账户',
@@ -1289,6 +1290,15 @@ export default {
 
   // Admin
   admin: {
+    cursorDebug: {
+      title: 'Cursor 调试',
+      description: '查看 Cursor 兼容链路的请求、上游请求与响应快照',
+      subtitle: '查看 Cursor 请求快照并导出完整记录。',
+      enabled: '启用采集',
+      records: '记录',
+      empty: '暂无采集记录',
+      selectRecord: '选择一条记录查看详情'
+    },
     // Dashboard
     dashboard: {
       title: '管理控制台',

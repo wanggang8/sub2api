@@ -188,6 +188,39 @@ export interface OpsRequestDetail {
   stream?: boolean
 }
 
+export interface CursorDebugConfig {
+  enabled: boolean
+  max_records: number
+  max_body_bytes: number
+  retention_hours: number
+}
+
+export interface CursorDebugBody {
+  body: string
+  bytes: number
+  truncated: boolean
+}
+
+export interface CursorDebugRecord {
+  id: string
+  created_at: string
+  updated_at: string
+  method?: string
+  path?: string
+  model?: string
+  platform?: string
+  stream: boolean
+  request_id?: string
+  status_code?: number
+  raw_request_body: CursorDebugBody
+  normalized_request_body: CursorDebugBody
+  upstream_request_body: CursorDebugBody
+  raw_upstream_response_body: CursorDebugBody
+  final_response_body: CursorDebugBody
+}
+
+export type CursorDebugRecordListResponse = PaginatedResponse<CursorDebugRecord>
+
 export interface OpsRequestDetailsParams {
   time_range?: '5m' | '30m' | '1h' | '6h' | '24h'
   start_time?: string
@@ -1230,6 +1263,39 @@ export async function listRequestDetails(params: OpsRequestDetailsParams): Promi
   return data
 }
 
+export async function getCursorDebugConfig(): Promise<CursorDebugConfig> {
+  const { data } = await apiClient.get<CursorDebugConfig>('/admin/ops/cursor-debug/config')
+  return data
+}
+
+export async function updateCursorDebugConfig(config: Partial<CursorDebugConfig>): Promise<CursorDebugConfig> {
+  const { data } = await apiClient.put<CursorDebugConfig>('/admin/ops/cursor-debug/config', config)
+  return data
+}
+
+export async function listCursorDebugRecords(params: {
+  page?: number
+  page_size?: number
+} = {}): Promise<CursorDebugRecordListResponse> {
+  const { data } = await apiClient.get<CursorDebugRecordListResponse>('/admin/ops/cursor-debug/records', { params })
+  return data
+}
+
+export async function getCursorDebugRecord(id: string): Promise<CursorDebugRecord> {
+  const { data } = await apiClient.get<CursorDebugRecord>(`/admin/ops/cursor-debug/records/${encodeURIComponent(id)}`)
+  return data
+}
+
+export async function exportCursorDebugRecord(id: string): Promise<CursorDebugRecord> {
+  const { data } = await apiClient.get<CursorDebugRecord>(`/admin/ops/cursor-debug/records/${encodeURIComponent(id)}/export`)
+  return data
+}
+
+export async function clearCursorDebugRecords(): Promise<{ deleted: number }> {
+  const { data } = await apiClient.delete<{ deleted: number }>('/admin/ops/cursor-debug/records')
+  return data
+}
+
 // Alert rules
 export async function listAlertRules(): Promise<AlertRule[]> {
   const { data } = await apiClient.get<AlertRule[]>('/admin/ops/alert-rules')
@@ -1397,6 +1463,12 @@ export const opsAPI = {
   listRequestErrorUpstreamErrors,
 
   listRequestDetails,
+  getCursorDebugConfig,
+  updateCursorDebugConfig,
+  listCursorDebugRecords,
+  getCursorDebugRecord,
+  exportCursorDebugRecord,
+  clearCursorDebugRecords,
   listAlertRules,
   createAlertRule,
   updateAlertRule,

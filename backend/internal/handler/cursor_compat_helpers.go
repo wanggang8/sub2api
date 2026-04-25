@@ -18,28 +18,72 @@ func cursorCompatError(c *gin.Context, status int, message string) {
 }
 
 func cursorCompatTypedError(c *gin.Context, status int, errType, message string) {
-	c.AbortWithStatusJSON(status, gin.H{
+	payload := gin.H{
 		"type": "error",
 		"error": gin.H{
 			"type":    errType,
 			"message": message,
 		},
-	})
+	}
+	captureCursorDebugErrorPayload(c, status, payload)
+	c.AbortWithStatusJSON(status, payload)
 }
 
 // CursorErrorWriter emits Cursor/OpenAI-shaped compat errors for shared middleware.
 func CursorErrorWriter(c *gin.Context, status int, message string) {
-	c.JSON(status, gin.H{
+	payload := gin.H{
 		"error": gin.H{
 			"message": message,
 			"type":    "invalid_request_error",
 		},
-	})
+	}
+	captureCursorDebugErrorPayload(c, status, payload)
+	c.JSON(status, payload)
 }
 
 // CursorAuthErrorWriter emits Cursor auth errors while preserving compat shape.
 func CursorAuthErrorWriter(c *gin.Context, status int, code, message string) {
 	CursorErrorWriter(c, status, message)
+}
+
+func captureCursorDebugErrorPayload(c *gin.Context, status int, payload gin.H) {
+	if c == nil {
+		return
+	}
+	requestBody := ensureCursorDebugRecord(c)
+	updateCursorDebugRequestMetadata(c, requestBody, getCompatGroupPlatform(c))
+	if body, err := json.Marshal(payload); err == nil {
+		service.CaptureCursorDebugFinalError(c, status, body)
+	}
+}
+
+func ensureCursorDebugRecord(c *gin.Context) []byte {
+	if c == nil {
+		return nil
+	}
+	if _, ok := c.Get("cursor_debug_record_id"); ok {
+		body, _ := readCursorDebugRequestBody(c)
+		return body
+	}
+	body, ok := readCursorDebugRequestBody(c)
+	if !ok {
+		service.DefaultCursorDebugService().Begin(c, nil, nil)
+		return nil
+	}
+	service.DefaultCursorDebugService().Begin(c, body, body)
+	return body
+}
+
+func readCursorDebugRequestBody(c *gin.Context) ([]byte, bool) {
+	if c == nil || c.Request == nil || c.Request.Body == nil {
+		return nil, false
+	}
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		return nil, false
+	}
+	rewriteCursorCompatRequestBody(c, body)
+	return body, true
 }
 
 func rewriteCursorCompatRequestBody(c *gin.Context, body []byte) {

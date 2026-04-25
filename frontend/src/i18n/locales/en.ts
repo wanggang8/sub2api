@@ -357,6 +357,7 @@ export default {
     proxies: 'Proxies',
     redeemCodes: 'Redeem Codes',
     ops: 'Ops',
+    cursorDebug: 'Cursor Debug',
     promoCodes: 'Promo Codes',
     settings: 'Settings',
     myAccount: 'My Account',
@@ -1285,6 +1286,15 @@ export default {
 
   // Admin
   admin: {
+    cursorDebug: {
+      title: 'Cursor Debug',
+      description: 'Inspect Cursor compat request, upstream request, and response snapshots',
+      subtitle: 'Inspect Cursor request snapshots and export a complete capture.',
+      enabled: 'Capture enabled',
+      records: 'Records',
+      empty: 'No captures yet.',
+      selectRecord: 'Select a record to inspect.'
+    },
     // Dashboard
     dashboard: {
       title: 'Admin Dashboard',

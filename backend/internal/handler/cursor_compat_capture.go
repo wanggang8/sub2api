@@ -32,6 +32,7 @@ func normalizeCursorRequestBodyBytes(c *gin.Context, fn func([]byte) ([]byte, er
 		return nil, false
 	}
 	normalized = applyCursorCompatSession(c, normalized)
+	service.DefaultCursorDebugService().Begin(c, raw, normalized)
 	rewriteCursorCompatRequestBody(c, normalized)
 	return normalized, true
 }
@@ -60,4 +61,21 @@ func patchCursorChatResponseBody(body []byte, clientModel string) []byte {
 		return body
 	}
 	return patched
+}
+
+func updateCursorDebugRequestMetadata(c *gin.Context, body []byte, platform string) {
+	stream := cursorCompatRequestStreamFromBody(body)
+	service.DefaultCursorDebugService().Update(c, service.CursorDebugRecordPatch{
+		Model:    cursorCompatRequestModelFromBody(body),
+		Platform: platform,
+		Stream:   &stream,
+	})
+}
+
+func captureCursorDebugCompatResult(c *gin.Context, result *executorcompat.ExecuteResult, finalBody []byte) {
+	if result == nil {
+		return
+	}
+	service.CaptureCursorDebugUpstreamRequest(c)
+	service.CaptureCursorDebugResponse(c, result.Body, result.BodyTruncated, finalBody, false, result.StatusCode)
 }

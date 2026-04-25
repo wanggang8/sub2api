@@ -101,6 +101,87 @@ func TestCursorCompatHandlerMessagesRejectsOpenAIGroup(t *testing.T) {
 	require.JSONEq(t, `{"type":"error","error":{"type":"invalid_request_error","message":"Cursor messages only supports Anthropic-compatible groups"}}`, w.Body.String())
 }
 
+func TestCursorCompatHandlerCursorDebugCapturesLocalErrorFinalResponse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	debugSvc := service.NewCursorDebugService(service.CursorDebugConfig{
+		Enabled:        true,
+		MaxRecords:     10,
+		MaxBodyBytes:   4096,
+		RetentionHours: 1,
+	})
+	restore := service.SetDefaultCursorDebugServiceForTest(debugSvc)
+	defer restore()
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/cursor/v1/messages", strings.NewReader(`{"model":"gpt-4.1","messages":[{"role":"user","content":"hi"}]}`))
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{Group: &service.Group{Platform: service.PlatformOpenAI}})
+
+	NewCursorCompatHandler(nil, nil).Messages(c)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	list := debugSvc.List(1, 10)
+	require.Equal(t, 1, list.Total)
+	record := list.Items[0]
+	require.Equal(t, http.StatusBadRequest, record.StatusCode)
+	require.Equal(t, "gpt-4.1", record.Model)
+	require.Equal(t, service.PlatformOpenAI, record.Platform)
+	require.False(t, record.Stream)
+	require.Contains(t, record.FinalResponse.Body, "Cursor messages only supports Anthropic-compatible groups")
+}
+
+func TestCursorErrorWriterCapturesCursorDebugRecord(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	debugSvc := service.NewCursorDebugService(service.CursorDebugConfig{
+		Enabled:        true,
+		MaxRecords:     10,
+		MaxBodyBytes:   4096,
+		RetentionHours: 1,
+	})
+	restore := service.SetDefaultCursorDebugServiceForTest(debugSvc)
+	defer restore()
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/cursor/v1/chat/completions", strings.NewReader(`{"model":"gpt-4.1","stream":true}`))
+
+	CursorErrorWriter(c, http.StatusForbidden, "group required")
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	list := debugSvc.List(1, 10)
+	require.Equal(t, 1, list.Total)
+	record := list.Items[0]
+	require.Equal(t, "gpt-4.1", record.Model)
+	require.True(t, record.Stream)
+	require.Contains(t, record.FinalResponse.Body, "group required")
+}
+
+func TestCursorAuthErrorWriterCapturesCursorDebugRecord(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	debugSvc := service.NewCursorDebugService(service.CursorDebugConfig{
+		Enabled:        true,
+		MaxRecords:     10,
+		MaxBodyBytes:   4096,
+		RetentionHours: 1,
+	})
+	restore := service.SetDefaultCursorDebugServiceForTest(debugSvc)
+	defer restore()
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/cursor/v1/responses", strings.NewReader(`{"model":"gpt-4.1-mini","stream":false}`))
+
+	CursorAuthErrorWriter(c, http.StatusUnauthorized, "INVALID_API_KEY", "Invalid API key")
+
+	require.Equal(t, http.StatusUnauthorized, w.Code)
+	list := debugSvc.List(1, 10)
+	require.Equal(t, 1, list.Total)
+	record := list.Items[0]
+	require.Equal(t, "gpt-4.1-mini", record.Model)
+	require.False(t, record.Stream)
+	require.Contains(t, record.FinalResponse.Body, "Invalid API key")
+}
+
 func TestCursorCompatHandlerCountTokensRejectsOpenAIGroup(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
@@ -148,6 +229,50 @@ func TestCursorCompatHandlerChatCompletionsUsesOpenAIGatewayForOpenAIGroup(t *te
 	require.True(t, openAICalled)
 	require.False(t, anthropicCalled)
 	require.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestCursorCompatHandlerChatCompletionsCapturesCursorDebugRecord(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	debugSvc := service.NewCursorDebugService(service.CursorDebugConfig{
+		Enabled:        true,
+		MaxRecords:     10,
+		MaxBodyBytes:   4096,
+		RetentionHours: 1,
+	})
+	restore := service.SetDefaultCursorDebugServiceForTest(debugSvc)
+	defer restore()
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/cursor/v1/chat/completions", strings.NewReader(`{"model":"gpt-4.1","messages":[{"role":"user","content":"hi"}]}`))
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{Group: &service.Group{Platform: service.PlatformOpenAI}})
+
+	h := &CursorCompatHandler{
+		openaiChatCompletionsAction: func(c *gin.Context) {
+			c.Set(service.OpsUpstreamRequestBodyKey, []byte(`{"model":"upstream","tools":[{"type":"function","function":{"name":"ApplyPatch"}}]}`))
+			c.JSON(http.StatusOK, gin.H{
+				"id":      "chatcmpl-debug",
+				"object":  "chat.completion",
+				"model":   "upstream",
+				"choices": []gin.H{{"index": 0, "message": gin.H{"role": "assistant", "content": "ok"}, "finish_reason": "stop"}},
+			})
+		},
+	}
+	h.ChatCompletions(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	list := debugSvc.List(1, 10)
+	require.Equal(t, 1, list.Total)
+	record := list.Items[0]
+	require.Equal(t, "/cursor/v1/chat/completions", record.Path)
+	require.Equal(t, "gpt-4.1", record.Model)
+	require.Equal(t, service.PlatformOpenAI, record.Platform)
+	require.False(t, record.Stream)
+	require.Contains(t, record.RawRequest.Body, `"content":"hi"`)
+	require.Contains(t, record.Normalized.Body, `"messages"`)
+	require.Contains(t, record.UpstreamRequest.Body, `"ApplyPatch"`)
+	require.Contains(t, record.RawResponse.Body, `"model":"upstream"`)
+	require.Contains(t, record.FinalResponse.Body, `"model":"gpt-4.1"`)
 }
 
 func TestCursorCompatHandlerChatCompletionsUsesAnthropicGatewayForAnthropicGroup(t *testing.T) {
@@ -462,6 +587,27 @@ func TestCursorCompatHandlerMessagesStreamPatchesThinkingEvents(t *testing.T) {
 	require.Contains(t, w.Body.String(), `"index":1`)
 }
 
+func TestCursorCompatHandlerMessagesStreamFlushDoesNotFinalizeMidStream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/cursor/v1/messages", strings.NewReader(`{"model":"claude-sonnet","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{Group: &service.Group{Platform: service.PlatformAnthropic}})
+
+	h := &CursorCompatHandler{messagesAction: func(c *gin.Context) {
+		c.Header("Content-Type", "text/event-stream")
+		_, _ = c.Writer.Write([]byte("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"\",\"reasoning_content\":\"a\"}}\n\n"))
+		c.Writer.Flush()
+		_, _ = c.Writer.Write([]byte("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\",\"reasoning_content\":\"b\"}}\n\n"))
+	}}
+	h.Messages(c)
+
+	body := w.Body.String()
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"thinking":"ab"`)
+	require.Contains(t, body, `"text":"hello"`)
+}
+
 func TestCursorCompatHandlerResponsesStreamPatchesCreatedAndCompleted(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
@@ -586,6 +732,27 @@ func TestCursorCompatHandlerResponsesStreamFlushFinalizesPendingEvents(t *testin
 	require.Contains(t, body, `event: response.output_text.done`)
 }
 
+func TestCursorCompatHandlerResponsesStreamFlushDoesNotFinalizeMidStream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/cursor/v1/responses", strings.NewReader(`{"model":"gpt-4.1","stream":true,"input":"hi"}`))
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{Group: &service.Group{Platform: service.PlatformOpenAI}})
+
+	h := &CursorCompatHandler{openaiResponsesAction: func(c *gin.Context) {
+		c.Header("Content-Type", "text/event-stream")
+		_, _ = c.Writer.Write([]byte("event: response.reasoning_summary_text.delta\ndata: {\"delta\":\"a\",\"output_index\":0,\"summary_index\":0}\n\n"))
+		c.Writer.Flush()
+		_, _ = c.Writer.Write([]byte("event: response.reasoning_summary_text.delta\ndata: {\"delta\":\"b\",\"output_index\":0,\"summary_index\":0}\n\n"))
+	}}
+	h.Responses(c)
+
+	body := w.Body.String()
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Less(t, strings.Index(body, `"delta":"b"`), strings.Index(body, `event: response.reasoning_summary_text.done`))
+	require.Contains(t, body, `"text":"ab"`)
+}
+
 func TestCursorCompatHandlerChatCompletionsUsesOpenAIAction(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
@@ -621,12 +788,22 @@ func TestCursorCompatHandlerChatCompletionsMarksOpenAIActionAsCursorCompat(t *te
 
 func TestCursorCompatHandlerChatCompletionsStreamPatchesThinkTagsAndToolBoundaries(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	debugSvc := service.NewCursorDebugService(service.CursorDebugConfig{
+		Enabled:        true,
+		MaxRecords:     10,
+		MaxBodyBytes:   4096,
+		RetentionHours: 1,
+	})
+	restore := service.SetDefaultCursorDebugServiceForTest(debugSvc)
+	defer restore()
+
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/cursor/v1/chat/completions", strings.NewReader(`{"model":"gpt-4.1","stream":true,"input":"hi"}`))
 	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{Group: &service.Group{Platform: service.PlatformOpenAI}})
 
 	h := &CursorCompatHandler{openaiChatCompletionsAction: func(c *gin.Context) {
+		c.Set(service.OpsUpstreamRequestBodyKey, []byte(`{"model":"upstream","stream":true}`))
 		c.Header("Content-Type", "text/event-stream")
 		_, _ = c.Writer.Write([]byte(`data: {"id":"cmpl_1","object":"chat.completion.chunk","model":"upstream","choices":[{"index":0,"delta":{"content":"<think>reason"},"finish_reason":null}]}` + "\n\n"))
 		_, _ = c.Writer.Write([]byte(`data: {"id":"cmpl_1","object":"chat.completion.chunk","model":"upstream","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{}"}}]},"finish_reason":null}]}` + "\n\n"))
@@ -641,6 +818,38 @@ func TestCursorCompatHandlerChatCompletionsStreamPatchesThinkTagsAndToolBoundari
 	require.Contains(t, body, `"\n\u003c/think\u003e\n\n"`)
 	require.Contains(t, body, `"tool_calls":[`)
 	require.Contains(t, body, `data: [DONE]`)
+
+	list := debugSvc.List(1, 10)
+	require.Equal(t, 1, list.Total)
+	record := list.Items[0]
+	require.True(t, record.Stream)
+	require.Contains(t, record.UpstreamRequest.Body, `"stream":true`)
+	require.Contains(t, record.RawResponse.Body, `<think>reason`)
+	require.Contains(t, record.FinalResponse.Body, `"reasoning_content":"reason"`)
+}
+
+func TestCursorCompatHandlerChatCompletionsStreamFlushDoesNotFinalizeMidStream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/cursor/v1/chat/completions", strings.NewReader(`{"model":"gpt-4.1","stream":true,"input":"hi"}`))
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{Group: &service.Group{Platform: service.PlatformOpenAI}})
+
+	h := &CursorCompatHandler{openaiChatCompletionsAction: func(c *gin.Context) {
+		c.Header("Content-Type", "text/event-stream")
+		_, _ = c.Writer.Write([]byte(`data: {"id":"cmpl_1","object":"chat.completion.chunk","model":"upstream","choices":[{"index":0,"delta":{"content":"<think>a"},"finish_reason":null}]}` + "\n\n"))
+		c.Writer.Flush()
+		_, _ = c.Writer.Write([]byte(`data: {"id":"cmpl_1","object":"chat.completion.chunk","model":"upstream","choices":[{"index":0,"delta":{"content":"b</think>\nhello"},"finish_reason":null}]}` + "\n\n"))
+		_, _ = c.Writer.Write([]byte("data: [DONE]\n\n"))
+	}}
+	h.ChatCompletions(c)
+
+	body := w.Body.String()
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"reasoning_content":"a"`)
+	require.Contains(t, body, `"reasoning_content":"b"`)
+	require.Contains(t, body, `"content":"hello"`)
+	require.NotContains(t, body, `b\u003c/think`)
 }
 
 func TestCursorCompatHandlerChatCompletionsCapturesOpenAINonStreamResponse(t *testing.T) {

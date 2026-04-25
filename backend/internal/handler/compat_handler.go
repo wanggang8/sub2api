@@ -60,14 +60,18 @@ func (h *CursorCompatHandler) Responses(c *gin.Context) {
 	if getCompatGroupPlatform(c) == service.PlatformOpenAI {
 		action = h.openaiResponsesAction
 	}
+	updateCursorDebugRequestMetadata(c, body, getCompatGroupPlatform(c))
 	if action == nil {
 		cursorCompatError(c, http.StatusBadGateway, "Compat gateway is unavailable")
 		return
 	}
 	if stream {
-		writer := newCursorResponsesStreamWriter(c.Writer, requestModel)
+		writer := newCursorResponsesStreamWriter(c.Writer, requestModel, c)
 		c.Writer = writer
 		action(c)
+		writer.Finalize()
+		service.CaptureCursorDebugUpstreamRequest(c)
+		service.DefaultCursorDebugService().Update(c, service.CursorDebugRecordPatch{StatusCode: c.Writer.Status()})
 		return
 	}
 	result, err := h.compatFacade().ExecuteMessages(c, body, action)
@@ -80,6 +84,7 @@ func (h *CursorCompatHandler) Responses(c *gin.Context) {
 		return
 	}
 	if result.StatusCode >= http.StatusBadRequest {
+		captureCursorDebugCompatResult(c, result, result.Body)
 		status, message := normalizeCursorCompatError(result)
 		cursorCompatError(c, status, message)
 		return
@@ -88,6 +93,7 @@ func (h *CursorCompatHandler) Responses(c *gin.Context) {
 	if getCompatGroupPlatform(c) == service.PlatformOpenAI {
 		body = rewriteCursorCompatResponsesModel(body, requestModel)
 	}
+	captureCursorDebugCompatResult(c, result, body)
 	writeCursorCompatCapturedResponse(c, result, body)
 }
 
@@ -98,15 +104,19 @@ func (h *CursorCompatHandler) ChatCompletions(c *gin.Context) {
 	}
 	platform := getCompatGroupPlatform(c)
 	stream := cursorCompatRequestStreamFromBody(body)
+	updateCursorDebugRequestMetadata(c, body, platform)
 	if platform == service.PlatformOpenAI {
 		if h == nil || h.openaiChatCompletionsAction == nil {
 			cursorCompatError(c, http.StatusBadGateway, "Compat gateway is unavailable")
 			return
 		}
 		if stream {
-			writer := newCursorChatStreamWriter(c.Writer, cursorCompatRequestModelFromBody(body))
+			writer := newCursorChatStreamWriter(c.Writer, cursorCompatRequestModelFromBody(body), c)
 			c.Writer = writer
 			h.openaiChatCompletionsAction(c)
+			writer.Finalize()
+			service.CaptureCursorDebugUpstreamRequest(c)
+			service.DefaultCursorDebugService().Update(c, service.CursorDebugRecordPatch{StatusCode: c.Writer.Status()})
 			return
 		}
 		result, err := h.compatFacade().ExecuteMessages(c, body, h.openaiChatCompletionsAction)
@@ -119,11 +129,14 @@ func (h *CursorCompatHandler) ChatCompletions(c *gin.Context) {
 			return
 		}
 		if result.StatusCode >= http.StatusBadRequest {
+			captureCursorDebugCompatResult(c, result, result.Body)
 			status, message := normalizeCursorCompatError(result)
 			cursorCompatError(c, status, message)
 			return
 		}
-		writeCursorCompatCapturedResponse(c, result, patchCursorChatResponseBody(result.Body, cursorCompatRequestModelFromBody(body)))
+		finalBody := patchCursorChatResponseBody(result.Body, cursorCompatRequestModelFromBody(body))
+		captureCursorDebugCompatResult(c, result, finalBody)
+		writeCursorCompatCapturedResponse(c, result, finalBody)
 		return
 	}
 	if h == nil || h.chatCompletionsAction == nil {
@@ -131,9 +144,12 @@ func (h *CursorCompatHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 	if stream {
-		writer := newCursorChatStreamWriter(c.Writer, cursorCompatRequestModelFromBody(body))
+		writer := newCursorChatStreamWriter(c.Writer, cursorCompatRequestModelFromBody(body), c)
 		c.Writer = writer
 		h.chatCompletionsAction(c)
+		writer.Finalize()
+		service.CaptureCursorDebugUpstreamRequest(c)
+		service.DefaultCursorDebugService().Update(c, service.CursorDebugRecordPatch{StatusCode: c.Writer.Status()})
 		return
 	}
 	result, err := h.compatFacade().ExecuteMessages(c, body, h.chatCompletionsAction)
@@ -146,10 +162,13 @@ func (h *CursorCompatHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 	if result.StatusCode >= http.StatusBadRequest {
+		captureCursorDebugCompatResult(c, result, result.Body)
 		writeCursorCompatAnthropicError(c, result)
 		return
 	}
-	writeCursorCompatCapturedResponse(c, result, patchCursorChatResponseBody(result.Body, cursorCompatRequestModelFromBody(body)))
+	finalBody := patchCursorChatResponseBody(result.Body, cursorCompatRequestModelFromBody(body))
+	captureCursorDebugCompatResult(c, result, finalBody)
+	writeCursorCompatCapturedResponse(c, result, finalBody)
 }
 
 func (h *CursorCompatHandler) Messages(c *gin.Context) {
@@ -157,6 +176,7 @@ func (h *CursorCompatHandler) Messages(c *gin.Context) {
 	if !ok {
 		return
 	}
+	updateCursorDebugRequestMetadata(c, body, getCompatGroupPlatform(c))
 	// OpenAI-compatible Cursor messages is intentionally left out for now.
 	// Non-messages Cursor OpenAI requests already reuse the OpenAI gateway
 	// capability selection path, while this endpoint remains Anthropic-only.
@@ -169,10 +189,12 @@ func (h *CursorCompatHandler) Messages(c *gin.Context) {
 		return
 	}
 	if cursorCompatRequestStreamFromBody(body) {
-		writer := newCursorMessagesStreamWriter(c.Writer)
+		writer := newCursorMessagesStreamWriter(c.Writer, c)
 		c.Writer = writer
 		h.messagesAction(c)
-		writer.Flush()
+		writer.Finalize()
+		service.CaptureCursorDebugUpstreamRequest(c)
+		service.DefaultCursorDebugService().Update(c, service.CursorDebugRecordPatch{StatusCode: c.Writer.Status()})
 		return
 	}
 	result, err := h.compatFacade().ExecuteMessages(c, body, h.messagesAction)
@@ -185,10 +207,12 @@ func (h *CursorCompatHandler) Messages(c *gin.Context) {
 		return
 	}
 	if result.StatusCode >= http.StatusBadRequest {
+		captureCursorDebugCompatResult(c, result, result.Body)
 		writeCursorCompatAnthropicError(c, result)
 		return
 	}
 	body = patchCursorMessagesResponseBody(result.Body)
+	captureCursorDebugCompatResult(c, result, body)
 	writeCursorCompatCapturedResponse(c, result, body)
 }
 

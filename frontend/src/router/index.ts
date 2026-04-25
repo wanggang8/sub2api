@@ -359,6 +359,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/cursor-debug',
+    name: 'AdminCursorDebug',
+    component: () => import('@/views/admin/CursorDebugView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Cursor Debug',
+      titleKey: 'admin.cursorDebug.title',
+      descriptionKey: 'admin.cursorDebug.description'
+    }
+  },
+  {
     path: '/admin/users',
     name: 'AdminUsers',
     component: () => import('@/views/admin/UsersView.vue'),
