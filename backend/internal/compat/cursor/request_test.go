@@ -177,7 +177,8 @@ func TestNormalizeChatCompletionsRequestBodyPreservesCursorEditingToolsForInputA
 		"input": [{"role": "user", "content": "update files"}],
 		"tools": [
 			{"type": "function", "function": {"name": "Read", "parameters": {"type": "object"}}},
-			{"type": "function", "function": {"name": "ApplyPatch", "parameters": {"type": "object"}}}
+			{"type": "function", "function": {"name": "ApplyPatch", "parameters": {"type": "object"}}},
+			{"type": "custom", "name": "apply_patch", "description": "Patch files", "input_schema": {"type": "object"}}
 		]
 	}`)
 
@@ -197,6 +198,7 @@ func TestNormalizeChatCompletionsRequestBodyPreservesCursorEditingToolsForInputA
 
 	require.True(t, names["Read"])
 	require.True(t, names["ApplyPatch"])
+	require.True(t, names["apply_patch"])
 	require.False(t, names["Write"])
 	require.False(t, names["StrReplace"])
 }

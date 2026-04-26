@@ -105,11 +105,6 @@ func normalizeResponsesShapeToolsToChatTools(raw json.RawMessage) (json.RawMessa
 	normalizedTools := make([]any, 0, len(probe))
 	changed := false
 	for _, rawTool := range probe {
-		toolType, _ := rawTool["type"].(string)
-		if toolType != "" && toolType != "function" {
-			normalizedTools = append(normalizedTools, rawTool)
-			continue
-		}
 		if rawFn, ok := rawTool["function"]; ok {
 			fnJSON, err := json.Marshal(rawFn)
 			if err != nil {
