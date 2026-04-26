@@ -97,6 +97,7 @@ func convertLegacyChatFunctionCall(message map[string]any, choice map[string]any
 	}
 	functionData := message["tool_calls"].([]any)[0].(map[string]any)["function"].(map[string]any)
 	normalizeCursorFunctionArguments(functionData)
+	unwrapCursorApplyPatchFunctionArguments(functionData)
 	delete(message, "function_call")
 	rewriteChatFinishReason(choice)
 }
@@ -133,6 +134,7 @@ func fixChatToolCalls(message map[string]any, choice map[string]any) {
 			functionData["arguments"] = "{}"
 		}
 		normalizeCursorFunctionArguments(functionData)
+		unwrapCursorApplyPatchFunctionArguments(functionData)
 	}
 	if strings.TrimSpace(messagesStringValue(choice["finish_reason"])) != "tool_calls" {
 		choice["finish_reason"] = "tool_calls"
