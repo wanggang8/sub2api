@@ -125,6 +125,26 @@ func NormalizeChatCompletionsRequestBody(raw []byte) ([]byte, error) {
 	return stripResponsesOnlyChatFields(normalized)
 }
 
+// NormalizeOpenAIChatCompletionsRequestBody preserves Responses-shaped Cursor
+// requests for the OpenAI/Codex path so custom tools keep their native schema.
+func NormalizeOpenAIChatCompletionsRequestBody(raw []byte) ([]byte, error) {
+	if len(raw) == 0 {
+		return raw, nil
+	}
+
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, err
+	}
+	if _, ok := payload["messages"]; ok {
+		return normalizeCursorChatCompletionsBody(raw)
+	}
+	if _, ok := payload["input"]; !ok {
+		return raw, nil
+	}
+	return NormalizeResponsesRequestBody(raw)
+}
+
 func normalizeCursorChatCompletionsBody(raw []byte) ([]byte, error) {
 	payload, ok := decodeCursorJSONObject(raw)
 	if !ok {

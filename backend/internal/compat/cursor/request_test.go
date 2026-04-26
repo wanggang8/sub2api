@@ -203,6 +203,45 @@ func TestNormalizeChatCompletionsRequestBodyPreservesCursorEditingToolsForInputA
 	require.False(t, names["StrReplace"])
 }
 
+func TestNormalizeOpenAIChatCompletionsRequestBodyPreservesResponsesShapeCustomTools(t *testing.T) {
+	raw := []byte(`{
+		"model": "gpt-5.5",
+		"input": [{"role": "user", "content": "update files"}],
+		"tools": [
+			{
+				"type": "custom",
+				"name": "ApplyPatch",
+				"description": "Patch files",
+				"format": {
+					"type": "grammar",
+					"syntax": "lark",
+					"definition": "start: begin_patch hunk end_patch"
+				}
+			}
+		]
+	}`)
+
+	normalized, err := NormalizeOpenAIChatCompletionsRequestBody(raw)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(normalized, &payload))
+	_, hasMessages := payload["messages"]
+	require.False(t, hasMessages)
+	input, ok := payload["input"].([]any)
+	require.True(t, ok)
+	require.Len(t, input, 1)
+	tools := payload["tools"].([]any)
+	require.Len(t, tools, 1)
+	tool := tools[0].(map[string]any)
+	require.Equal(t, "custom", tool["type"])
+	require.Equal(t, "ApplyPatch", tool["name"])
+	format := tool["format"].(map[string]any)
+	require.Equal(t, "grammar", format["type"])
+	require.Equal(t, "lark", format["syntax"])
+	require.Contains(t, format["definition"], "begin_patch")
+}
+
 func TestNormalizeChatCompletionsRequestBodyNormalizesTopLevelSystemAndAnthropicToolBlocks(t *testing.T) {
 	raw := []byte(`{
 		"model": "gpt-5.4",

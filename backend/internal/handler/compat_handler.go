@@ -98,11 +98,15 @@ func (h *CursorCompatHandler) Responses(c *gin.Context) {
 }
 
 func (h *CursorCompatHandler) ChatCompletions(c *gin.Context) {
-	body, ok := normalizeCursorRequestBodyBytes(c, cursorcompat.NormalizeChatCompletionsRequestBody)
+	platform := getCompatGroupPlatform(c)
+	normalize := cursorcompat.NormalizeChatCompletionsRequestBody
+	if platform == service.PlatformOpenAI {
+		normalize = cursorcompat.NormalizeOpenAIChatCompletionsRequestBody
+	}
+	body, ok := normalizeCursorRequestBodyBytes(c, normalize)
 	if !ok {
 		return
 	}
-	platform := getCompatGroupPlatform(c)
 	stream := cursorCompatRequestStreamFromBody(body)
 	updateCursorDebugRequestMetadata(c, body, platform)
 	if platform == service.PlatformOpenAI {

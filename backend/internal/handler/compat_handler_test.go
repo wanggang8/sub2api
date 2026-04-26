@@ -457,6 +457,129 @@ func TestCursorCompatHandlerChatCompletionsOpenAIResponsesBridgeInjectsInstructi
 	require.Equal(t, "cursor-handler-template", gjson.GetBytes(upstream.lastBody, "instructions").String())
 }
 
+func TestCursorCompatHandlerChatCompletionsOpenAIResponsesBridgePreservesCustomToolFormat(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	groupID := int64(11)
+	apiKey := &service.APIKey{
+		ID:      101,
+		GroupID: &groupID,
+		Group: &service.Group{
+			ID:                 groupID,
+			Platform:           service.PlatformOpenAI,
+			DefaultMappedModel: "gpt-5.5",
+		},
+		User: &service.User{
+			ID:      7,
+			Status:  service.StatusActive,
+			Balance: 100,
+		},
+	}
+
+	account := service.Account{
+		ID:          301,
+		Name:        "openai-apikey",
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeAPIKey,
+		Status:      service.StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key": "api-key",
+		},
+	}
+
+	upstreamBody := strings.Join([]string{
+		`data: {"type":"response.completed","response":{"id":"resp_1","object":"response","model":"gpt-5.5","status":"completed","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	upstream := &cursorCompatOpenAIHTTPUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_handler_cursor_chat_custom"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+
+	cfg := &config.Config{RunMode: config.RunModeSimple}
+	billingCacheService := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg)
+	defer billingCacheService.Stop()
+
+	gatewayService := service.NewOpenAIGatewayService(
+		cursorCompatOpenAIAccountRepoStub{accounts: []service.Account{account}},
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		cursorCompatGatewayCacheStub{},
+		cfg,
+		nil,
+		nil,
+		service.NewBillingService(cfg, nil),
+		nil,
+		billingCacheService,
+		upstream,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+
+	openAIHandler := &OpenAIGatewayHandler{
+		gatewayService:      gatewayService,
+		billingCacheService: billingCacheService,
+		apiKeyService:       &service.APIKeyService{},
+		concurrencyHelper: NewConcurrencyHelper(service.NewConcurrencyService(&concurrencyCacheMock{
+			acquireUserSlotFn: func(ctx context.Context, userID int64, maxConcurrency int, requestID string) (bool, error) {
+				return true, nil
+			},
+			acquireAccountSlotFn: func(ctx context.Context, accountID int64, maxConcurrency int, requestID string) (bool, error) {
+				return true, nil
+			},
+		}), SSEPingFormatNone, time.Second),
+		maxAccountSwitches: 1,
+		cfg:                cfg,
+	}
+
+	h := &CursorCompatHandler{
+		openaiGateway:               openAIHandler,
+		openaiChatCompletionsAction: openAIHandler.ChatCompletions,
+	}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{
+		"model":"gpt-5.5",
+		"input":[{"role":"user","content":"update files"}],
+		"tools":[
+			{
+				"type":"custom",
+				"name":"ApplyPatch",
+				"description":"Patch files",
+				"format":{"type":"grammar","syntax":"lark","definition":"start: begin_patch hunk end_patch"}
+			}
+		],
+		"stream":false
+	}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/cursor/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set(string(middleware2.ContextKeyAPIKey), apiKey)
+	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: apiKey.User.ID, Concurrency: 5})
+
+	h.ChatCompletions(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "/v1/responses", upstream.lastReq.URL.Path)
+	require.Equal(t, "custom", gjson.GetBytes(upstream.lastBody, "tools.0.type").String())
+	require.Equal(t, "ApplyPatch", gjson.GetBytes(upstream.lastBody, "tools.0.name").String())
+	require.Equal(t, "grammar", gjson.GetBytes(upstream.lastBody, "tools.0.format.type").String())
+	require.Equal(t, "lark", gjson.GetBytes(upstream.lastBody, "tools.0.format.syntax").String())
+	require.Contains(t, gjson.GetBytes(upstream.lastBody, "tools.0.format.definition").String(), "begin_patch")
+	require.False(t, gjson.GetBytes(upstream.lastBody, "tools.0.parameters").Exists())
+}
+
 func TestCursorCompatHandlerResponsesRejectsCapturedBodyOverLimit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
@@ -486,6 +609,47 @@ func TestNormalizeCursorRequestBodyRewritesResponsesInput(t *testing.T) {
 	body, err := io.ReadAll(c.Request.Body)
 	require.NoError(t, err)
 	require.JSONEq(t, `{"model":"gpt-4.1","messages":[{"role":"system","content":"sys"},{"role":"user","content":"hi"}],"max_completion_tokens":64,"reasoning_effort":"high","tools":[{"type":"function","function":{"name":"lookup","description":"d","parameters":{"type":"object"}}},{"type":"function","function":{"name":"ApplyPatch","parameters":{"type":"object"}}}],"tool_choice":{"type":"function","function":{"name":"lookup"}}}`, string(body))
+}
+
+func TestCursorCompatHandlerOpenAIChatCompletionsPreservesResponsesShapeCustomTools(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/cursor/v1/chat/completions", strings.NewReader(`{
+		"model":"gpt-5.5",
+		"input":[{"role":"user","content":"update files"}],
+		"tools":[
+			{
+				"type":"custom",
+				"name":"ApplyPatch",
+				"description":"Patch files",
+				"format":{"type":"grammar","syntax":"lark","definition":"start: begin_patch hunk end_patch"}
+			}
+		]
+	}`))
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{Group: &service.Group{Platform: service.PlatformOpenAI}})
+
+	var forwarded []byte
+	h := &CursorCompatHandler{
+		openaiChatCompletionsAction: func(c *gin.Context) {
+			body, err := io.ReadAll(c.Request.Body)
+			require.NoError(t, err)
+			forwarded = body
+			c.Header("Content-Type", "application/json")
+			c.String(http.StatusOK, `{"id":"chatcmpl-test","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
+		},
+	}
+
+	h.ChatCompletions(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.NotEmpty(t, forwarded)
+	require.True(t, gjson.GetBytes(forwarded, "input").Exists())
+	require.False(t, gjson.GetBytes(forwarded, "messages").Exists())
+	require.Equal(t, "custom", gjson.GetBytes(forwarded, "tools.0.type").String())
+	require.Equal(t, "ApplyPatch", gjson.GetBytes(forwarded, "tools.0.name").String())
+	require.Equal(t, "grammar", gjson.GetBytes(forwarded, "tools.0.format.type").String())
+	require.Equal(t, "lark", gjson.GetBytes(forwarded, "tools.0.format.syntax").String())
 }
 
 func TestNormalizeCursorRequestBodyRepairsMessagesToolUseInput(t *testing.T) {
@@ -864,7 +1028,8 @@ func TestCursorCompatHandlerChatCompletionsCapturesOpenAINonStreamResponse(t *te
 		called = true
 		body, err := io.ReadAll(c.Request.Body)
 		require.NoError(t, err)
-		require.Contains(t, string(body), `"messages"`)
+		require.Contains(t, string(body), `"input"`)
+		require.NotContains(t, string(body), `"messages"`)
 		c.Header("Content-Type", "application/json")
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	}}
