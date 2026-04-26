@@ -178,10 +178,77 @@ func sanitizeCursorOpenAIResponsesPassthroughBody(body []byte) ([]byte, error) {
 		delete(payload, field)
 		changed = true
 	}
+	if bridgeCursorApplyPatchToolForOpenAIResponses(payload) {
+		changed = true
+	}
 	if !changed {
 		return body, nil
 	}
 	return json.Marshal(payload)
+}
+
+func bridgeCursorApplyPatchToolForOpenAIResponses(payload map[string]any) bool {
+	rawTools, ok := payload["tools"].([]any)
+	if !ok || len(rawTools) == 0 {
+		return false
+	}
+
+	changed := false
+	tools := make([]any, len(rawTools))
+	copy(tools, rawTools)
+	for i, rawTool := range rawTools {
+		tool, ok := rawTool.(map[string]any)
+		if !ok || strings.TrimSpace(fmt.Sprint(tool["type"])) != "custom" || strings.TrimSpace(fmt.Sprint(tool["name"])) != "ApplyPatch" {
+			continue
+		}
+		tools[i] = cursorApplyPatchCustomToolToFunction(tool)
+		changed = true
+	}
+	if changed {
+		payload["tools"] = tools
+	}
+	return changed
+}
+
+func cursorApplyPatchCustomToolToFunction(tool map[string]any) map[string]any {
+	converted := map[string]any{
+		"type":        "function",
+		"name":        "ApplyPatch",
+		"description": cursorApplyPatchFunctionDescription(tool),
+		"parameters": map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"patch": map[string]any{
+					"type":        "string",
+					"description": "Full apply_patch grammar payload. It must start with *** Begin Patch and end with *** End Patch.",
+				},
+			},
+			"required": []any{"patch"},
+		},
+	}
+	if strict, ok := tool["strict"]; ok {
+		converted["strict"] = strict
+	}
+	return converted
+}
+
+func cursorApplyPatchFunctionDescription(tool map[string]any) string {
+	parts := make([]string, 0, 3)
+	if description := strings.TrimSpace(fmt.Sprint(tool["description"])); description != "" && description != "<nil>" {
+		parts = append(parts, description)
+	}
+	if format, ok := tool["format"].(map[string]any); ok {
+		syntax := strings.TrimSpace(fmt.Sprint(format["syntax"]))
+		definition := strings.TrimSpace(fmt.Sprint(format["definition"]))
+		if syntax != "" && syntax != "<nil>" && definition != "" && definition != "<nil>" {
+			parts = append(parts, "The patch parameter must follow this "+syntax+" grammar:\n"+definition)
+		}
+	}
+	if len(parts) == 0 {
+		return "Apply a single-file patch. The patch parameter must contain the full patch text."
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 func normalizeCursorChatCompletionsBody(raw []byte) ([]byte, error) {

@@ -457,7 +457,7 @@ func TestCursorCompatHandlerChatCompletionsOpenAIResponsesBridgeInjectsInstructi
 	require.Equal(t, "cursor-handler-template", gjson.GetBytes(upstream.lastBody, "instructions").String())
 }
 
-func TestCursorCompatHandlerChatCompletionsOpenAIResponsesBridgePreservesCustomToolFormat(t *testing.T) {
+func TestCursorCompatHandlerChatCompletionsOpenAIResponsesBridgeConvertsApplyPatchToFunction(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	groupID := int64(11)
@@ -573,12 +573,13 @@ func TestCursorCompatHandlerChatCompletionsOpenAIResponsesBridgePreservesCustomT
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "/v1/responses", upstream.lastReq.URL.Path)
-	require.Equal(t, "custom", gjson.GetBytes(upstream.lastBody, "tools.0.type").String())
+	require.Equal(t, "function", gjson.GetBytes(upstream.lastBody, "tools.0.type").String())
 	require.Equal(t, "ApplyPatch", gjson.GetBytes(upstream.lastBody, "tools.0.name").String())
-	require.Equal(t, "grammar", gjson.GetBytes(upstream.lastBody, "tools.0.format.type").String())
-	require.Equal(t, "lark", gjson.GetBytes(upstream.lastBody, "tools.0.format.syntax").String())
-	require.Contains(t, gjson.GetBytes(upstream.lastBody, "tools.0.format.definition").String(), "begin_patch")
-	require.False(t, gjson.GetBytes(upstream.lastBody, "tools.0.parameters").Exists())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "tools.0.format").Exists())
+	require.Contains(t, gjson.GetBytes(upstream.lastBody, "tools.0.description").String(), "begin_patch")
+	require.Equal(t, "object", gjson.GetBytes(upstream.lastBody, "tools.0.parameters.type").String())
+	require.Equal(t, "patch", gjson.GetBytes(upstream.lastBody, "tools.0.parameters.required.0").String())
+	require.Equal(t, "string", gjson.GetBytes(upstream.lastBody, "tools.0.parameters.properties.patch.type").String())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "user").Exists())
 }
 
@@ -613,7 +614,7 @@ func TestNormalizeCursorRequestBodyRewritesResponsesInput(t *testing.T) {
 	require.JSONEq(t, `{"model":"gpt-4.1","messages":[{"role":"system","content":"sys"},{"role":"user","content":"hi"}],"max_completion_tokens":64,"reasoning_effort":"high","tools":[{"type":"function","function":{"name":"lookup","description":"d","parameters":{"type":"object"}}},{"type":"function","function":{"name":"ApplyPatch","parameters":{"type":"object"}}}],"tool_choice":{"type":"function","function":{"name":"lookup"}}}`, string(body))
 }
 
-func TestCursorCompatHandlerOpenAIChatCompletionsPreservesResponsesShapeCustomTools(t *testing.T) {
+func TestCursorCompatHandlerOpenAIChatCompletionsBridgesApplyPatchTool(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -648,10 +649,12 @@ func TestCursorCompatHandlerOpenAIChatCompletionsPreservesResponsesShapeCustomTo
 	require.NotEmpty(t, forwarded)
 	require.True(t, gjson.GetBytes(forwarded, "input").Exists())
 	require.False(t, gjson.GetBytes(forwarded, "messages").Exists())
-	require.Equal(t, "custom", gjson.GetBytes(forwarded, "tools.0.type").String())
+	require.Equal(t, "function", gjson.GetBytes(forwarded, "tools.0.type").String())
 	require.Equal(t, "ApplyPatch", gjson.GetBytes(forwarded, "tools.0.name").String())
-	require.Equal(t, "grammar", gjson.GetBytes(forwarded, "tools.0.format.type").String())
-	require.Equal(t, "lark", gjson.GetBytes(forwarded, "tools.0.format.syntax").String())
+	require.False(t, gjson.GetBytes(forwarded, "tools.0.format").Exists())
+	require.Contains(t, gjson.GetBytes(forwarded, "tools.0.description").String(), "begin_patch")
+	require.Equal(t, "patch", gjson.GetBytes(forwarded, "tools.0.parameters.required.0").String())
+	require.Equal(t, "string", gjson.GetBytes(forwarded, "tools.0.parameters.properties.patch.type").String())
 }
 
 func TestNormalizeCursorRequestBodyRepairsMessagesToolUseInput(t *testing.T) {

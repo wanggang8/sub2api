@@ -203,7 +203,7 @@ func TestNormalizeChatCompletionsRequestBodyPreservesCursorEditingToolsForInputA
 	require.False(t, names["StrReplace"])
 }
 
-func TestNormalizeOpenAIChatCompletionsRequestBodyPreservesResponsesShapeCustomTools(t *testing.T) {
+func TestNormalizeOpenAIChatCompletionsRequestBodyBridgesApplyPatchCustomTool(t *testing.T) {
 	raw := []byte(`{
 		"model": "gpt-5.5",
 		"user": "cursor-user-hash",
@@ -237,12 +237,20 @@ func TestNormalizeOpenAIChatCompletionsRequestBodyPreservesResponsesShapeCustomT
 	tools := payload["tools"].([]any)
 	require.Len(t, tools, 1)
 	tool := tools[0].(map[string]any)
-	require.Equal(t, "custom", tool["type"])
+	require.Equal(t, "function", tool["type"])
 	require.Equal(t, "ApplyPatch", tool["name"])
-	format := tool["format"].(map[string]any)
-	require.Equal(t, "grammar", format["type"])
-	require.Equal(t, "lark", format["syntax"])
-	require.Contains(t, format["definition"], "begin_patch")
+	require.NotContains(t, tool, "format")
+	require.Contains(t, tool["description"], "Patch files")
+	require.Contains(t, tool["description"], "lark")
+	require.Contains(t, tool["description"], "begin_patch")
+	parameters := tool["parameters"].(map[string]any)
+	require.Equal(t, "object", parameters["type"])
+	required := parameters["required"].([]any)
+	require.Contains(t, required, "patch")
+	properties := parameters["properties"].(map[string]any)
+	patchParam := properties["patch"].(map[string]any)
+	require.Equal(t, "string", patchParam["type"])
+	require.Contains(t, patchParam["description"], "*** Begin Patch")
 }
 
 func TestNormalizeChatCompletionsRequestBodyDoesNotApplyOpenAIPassthroughSanitizer(t *testing.T) {
