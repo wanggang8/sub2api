@@ -95,3 +95,40 @@ func TestPatchChatResponseBodyNormalizesToolArguments(t *testing.T) {
 	require.Equal(t, `"old"`, args["old_string"])
 	require.Equal(t, `"new"`, args["new_string"])
 }
+
+func TestPatchChatResponseBodyUnwrapsApplyPatchArguments(t *testing.T) {
+	body := []byte(`{
+		"id":"chatcmpl_patch",
+		"choices":[
+			{
+				"index":0,
+				"message":{
+					"role":"assistant",
+					"tool_calls":[
+						{
+							"id":"call_patch",
+							"type":"function",
+							"function":{
+								"name":"ApplyPatch",
+								"arguments":"{\"patch\":\"*** Begin Patch\\n*** Add File: /tmp/a.txt\\n+hello\\n*** End Patch\"}"
+							}
+						}
+					]
+				},
+				"finish_reason":"tool_calls"
+			}
+		]
+	}`)
+
+	fixed, err := PatchChatResponseBody(body, "cursor-model")
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(fixed, &payload))
+	choice := payload["choices"].([]any)[0].(map[string]any)
+	message := choice["message"].(map[string]any)
+	toolCall := message["tool_calls"].([]any)[0].(map[string]any)
+	function := toolCall["function"].(map[string]any)
+	require.Equal(t, "ApplyPatch", function["name"])
+	require.Equal(t, "*** Begin Patch\n*** Add File: /tmp/a.txt\n+hello\n*** End Patch", function["arguments"])
+}

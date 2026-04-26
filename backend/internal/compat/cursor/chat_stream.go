@@ -9,8 +9,10 @@ import (
 )
 
 type ChatStreamState struct {
-	InThinkingTag     bool
-	ChatToolCallsSeen bool
+	InThinkingTag          bool
+	ChatToolCallsSeen      bool
+	applyPatchToolIndexes  map[int]bool
+	applyPatchArgumentJSON map[int]string
 }
 
 func NewChatStreamState() *ChatStreamState {
@@ -82,7 +84,7 @@ func finalizeChatThinkingChunk(state *ChatStreamState, model string) []byte {
 }
 
 func formatChatStreamEvent(eventName string, payload map[string]any, clientModel string, state *ChatStreamState) []responsesSSEItem {
-	payload = fixChatChunkPayload(payload, clientModel)
+	payload = fixChatChunkPayload(payload, clientModel, state)
 	choices, ok := payload["choices"].([]any)
 	if !ok || len(choices) == 0 {
 		return []responsesSSEItem{{eventName: eventName, payload: payload}}
@@ -226,7 +228,7 @@ func splitChatContentIntoItems(template map[string]any, eventName, content strin
 	return items
 }
 
-func fixChatChunkPayload(payload map[string]any, clientModel string) map[string]any {
+func fixChatChunkPayload(payload map[string]any, clientModel string, state *ChatStreamState) map[string]any {
 	if clientModel != "" {
 		payload["model"] = clientModel
 	}
@@ -236,13 +238,13 @@ func fixChatChunkPayload(payload map[string]any, clientModel string) map[string]
 			if !ok {
 				continue
 			}
-			fixChatStreamChoice(choice)
+			fixChatStreamChoice(choice, state)
 		}
 	}
 	return payload
 }
 
-func fixChatStreamChoice(choice map[string]any) {
+func fixChatStreamChoice(choice map[string]any, state *ChatStreamState) {
 	delta, ok := choice["delta"].(map[string]any)
 	if !ok {
 		rewriteChatFinishReason(choice)
@@ -251,9 +253,73 @@ func fixChatStreamChoice(choice map[string]any) {
 
 	promoteChatReasoningField(delta)
 	convertLegacyStreamFunctionCall(delta, choice)
+	rewriteApplyPatchStreamArguments(delta, state)
 	sanitizeToolCallDeltas(delta)
 	ensureStreamToolCalls(delta, choice)
 	rewriteChatFinishReason(choice)
+}
+
+func rewriteApplyPatchStreamArguments(delta map[string]any, state *ChatStreamState) {
+	rawToolCalls, ok := delta["tool_calls"].([]any)
+	if !ok || len(rawToolCalls) == 0 {
+		return
+	}
+	if state == nil {
+		return
+	}
+	if state.applyPatchToolIndexes == nil {
+		state.applyPatchToolIndexes = make(map[int]bool)
+	}
+	if state.applyPatchArgumentJSON == nil {
+		state.applyPatchArgumentJSON = make(map[int]string)
+	}
+	for fallbackIndex, rawToolCall := range rawToolCalls {
+		toolCall, ok := rawToolCall.(map[string]any)
+		if !ok {
+			continue
+		}
+		index := cursorStreamToolCallIndex(toolCall, fallbackIndex)
+		functionData, _ := toolCall["function"].(map[string]any)
+		if functionData == nil {
+			continue
+		}
+		if strings.TrimSpace(messagesStringValue(functionData["name"])) == cursorApplyPatchToolName {
+			state.applyPatchToolIndexes[index] = true
+		}
+		if !state.applyPatchToolIndexes[index] {
+			continue
+		}
+		rawArguments, hasArguments := functionData["arguments"].(string)
+		if !hasArguments || rawArguments == "" {
+			continue
+		}
+		buffered := state.applyPatchArgumentJSON[index] + rawArguments
+		if patch, ok := decodeCursorApplyPatchFunctionArguments(buffered); ok {
+			functionData["arguments"] = patch
+			delete(state.applyPatchArgumentJSON, index)
+			continue
+		}
+		if strings.HasPrefix(strings.TrimSpace(buffered), "{") {
+			state.applyPatchArgumentJSON[index] = buffered
+			delete(functionData, "arguments")
+		}
+	}
+}
+
+func cursorStreamToolCallIndex(toolCall map[string]any, fallback int) int {
+	switch value := toolCall["index"].(type) {
+	case int:
+		return value
+	case int64:
+		return int(value)
+	case float64:
+		return int(value)
+	case json.Number:
+		if parsed, err := value.Int64(); err == nil {
+			return int(parsed)
+		}
+	}
+	return fallback
 }
 
 func convertLegacyStreamFunctionCall(delta map[string]any, choice map[string]any) {

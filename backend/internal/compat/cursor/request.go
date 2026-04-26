@@ -213,6 +213,9 @@ func sanitizeCursorOpenAIResponsesPassthroughBody(body []byte) ([]byte, error) {
 	if bridgeCursorApplyPatchToolForOpenAIResponses(payload) {
 		changed = true
 	}
+	if wrapCursorApplyPatchHistoryForOpenAIResponses(payload) {
+		changed = true
+	}
 	if !changed {
 		return body, nil
 	}
@@ -245,9 +248,9 @@ func bridgeCursorApplyPatchToolForOpenAIResponses(payload map[string]any) bool {
 func cursorApplyPatchCustomToolToFunction(tool map[string]any) map[string]any {
 	converted := map[string]any{
 		"type":        "function",
-		"name":        "ApplyPatch",
+		"name":        cursorApplyPatchToolName,
 		"description": cursorApplyPatchFunctionDescription(tool),
-		"parameters":  cursorToolParameters(tool),
+		"parameters":  cursorApplyPatchFunctionParameters(),
 	}
 	if strict, ok := tool["strict"]; ok {
 		converted["strict"] = strict
@@ -262,14 +265,27 @@ func cursorApplyPatchFunctionDescription(tool map[string]any) string {
 	return ""
 }
 
-func cursorToolParameters(tool map[string]any) any {
-	if inputSchema, ok := tool["input_schema"]; ok && inputSchema != nil {
-		return inputSchema
+func wrapCursorApplyPatchHistoryForOpenAIResponses(payload map[string]any) bool {
+	rawInput, ok := payload["input"].([]any)
+	if !ok || len(rawInput) == 0 {
+		return false
 	}
-	if parameters, ok := tool["parameters"]; ok && parameters != nil {
-		return parameters
+	changed := false
+	for _, rawItem := range rawInput {
+		item, ok := rawItem.(map[string]any)
+		if !ok ||
+			strings.TrimSpace(fmt.Sprint(item["type"])) != "function_call" ||
+			strings.TrimSpace(fmt.Sprint(item["name"])) != cursorApplyPatchToolName {
+			continue
+		}
+		arguments, ok := item["arguments"].(string)
+		if !ok || hasCursorApplyPatchFunctionWrapper(arguments) {
+			continue
+		}
+		item["arguments"] = encodeCursorApplyPatchFunctionArguments(arguments)
+		changed = true
 	}
-	return map[string]any{"type": "object", "properties": map[string]any{}}
+	return changed
 }
 
 func normalizeCursorChatCompletionsBody(raw []byte) ([]byte, error) {

@@ -150,6 +150,10 @@ func containsCursorRune(values []rune, target rune) bool {
 }
 
 func normalizeCursorFunctionArguments(functionData map[string]any) {
+	if unwrapCursorApplyPatchFunctionArguments(functionData) {
+		return
+	}
+
 	rawArgs := functionData["arguments"]
 	if rawArgs == nil {
 		return

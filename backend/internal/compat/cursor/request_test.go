@@ -150,6 +150,30 @@ func TestNormalizeResponsesRequestBodyConvertsCustomToolHistoryToFunctionHistory
 	require.Equal(t, "ok", output["output"])
 }
 
+func TestNormalizeOpenAIChatCompletionsRequestBodyWrapsApplyPatchHistory(t *testing.T) {
+	raw := []byte(`{
+		"model": "gpt-5.5",
+		"input": [
+			{"type": "custom_tool_call", "call_id": "call_1", "name": "ApplyPatch", "input": "*** Begin Patch\n*** Update File: /tmp/a.txt\n@@\n-old line\n*** End Patch"},
+			{"type": "custom_tool_call_output", "call_id": "call_1", "output": [{"type": "input_text", "text": "ok"}]}
+		],
+		"tools": [
+			{"type":"custom","name":"ApplyPatch","description":"Patch files"}
+		]
+	}`)
+
+	normalized, err := NormalizeOpenAIChatCompletionsRequestBody(raw)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(normalized, &payload))
+	items := payload["input"].([]any)
+	call := items[0].(map[string]any)
+	require.Equal(t, "function_call", call["type"])
+	require.Equal(t, "ApplyPatch", call["name"])
+	require.JSONEq(t, `{"patch":"*** Begin Patch\n*** Update File: /tmp/a.txt\n@@\n-old line\n*** End Patch"}`, call["arguments"].(string))
+}
+
 func TestNormalizeResponsesRequestBodyPreservesToolsForInputArray(t *testing.T) {
 	raw := []byte(`{
 		"model": "gpt-5.4",
@@ -274,8 +298,10 @@ func TestNormalizeOpenAIChatCompletionsRequestBodyBridgesApplyPatchCustomTool(t 
 	parameters := tool["parameters"].(map[string]any)
 	require.Equal(t, "object", parameters["type"])
 	properties := parameters["properties"].(map[string]any)
-	require.Empty(t, properties)
-	require.NotContains(t, parameters, "required")
+	patch := properties["patch"].(map[string]any)
+	require.Equal(t, "string", patch["type"])
+	require.Contains(t, patch["description"], "*** Begin Patch")
+	require.Equal(t, []any{"patch"}, parameters["required"])
 }
 
 func TestNormalizeChatCompletionsRequestBodyDoesNotApplyOpenAIPassthroughSanitizer(t *testing.T) {
