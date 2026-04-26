@@ -10,13 +10,35 @@ const (
 	cursorApplyPatchArgName  = "patch"
 )
 
+const cursorApplyPatchArgDescription = `Complete raw ApplyPatch patch text. Put the entire patch in this string, starting with *** Begin Patch and ending with *** End Patch.
+
+Examples:
+Add a file:
+*** Begin Patch
+*** Add File: path/to/file.txt
++new line
+*** End Patch
+
+Update or delete lines:
+*** Begin Patch
+*** Update File: path/to/file.txt
+@@
+-old line
++new line
+*** End Patch
+
+Delete a file:
+*** Begin Patch
+*** Delete File: path/to/file.txt
+*** End Patch`
+
 func cursorApplyPatchFunctionParameters() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			cursorApplyPatchArgName: map[string]any{
 				"type":        "string",
-				"description": "Complete ApplyPatch patch text. It must start with *** Begin Patch and end with *** End Patch.",
+				"description": cursorApplyPatchArgDescription,
 			},
 		},
 		"required": []any{cursorApplyPatchArgName},

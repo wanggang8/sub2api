@@ -300,7 +300,13 @@ func TestNormalizeOpenAIChatCompletionsRequestBodyBridgesApplyPatchCustomTool(t 
 	properties := parameters["properties"].(map[string]any)
 	patch := properties["patch"].(map[string]any)
 	require.Equal(t, "string", patch["type"])
-	require.Contains(t, patch["description"], "*** Begin Patch")
+	patchDescription := patch["description"].(string)
+	require.Contains(t, patchDescription, "*** Begin Patch")
+	require.Contains(t, patchDescription, "*** Add File:")
+	require.Contains(t, patchDescription, "*** Update File:")
+	require.Contains(t, patchDescription, "*** Delete File:")
+	require.Contains(t, patchDescription, "+new line")
+	require.Contains(t, patchDescription, "-old line")
 	require.Equal(t, []any{"patch"}, parameters["required"])
 }
 
