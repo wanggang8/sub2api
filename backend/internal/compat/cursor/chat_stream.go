@@ -3,17 +3,14 @@ package cursor
 import (
 	"bytes"
 	"encoding/json"
-	"sort"
 	"strings"
 
 	"github.com/google/uuid"
 )
 
 type ChatStreamState struct {
-	InThinkingTag             bool
-	ChatToolCallsSeen         bool
-	ToolCallNames             map[int]string
-	ApplyPatchArgumentBuffers map[int]*strings.Builder
+	InThinkingTag     bool
+	ChatToolCallsSeen bool
 }
 
 func NewChatStreamState() *ChatStreamState {
@@ -119,13 +116,6 @@ func formatChatStreamEvent(eventName string, payload map[string]any, clientModel
 		delete(delta, "reasoning_content")
 	}
 	if hasToolCalls && len(toolCalls) > 0 {
-		toolCalls = bufferApplyPatchToolCallArguments(toolCalls, state)
-		hasToolCalls = len(toolCalls) > 0
-		if !hasToolCalls {
-			delete(delta, "tool_calls")
-		}
-	}
-	if hasToolCalls && len(toolCalls) > 0 {
 		if !state.ChatToolCallsSeen {
 			state.ChatToolCallsSeen = true
 			if state.InThinkingTag {
@@ -153,166 +143,17 @@ func formatChatStreamEvent(eventName string, payload map[string]any, clientModel
 			})
 			state.InThinkingTag = false
 		}
-		toolFinishReason := finishReason
-		if finishReason != nil && hasBufferedApplyPatchToolCallArguments(state) {
-			toolFinishReason = nil
-		}
 		toolPayload := cloneChatChunk(payload, map[string]any{
 			"tool_calls": toolCalls,
-		}, toolFinishReason)
+		}, finishReason)
 		results = append(results, responsesSSEItem{eventName: eventName, payload: toolPayload})
 		delete(delta, "tool_calls")
 	}
 
-	if finishReason != nil {
-		flushed := flushApplyPatchToolCallArguments(payload, eventName, state)
-		results = append(results, flushed...)
-		if len(flushed) > 0 && len(delta) == 0 {
-			results = append(results, responsesSSEItem{
-				eventName: eventName,
-				payload:   cloneChatChunk(payload, map[string]any{}, finishReason),
-			})
-		}
-	}
 	if len(delta) > 0 || finishReason != nil && len(results) == 0 {
 		results = append(results, responsesSSEItem{eventName: eventName, payload: payload})
 	}
 	return results
-}
-
-func bufferApplyPatchToolCallArguments(toolCalls []any, state *ChatStreamState) []any {
-	if state == nil {
-		return toolCalls
-	}
-	kept := make([]any, 0, len(toolCalls))
-	for _, rawToolCall := range toolCalls {
-		toolCall, ok := rawToolCall.(map[string]any)
-		if !ok {
-			kept = append(kept, rawToolCall)
-			continue
-		}
-		index := chatToolCallIndex(toolCall["index"])
-		functionData, _ := toolCall["function"].(map[string]any)
-		if functionData == nil {
-			kept = append(kept, rawToolCall)
-			continue
-		}
-		if name := strings.TrimSpace(messagesStringValue(functionData["name"])); name != "" {
-			if state.ToolCallNames == nil {
-				state.ToolCallNames = map[int]string{}
-			}
-			state.ToolCallNames[index] = name
-		}
-		if state.ToolCallNames[index] != "ApplyPatch" {
-			kept = append(kept, rawToolCall)
-			continue
-		}
-		arguments, hasArguments := functionData["arguments"].(string)
-		if !hasArguments || arguments == "" {
-			kept = append(kept, rawToolCall)
-			continue
-		}
-		if state.ApplyPatchArgumentBuffers == nil {
-			state.ApplyPatchArgumentBuffers = map[int]*strings.Builder{}
-		}
-		buffer := state.ApplyPatchArgumentBuffers[index]
-		if buffer == nil {
-			buffer = &strings.Builder{}
-			state.ApplyPatchArgumentBuffers[index] = buffer
-		}
-		buffer.WriteString(arguments)
-
-		cloned := cloneMessagesJSONObject(toolCall)
-		clonedFunction, _ := cloned["function"].(map[string]any)
-		if clonedFunction != nil {
-			delete(clonedFunction, "arguments")
-			if len(clonedFunction) == 0 {
-				delete(cloned, "function")
-			}
-		}
-		if chatToolCallDeltaHasPayload(cloned) {
-			kept = append(kept, cloned)
-		}
-	}
-	return kept
-}
-
-func flushApplyPatchToolCallArguments(template map[string]any, eventName string, state *ChatStreamState) []responsesSSEItem {
-	if state == nil || len(state.ApplyPatchArgumentBuffers) == 0 {
-		return nil
-	}
-	indexes := make([]int, 0, len(state.ApplyPatchArgumentBuffers))
-	for index, buffer := range state.ApplyPatchArgumentBuffers {
-		if buffer != nil && buffer.Len() > 0 {
-			indexes = append(indexes, index)
-		}
-	}
-	sort.Ints(indexes)
-
-	items := make([]responsesSSEItem, 0, len(indexes))
-	for _, index := range indexes {
-		buffer := state.ApplyPatchArgumentBuffers[index]
-		if buffer == nil || buffer.Len() == 0 {
-			continue
-		}
-		arguments := unwrapCursorApplyPatchArgumentsString(buffer.String())
-		items = append(items, responsesSSEItem{
-			eventName: eventName,
-			payload: cloneChatChunk(template, map[string]any{
-				"tool_calls": []any{
-					map[string]any{
-						"index": index,
-						"function": map[string]any{
-							"arguments": arguments,
-						},
-					},
-				},
-			}, nil),
-		})
-		delete(state.ApplyPatchArgumentBuffers, index)
-		delete(state.ToolCallNames, index)
-	}
-	return items
-}
-
-func hasBufferedApplyPatchToolCallArguments(state *ChatStreamState) bool {
-	if state == nil {
-		return false
-	}
-	for _, buffer := range state.ApplyPatchArgumentBuffers {
-		if buffer != nil && buffer.Len() > 0 {
-			return true
-		}
-	}
-	return false
-}
-
-func chatToolCallIndex(value any) int {
-	switch typed := value.(type) {
-	case int:
-		return typed
-	case int64:
-		return int(typed)
-	case float64:
-		return int(typed)
-	case json.Number:
-		index, err := typed.Int64()
-		if err == nil {
-			return int(index)
-		}
-	}
-	return 0
-}
-
-func chatToolCallDeltaHasPayload(toolCall map[string]any) bool {
-	if toolCall == nil {
-		return false
-	}
-	if strings.TrimSpace(messagesStringValue(toolCall["id"])) != "" || strings.TrimSpace(messagesStringValue(toolCall["type"])) != "" {
-		return true
-	}
-	functionData, _ := toolCall["function"].(map[string]any)
-	return functionData != nil && len(functionData) > 0
 }
 
 func splitChatContentIntoItems(template map[string]any, eventName, content string, finishReason any, hasToolCalls bool, state *ChatStreamState) []responsesSSEItem {
@@ -472,11 +313,10 @@ func sanitizeToolCallDeltas(delta map[string]any) {
 			if messagesStringValue(cleanFunction["name"]) == "" {
 				delete(cleanFunction, "name")
 			}
-			hasOnlyEmptyArguments := len(cleanFunction) == 1 &&
-				messagesStringValue(cleanFunction["arguments"]) == ""
+			if messagesStringValue(cleanFunction["arguments"]) == "" {
+				delete(cleanFunction, "arguments")
+			}
 			if len(cleanFunction) == 0 {
-				delete(cloned, "function")
-			} else if hasOnlyEmptyArguments && !toolCallHasResolvableIdentity(cloned) {
 				delete(cloned, "function")
 			} else {
 				cloned["function"] = cleanFunction

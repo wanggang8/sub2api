@@ -172,26 +172,3 @@ func normalizeCursorFunctionArguments(functionData map[string]any) {
 	}
 	functionData["arguments"] = string(encoded)
 }
-
-func unwrapCursorApplyPatchFunctionArguments(functionData map[string]any) {
-	if strings.TrimSpace(messagesStringValue(functionData["name"])) != "ApplyPatch" {
-		return
-	}
-	argsStr, ok := functionData["arguments"].(string)
-	if !ok || argsStr == "" {
-		return
-	}
-	functionData["arguments"] = unwrapCursorApplyPatchArgumentsString(argsStr)
-}
-
-func unwrapCursorApplyPatchArgumentsString(arguments string) string {
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(arguments), &payload); err != nil {
-		return arguments
-	}
-	patch, ok := payload["patch"].(string)
-	if !ok {
-		return arguments
-	}
-	return patch
-}
