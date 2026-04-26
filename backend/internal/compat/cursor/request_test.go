@@ -120,6 +120,36 @@ func TestNormalizeResponsesRequestBodyFunctionOutputArrayText(t *testing.T) {
 	require.Equal(t, "line one\nline two", item["output"])
 }
 
+func TestNormalizeResponsesRequestBodyConvertsCustomToolHistoryToFunctionHistory(t *testing.T) {
+	raw := []byte(`{
+		"model": "gpt-5.4",
+		"input": [
+			{"type": "custom_tool_call", "call_id": "call_1", "name": "ApplyPatch", "input": "*** Begin Patch\n*** End Patch"},
+			{"type": "custom_tool_call_output", "call_id": "call_1", "output": [{"type": "input_text", "text": "ok"}]}
+		]
+	}`)
+
+	normalized, err := NormalizeResponsesRequestBody(raw)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(normalized, &payload))
+	items := payload["input"].([]any)
+	require.Len(t, items, 2)
+
+	call := items[0].(map[string]any)
+	require.Equal(t, "function_call", call["type"])
+	require.Equal(t, "call_1", call["call_id"])
+	require.Equal(t, "ApplyPatch", call["name"])
+	require.Equal(t, "*** Begin Patch\n*** End Patch", call["arguments"])
+	require.NotContains(t, call, "input")
+
+	output := items[1].(map[string]any)
+	require.Equal(t, "function_call_output", output["type"])
+	require.Equal(t, "call_1", output["call_id"])
+	require.Equal(t, "ok", output["output"])
+}
+
 func TestNormalizeResponsesRequestBodyPreservesToolsForInputArray(t *testing.T) {
 	raw := []byte(`{
 		"model": "gpt-5.4",
@@ -240,17 +270,12 @@ func TestNormalizeOpenAIChatCompletionsRequestBodyBridgesApplyPatchCustomTool(t 
 	require.Equal(t, "function", tool["type"])
 	require.Equal(t, "ApplyPatch", tool["name"])
 	require.NotContains(t, tool, "format")
-	require.Contains(t, tool["description"], "Patch files")
-	require.Contains(t, tool["description"], "lark")
-	require.Contains(t, tool["description"], "begin_patch")
+	require.Equal(t, "Patch files", tool["description"])
 	parameters := tool["parameters"].(map[string]any)
 	require.Equal(t, "object", parameters["type"])
-	required := parameters["required"].([]any)
-	require.Contains(t, required, "patch")
 	properties := parameters["properties"].(map[string]any)
-	patchParam := properties["patch"].(map[string]any)
-	require.Equal(t, "string", patchParam["type"])
-	require.Contains(t, patchParam["description"], "*** Begin Patch")
+	require.Empty(t, properties)
+	require.NotContains(t, parameters, "required")
 }
 
 func TestNormalizeChatCompletionsRequestBodyDoesNotApplyOpenAIPassthroughSanitizer(t *testing.T) {

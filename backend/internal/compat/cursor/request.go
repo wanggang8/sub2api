@@ -93,7 +93,25 @@ func normalizeResponsesInputFunctionOutputs(raw json.RawMessage) (json.RawMessag
 
 	changed := false
 	for _, item := range items {
-		if itemType, _ := item["type"].(string); itemType != "function_call_output" {
+		itemType, _ := item["type"].(string)
+		switch itemType {
+		case "custom_tool_call":
+			item["type"] = "function_call"
+			if input, exists := item["input"]; exists {
+				item["arguments"] = responsesCustomToolInputToFunctionArguments(input)
+				delete(item, "input")
+				changed = true
+			}
+			if _, exists := item["arguments"]; !exists {
+				item["arguments"] = "{}"
+				changed = true
+			}
+			continue
+		case "custom_tool_call_output":
+			item["type"] = "function_call_output"
+			changed = true
+		case "function_call_output":
+		default:
 			continue
 		}
 		output, exists := item["output"]
@@ -118,6 +136,20 @@ func normalizeResponsesInputFunctionOutputs(raw json.RawMessage) (json.RawMessag
 		return nil, false, fmt.Errorf("marshal normalized responses input: %w", err)
 	}
 	return normalized, true, nil
+}
+
+func responsesCustomToolInputToFunctionArguments(input any) string {
+	if text, ok := input.(string); ok {
+		return text
+	}
+	if input == nil {
+		return "{}"
+	}
+	encoded, err := json.Marshal(input)
+	if err != nil {
+		return "{}"
+	}
+	return string(encoded)
 }
 
 func NormalizeChatCompletionsRequestBody(raw []byte) ([]byte, error) {
@@ -215,17 +247,7 @@ func cursorApplyPatchCustomToolToFunction(tool map[string]any) map[string]any {
 		"type":        "function",
 		"name":        "ApplyPatch",
 		"description": cursorApplyPatchFunctionDescription(tool),
-		"parameters": map[string]any{
-			"type":                 "object",
-			"additionalProperties": false,
-			"properties": map[string]any{
-				"patch": map[string]any{
-					"type":        "string",
-					"description": "Full apply_patch grammar payload. It must start with *** Begin Patch and end with *** End Patch.",
-				},
-			},
-			"required": []any{"patch"},
-		},
+		"parameters":  cursorToolParameters(tool),
 	}
 	if strict, ok := tool["strict"]; ok {
 		converted["strict"] = strict
@@ -234,21 +256,20 @@ func cursorApplyPatchCustomToolToFunction(tool map[string]any) map[string]any {
 }
 
 func cursorApplyPatchFunctionDescription(tool map[string]any) string {
-	parts := make([]string, 0, 3)
 	if description := strings.TrimSpace(fmt.Sprint(tool["description"])); description != "" && description != "<nil>" {
-		parts = append(parts, description)
+		return description
 	}
-	if format, ok := tool["format"].(map[string]any); ok {
-		syntax := strings.TrimSpace(fmt.Sprint(format["syntax"]))
-		definition := strings.TrimSpace(fmt.Sprint(format["definition"]))
-		if syntax != "" && syntax != "<nil>" && definition != "" && definition != "<nil>" {
-			parts = append(parts, "The patch parameter must follow this "+syntax+" grammar:\n"+definition)
-		}
+	return ""
+}
+
+func cursorToolParameters(tool map[string]any) any {
+	if inputSchema, ok := tool["input_schema"]; ok && inputSchema != nil {
+		return inputSchema
 	}
-	if len(parts) == 0 {
-		return "Apply a single-file patch. The patch parameter must contain the full patch text."
+	if parameters, ok := tool["parameters"]; ok && parameters != nil {
+		return parameters
 	}
-	return strings.Join(parts, "\n\n")
+	return map[string]any{"type": "object", "properties": map[string]any{}}
 }
 
 func normalizeCursorChatCompletionsBody(raw []byte) ([]byte, error) {

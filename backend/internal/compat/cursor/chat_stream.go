@@ -313,10 +313,11 @@ func sanitizeToolCallDeltas(delta map[string]any) {
 			if messagesStringValue(cleanFunction["name"]) == "" {
 				delete(cleanFunction, "name")
 			}
-			if messagesStringValue(cleanFunction["arguments"]) == "" {
-				delete(cleanFunction, "arguments")
-			}
+			hasOnlyEmptyArguments := len(cleanFunction) == 1 &&
+				messagesStringValue(cleanFunction["arguments"]) == ""
 			if len(cleanFunction) == 0 {
+				delete(cloned, "function")
+			} else if hasOnlyEmptyArguments && !toolCallHasResolvableIdentity(cloned) {
 				delete(cloned, "function")
 			} else {
 				cloned["function"] = cleanFunction

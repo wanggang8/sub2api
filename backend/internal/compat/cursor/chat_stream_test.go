@@ -86,6 +86,22 @@ func TestPatchChatStreamChunkDropsEmptyToolCallDelta(t *testing.T) {
 	require.Len(t, payloads, 0)
 }
 
+func TestPatchChatStreamChunkPreservesEmptyToolCallArgumentsForOpenCall(t *testing.T) {
+	state := NewChatStreamState()
+	bundle := []byte(`data: {"id":"cmpl_1","object":"chat.completion.chunk","model":"upstream","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"ApplyPatch","arguments":""}}]},"finish_reason":null}]}` + "\n\n")
+
+	fixed, err := PatchChatStreamChunk(bundle, "cursor-model", state)
+	require.NoError(t, err)
+
+	payloads := decodeChatChunkPayloads(t, fixed)
+	require.Len(t, payloads, 1)
+	toolCalls := payloadChoiceDelta(t, payloads[0])["tool_calls"].([]any)
+	function := toolCalls[0].(map[string]any)["function"].(map[string]any)
+	require.Equal(t, "ApplyPatch", function["name"])
+	require.Contains(t, function, "arguments")
+	require.Equal(t, "", function["arguments"])
+}
+
 func TestPatchChatStreamChunkAddsMissingToolCallIndex(t *testing.T) {
 	state := NewChatStreamState()
 	bundle := []byte(`data: {"id":"cmpl_1","object":"chat.completion.chunk","model":"upstream","choices":[{"index":0,"delta":{"tool_calls":[{"function":{"name":"read_file","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}` + "\n\n")

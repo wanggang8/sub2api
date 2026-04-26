@@ -576,10 +576,11 @@ func TestCursorCompatHandlerChatCompletionsOpenAIResponsesBridgeConvertsApplyPat
 	require.Equal(t, "function", gjson.GetBytes(upstream.lastBody, "tools.0.type").String())
 	require.Equal(t, "ApplyPatch", gjson.GetBytes(upstream.lastBody, "tools.0.name").String())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "tools.0.format").Exists())
-	require.Contains(t, gjson.GetBytes(upstream.lastBody, "tools.0.description").String(), "begin_patch")
+	require.Equal(t, "Patch files", gjson.GetBytes(upstream.lastBody, "tools.0.description").String())
 	require.Equal(t, "object", gjson.GetBytes(upstream.lastBody, "tools.0.parameters.type").String())
-	require.Equal(t, "patch", gjson.GetBytes(upstream.lastBody, "tools.0.parameters.required.0").String())
-	require.Equal(t, "string", gjson.GetBytes(upstream.lastBody, "tools.0.parameters.properties.patch.type").String())
+	require.True(t, gjson.GetBytes(upstream.lastBody, "tools.0.parameters.properties").Exists())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "tools.0.parameters.required").Exists())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "tools.0.parameters.properties.patch").Exists())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "user").Exists())
 }
 
@@ -652,9 +653,11 @@ func TestCursorCompatHandlerOpenAIChatCompletionsBridgesApplyPatchTool(t *testin
 	require.Equal(t, "function", gjson.GetBytes(forwarded, "tools.0.type").String())
 	require.Equal(t, "ApplyPatch", gjson.GetBytes(forwarded, "tools.0.name").String())
 	require.False(t, gjson.GetBytes(forwarded, "tools.0.format").Exists())
-	require.Contains(t, gjson.GetBytes(forwarded, "tools.0.description").String(), "begin_patch")
-	require.Equal(t, "patch", gjson.GetBytes(forwarded, "tools.0.parameters.required.0").String())
-	require.Equal(t, "string", gjson.GetBytes(forwarded, "tools.0.parameters.properties.patch.type").String())
+	require.Equal(t, "Patch files", gjson.GetBytes(forwarded, "tools.0.description").String())
+	require.Equal(t, "object", gjson.GetBytes(forwarded, "tools.0.parameters.type").String())
+	require.True(t, gjson.GetBytes(forwarded, "tools.0.parameters.properties").Exists())
+	require.False(t, gjson.GetBytes(forwarded, "tools.0.parameters.required").Exists())
+	require.False(t, gjson.GetBytes(forwarded, "tools.0.parameters.properties.patch").Exists())
 }
 
 func TestNormalizeCursorRequestBodyRepairsMessagesToolUseInput(t *testing.T) {
