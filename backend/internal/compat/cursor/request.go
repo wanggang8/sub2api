@@ -9,6 +9,23 @@ import (
 	"github.com/google/uuid"
 )
 
+var cursorOpenAIResponsesPassthroughUnsupportedFields = []string{
+	"user",
+}
+
+type cursorChatCompletionsNormalizationProfile struct {
+	preserveResponsesShape bool
+	sanitizePassthrough    func([]byte) ([]byte, error)
+}
+
+var (
+	cursorDefaultChatCompletionsProfile = cursorChatCompletionsNormalizationProfile{}
+	cursorOpenAIChatCompletionsProfile  = cursorChatCompletionsNormalizationProfile{
+		preserveResponsesShape: true,
+		sanitizePassthrough:    sanitizeCursorOpenAIResponsesPassthroughBody,
+	}
+)
+
 // Cursor compat stays stateless on purpose and does not persist hidden reasoning caches.
 func NormalizeResponsesRequestBody(raw []byte) ([]byte, error) {
 	if len(raw) == 0 {
@@ -104,6 +121,16 @@ func normalizeResponsesInputFunctionOutputs(raw json.RawMessage) (json.RawMessag
 }
 
 func NormalizeChatCompletionsRequestBody(raw []byte) ([]byte, error) {
+	return normalizeCursorChatCompletionsRequestBodyWithProfile(raw, cursorDefaultChatCompletionsProfile)
+}
+
+// NormalizeOpenAIChatCompletionsRequestBody preserves Responses-shaped Cursor
+// requests for the OpenAI/Codex path so custom tools keep their native schema.
+func NormalizeOpenAIChatCompletionsRequestBody(raw []byte) ([]byte, error) {
+	return normalizeCursorChatCompletionsRequestBodyWithProfile(raw, cursorOpenAIChatCompletionsProfile)
+}
+
+func normalizeCursorChatCompletionsRequestBodyWithProfile(raw []byte, profile cursorChatCompletionsNormalizationProfile) ([]byte, error) {
 	if len(raw) == 0 {
 		return raw, nil
 	}
@@ -118,6 +145,18 @@ func NormalizeChatCompletionsRequestBody(raw []byte) ([]byte, error) {
 	if _, ok := payload["input"]; !ok {
 		return raw, nil
 	}
+
+	if profile.preserveResponsesShape {
+		normalized, err := NormalizeResponsesRequestBody(raw)
+		if err != nil {
+			return nil, err
+		}
+		if profile.sanitizePassthrough == nil {
+			return normalized, nil
+		}
+		return profile.sanitizePassthrough(normalized)
+	}
+
 	normalized, err := apicompat.NormalizeResponsesShapeChatCompletionsBody(raw)
 	if err != nil {
 		return nil, err
@@ -125,24 +164,24 @@ func NormalizeChatCompletionsRequestBody(raw []byte) ([]byte, error) {
 	return stripResponsesOnlyChatFields(normalized)
 }
 
-// NormalizeOpenAIChatCompletionsRequestBody preserves Responses-shaped Cursor
-// requests for the OpenAI/Codex path so custom tools keep their native schema.
-func NormalizeOpenAIChatCompletionsRequestBody(raw []byte) ([]byte, error) {
-	if len(raw) == 0 {
-		return raw, nil
+func sanitizeCursorOpenAIResponsesPassthroughBody(body []byte) ([]byte, error) {
+	payload, ok := decodeCursorJSONObject(body)
+	if !ok {
+		return body, nil
 	}
 
-	var payload map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return nil, err
+	changed := false
+	for _, field := range cursorOpenAIResponsesPassthroughUnsupportedFields {
+		if _, exists := payload[field]; !exists {
+			continue
+		}
+		delete(payload, field)
+		changed = true
 	}
-	if _, ok := payload["messages"]; ok {
-		return normalizeCursorChatCompletionsBody(raw)
+	if !changed {
+		return body, nil
 	}
-	if _, ok := payload["input"]; !ok {
-		return raw, nil
-	}
-	return NormalizeResponsesRequestBody(raw)
+	return json.Marshal(payload)
 }
 
 func normalizeCursorChatCompletionsBody(raw []byte) ([]byte, error) {

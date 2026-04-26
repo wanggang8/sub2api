@@ -552,6 +552,7 @@ func TestCursorCompatHandlerChatCompletionsOpenAIResponsesBridgePreservesCustomT
 	c, _ := gin.CreateTestContext(rec)
 	body := []byte(`{
 		"model":"gpt-5.5",
+		"user":"cursor-user-hash",
 		"input":[{"role":"user","content":"update files"}],
 		"tools":[
 			{
@@ -578,6 +579,7 @@ func TestCursorCompatHandlerChatCompletionsOpenAIResponsesBridgePreservesCustomT
 	require.Equal(t, "lark", gjson.GetBytes(upstream.lastBody, "tools.0.format.syntax").String())
 	require.Contains(t, gjson.GetBytes(upstream.lastBody, "tools.0.format.definition").String(), "begin_patch")
 	require.False(t, gjson.GetBytes(upstream.lastBody, "tools.0.parameters").Exists())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "user").Exists())
 }
 
 func TestCursorCompatHandlerResponsesRejectsCapturedBodyOverLimit(t *testing.T) {

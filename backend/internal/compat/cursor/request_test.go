@@ -206,6 +206,7 @@ func TestNormalizeChatCompletionsRequestBodyPreservesCursorEditingToolsForInputA
 func TestNormalizeOpenAIChatCompletionsRequestBodyPreservesResponsesShapeCustomTools(t *testing.T) {
 	raw := []byte(`{
 		"model": "gpt-5.5",
+		"user": "cursor-user-hash",
 		"input": [{"role": "user", "content": "update files"}],
 		"tools": [
 			{
@@ -228,6 +229,8 @@ func TestNormalizeOpenAIChatCompletionsRequestBodyPreservesResponsesShapeCustomT
 	require.NoError(t, json.Unmarshal(normalized, &payload))
 	_, hasMessages := payload["messages"]
 	require.False(t, hasMessages)
+	_, hasUser := payload["user"]
+	require.False(t, hasUser)
 	input, ok := payload["input"].([]any)
 	require.True(t, ok)
 	require.Len(t, input, 1)
@@ -240,6 +243,22 @@ func TestNormalizeOpenAIChatCompletionsRequestBodyPreservesResponsesShapeCustomT
 	require.Equal(t, "grammar", format["type"])
 	require.Equal(t, "lark", format["syntax"])
 	require.Contains(t, format["definition"], "begin_patch")
+}
+
+func TestNormalizeChatCompletionsRequestBodyDoesNotApplyOpenAIPassthroughSanitizer(t *testing.T) {
+	raw := []byte(`{
+		"model": "gpt-5.5",
+		"user": "cursor-user-hash",
+		"input": [{"role": "user", "content": "update files"}]
+	}`)
+
+	normalized, err := NormalizeChatCompletionsRequestBody(raw)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(normalized, &payload))
+	require.Contains(t, payload, "messages")
+	require.Equal(t, "cursor-user-hash", payload["user"])
 }
 
 func TestNormalizeChatCompletionsRequestBodyNormalizesTopLevelSystemAndAnthropicToolBlocks(t *testing.T) {
