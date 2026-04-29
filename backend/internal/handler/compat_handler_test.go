@@ -419,6 +419,7 @@ func TestCursorCompatHandlerChatCompletionsOpenAIResponsesBridgeInjectsInstructi
 		nil,
 		nil,
 		nil,
+		nil,
 	)
 
 	openAIHandler := &OpenAIGatewayHandler{
@@ -520,6 +521,7 @@ func TestCursorCompatHandlerChatCompletionsOpenAIResponsesBridgeConvertsApplyPat
 		nil,
 		billingCacheService,
 		upstream,
+		nil,
 		nil,
 		nil,
 		nil,
