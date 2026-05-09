@@ -97,6 +97,20 @@ func mergeChatTopLevelSystemInstructions(system json.RawMessage, instructions st
 	return strings.Join(parts, "\n\n")
 }
 
+func parseAnthropicSystemPrompt(raw json.RawMessage) (string, error) {
+	systemParts, err := parseAnthropicSystemContentParts(raw)
+	if err != nil {
+		return "", err
+	}
+	textParts := make([]string, 0, len(systemParts))
+	for _, part := range systemParts {
+		if strings.TrimSpace(part.Text) != "" {
+			textParts = append(textParts, strings.TrimSpace(part.Text))
+		}
+	}
+	return strings.Join(textParts, "\n\n"), nil
+}
+
 func normalizeChatToolChoiceToResponses(raw json.RawMessage) json.RawMessage {
 	if len(raw) == 0 {
 		return nil
