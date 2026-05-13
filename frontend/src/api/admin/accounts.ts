@@ -11,7 +11,7 @@ import type {
   PaginatedResponse,
   AccountUsageInfo,
   WindowStats,
-  ClaudeModel,
+  UpstreamModelOption,
   AccountUsageStatsResponse,
   TempUnschedulableStatus,
   AdminDataPayload,
@@ -436,12 +436,14 @@ export async function setSchedulable(id: number, schedulable: boolean): Promise<
   return data
 }
 
-export interface OpenAIUpstreamModelsPreviewRequest {
+export interface UpstreamModelsPreviewRequest {
+  platform: string
   base_url: string
   api_key: string
+  skip_tls_verify?: boolean
 }
 
-export interface UpstreamModelsResult<TModel = ClaudeModel> {
+export interface UpstreamModelsResult<TModel = UpstreamModelOption> {
   models: TModel[]
   source: 'upstream' | 'fallback'
   message?: string
@@ -452,15 +454,15 @@ export interface UpstreamModelsResult<TModel = ClaudeModel> {
  * @param id - Account ID
  * @returns List of available models for this account
  */
-export async function getAvailableModels(id: number): Promise<ClaudeModel[]> {
-  const { data } = await apiClient.get<ClaudeModel[]>(`/admin/accounts/${id}/models`)
+export async function getAvailableModels(id: number): Promise<UpstreamModelOption[]> {
+  const { data } = await apiClient.get<UpstreamModelOption[]>(`/admin/accounts/${id}/models`)
   return data
 }
 
-export async function previewOpenAIUpstreamModels(
-  payload: OpenAIUpstreamModelsPreviewRequest
+export async function previewUpstreamModels(
+  payload: UpstreamModelsPreviewRequest
 ): Promise<UpstreamModelsResult> {
-  const { data } = await apiClient.post<UpstreamModelsResult>('/admin/accounts/models/preview', payload)
+  const { data } = await apiClient.post<UpstreamModelsResult>('/admin/accounts/upstream-models/preview', payload)
   return data
 }
 
@@ -678,7 +680,7 @@ export const accountsAPI = {
   resetTempUnschedulable,
   setSchedulable,
   getAvailableModels,
-  previewOpenAIUpstreamModels,
+  previewUpstreamModels,
   generateAuthUrl,
   exchangeCode,
   refreshOpenAIToken,

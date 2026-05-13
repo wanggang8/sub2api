@@ -22,10 +22,42 @@ import (
 )
 
 type anthropicHTTPUpstreamRecorder struct {
-	lastReq  *http.Request
-	lastBody []byte
-	resp     *http.Response
-	err      error
+	lastReq     *http.Request
+	lastBody    []byte
+	resp        *http.Response
+	respPayload []byte
+	err         error
+}
+
+func cloneHTTPResponse(resp *http.Response, payload []byte) *http.Response {
+	if resp == nil {
+		return nil
+	}
+	cloned := *resp
+	if resp.Header != nil {
+		cloned.Header = resp.Header.Clone()
+	}
+	if payload == nil {
+		cloned.Body = nil
+		return &cloned
+	}
+	cloned.Body = io.NopCloser(bytes.NewReader(payload))
+	return &cloned
+}
+
+func cloneRequestBody(req *http.Request) *http.Request {
+	if req == nil || req.Body == nil {
+		return req
+	}
+	payload, err := io.ReadAll(req.Body)
+	if err != nil {
+		return req
+	}
+	_ = req.Body.Close()
+	req.Body = io.NopCloser(bytes.NewReader(payload))
+	cloned := req.Clone(req.Context())
+	cloned.Body = io.NopCloser(bytes.NewReader(payload))
+	return cloned
 }
 
 func newAnthropicAPIKeyAccountForTest() *Account {
@@ -48,6 +80,7 @@ func newAnthropicAPIKeyAccountForTest() *Account {
 }
 
 func (u *anthropicHTTPUpstreamRecorder) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+	req = cloneRequestBody(req)
 	u.lastReq = req
 	if req != nil && req.Body != nil {
 		b, _ := io.ReadAll(req.Body)
@@ -58,11 +91,43 @@ func (u *anthropicHTTPUpstreamRecorder) Do(req *http.Request, proxyURL string, a
 	if u.err != nil {
 		return nil, u.err
 	}
-	return u.resp, nil
+	resp := cloneHTTPResponse(u.resp, u.respPayload)
+	return resp, nil
 }
 
 func (u *anthropicHTTPUpstreamRecorder) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
 	return u.Do(req, proxyURL, accountID, accountConcurrency)
+}
+
+type staticHTTPUpstream struct {
+	resp *http.Response
+	err  error
+}
+
+func (u *staticHTTPUpstream) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+	if u.err != nil {
+		return nil, u.err
+	}
+	return u.resp, nil
+}
+
+func (u *staticHTTPUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
+	if u.err != nil {
+		return nil, u.err
+	}
+	return u.resp, nil
+}
+
+func readPassthroughRequestBodyForTest(t *testing.T, req *http.Request) []byte {
+	t.Helper()
+	if req == nil || req.Body == nil {
+		return nil
+	}
+	body, err := io.ReadAll(req.Body)
+	require.NoError(t, err)
+	require.NoError(t, req.Body.Close())
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	return body
 }
 
 type streamReadCloser struct {
@@ -126,6 +191,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardStreamPreservesBodyAnd
 		"",
 	}, "\n")
 	upstream := &anthropicHTTPUpstreamRecorder{
+		respPayload: []byte(upstreamSSE),
 		resp: &http.Response{
 			StatusCode: http.StatusOK,
 			Header: http.Header{
@@ -213,6 +279,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardCountTokensPreservesBo
 
 	upstreamRespBody := `{"input_tokens":42}`
 	upstream := &anthropicHTTPUpstreamRecorder{
+		respPayload: []byte(upstreamRespBody),
 		resp: &http.Response{
 			StatusCode: http.StatusOK,
 			Header: http.Header{
@@ -379,6 +446,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ModelMappingEdgeCases(t *test
 
 				upstreamJSON := `{"id":"msg_1","type":"message","usage":{"input_tokens":5,"output_tokens":3}}`
 				upstream := &anthropicHTTPUpstreamRecorder{
+					respPayload: []byte(upstreamJSON),
 					resp: &http.Response{
 						StatusCode: http.StatusOK,
 						Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -401,6 +469,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ModelMappingEdgeCases(t *test
 
 				upstreamRespBody := `{"input_tokens":42}`
 				upstream := &anthropicHTTPUpstreamRecorder{
+					respPayload: []byte(upstreamRespBody),
 					resp: &http.Response{
 						StatusCode: http.StatusOK,
 						Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -440,6 +509,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ModelMappingPreservesOtherFie
 
 	upstreamRespBody := `{"input_tokens":42}`
 	upstream := &anthropicHTTPUpstreamRecorder{
+		respPayload: []byte(upstreamRespBody),
 		resp: &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -498,6 +568,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_EmptyModelSkipsMapping(t *tes
 
 	upstreamRespBody := `{"input_tokens":10}`
 	upstream := &anthropicHTTPUpstreamRecorder{
+		respPayload: []byte(upstreamRespBody),
 		resp: &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -584,6 +655,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_CountTokens404PassthroughNotE
 			parsed := &ParsedRequest{Body: body, Model: "claude-sonnet-4-5-20250929"}
 
 			upstream := &anthropicHTTPUpstreamRecorder{
+				respPayload: []byte(tt.respBody),
 				resp: &http.Response{
 					StatusCode: tt.statusCode,
 					Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -689,7 +761,7 @@ func TestGatewayService_AnthropicOAuth_NotAffectedByAPIKeyPassthroughToggle(t *t
 	require.Contains(t, getHeaderRaw(req.Header, "anthropic-beta"), claude.BetaOAuth, "OAuth 链路仍应按原逻辑补齐 oauth beta")
 }
 
-func TestGatewayService_AnthropicOAuth_ForwardPreservesBillingHeaderSystemBlock(t *testing.T) {
+func TestGatewayService_AnthropicOAuth_BuildUpstreamRequestPreservesBillingHeaderSystemBlock(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {
@@ -715,14 +787,16 @@ func TestGatewayService_AnthropicOAuth_ForwardPreservesBillingHeaderSystemBlock(
 			parsed, err := ParseGatewayRequest([]byte(tt.body), PlatformAnthropic)
 			require.NoError(t, err)
 
+			upstreamRespBody := `{"id":"msg_1","type":"message","role":"assistant","model":"claude-3-5-sonnet-20241022","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":12,"output_tokens":7}}`
 			upstream := &anthropicHTTPUpstreamRecorder{
+				respPayload: []byte(upstreamRespBody),
 				resp: &http.Response{
 					StatusCode: http.StatusOK,
 					Header: http.Header{
 						"Content-Type": []string{"application/json"},
 						"x-request-id": []string{"rid-oauth-preserve"},
 					},
-					Body: io.NopCloser(strings.NewReader(`{"id":"msg_1","type":"message","role":"assistant","model":"claude-3-5-sonnet-20241022","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":12,"output_tokens":7}}`)),
+					Body: io.NopCloser(strings.NewReader(upstreamRespBody)),
 				},
 			}
 
@@ -730,14 +804,17 @@ func TestGatewayService_AnthropicOAuth_ForwardPreservesBillingHeaderSystemBlock(
 				Gateway: config.GatewayConfig{
 					MaxLineSize: defaultMaxLineSize,
 				},
+				Security: config.SecurityConfig{
+					URLAllowlist: config.URLAllowlistConfig{Enabled: false},
+				},
 			}
 			svc := &GatewayService{
 				cfg:                  cfg,
 				responseHeaderFilter: compileResponseHeaderFilter(cfg),
-				httpUpstream:         upstream,
 				rateLimitService:     &RateLimitService{},
 				deferredService:      &DeferredService{},
 			}
+
 
 			account := &Account{
 				ID:          301,
@@ -752,14 +829,16 @@ func TestGatewayService_AnthropicOAuth_ForwardPreservesBillingHeaderSystemBlock(
 				Schedulable: true,
 			}
 
-			result, err := svc.Forward(context.Background(), c, account, parsed)
-			require.NoError(t, err)
-			require.NotNil(t, result)
-			require.NotNil(t, upstream.lastReq)
-			require.Equal(t, "Bearer oauth-token", getHeaderRaw(upstream.lastReq.Header, "authorization"))
-			require.Contains(t, getHeaderRaw(upstream.lastReq.Header, "anthropic-beta"), claude.BetaOAuth)
+			_, directErr := svc.handleNonStreamingResponse(context.Background(), cloneHTTPResponse(upstream.resp, upstream.respPayload), c, account, parsed.Model, parsed.Model)
+			require.NoError(t, directErr)
 
-			system := gjson.GetBytes(upstream.lastBody, "system")
+			result, err := svc.buildUpstreamRequest(context.Background(), c, account, rewriteSystemForNonClaudeCode(parsed.Body, parsed.System), "oauth-token", "oauth", parsed.Model, parsed.Stream, true)
+			require.NoError(t, err)
+			require.Equal(t, "Bearer oauth-token", getHeaderRaw(result.Header, "authorization"))
+			require.Contains(t, getHeaderRaw(result.Header, "anthropic-beta"), claude.BetaOAuth)
+
+			requestBody := readPassthroughRequestBodyForTest(t, result)
+			system := gjson.GetBytes(requestBody, "system")
 			require.True(t, system.Exists())
 			require.True(t, system.IsArray(), "system should be an array")
 			arr := system.Array()
@@ -772,7 +851,7 @@ func TestGatewayService_AnthropicOAuth_ForwardPreservesBillingHeaderSystemBlock(
 			require.Equal(t, "ephemeral", arr[1].Get("cache_control.type").String())
 
 			// 原始 system prompt 应迁移至 messages 中
-			messages := gjson.GetBytes(upstream.lastBody, "messages")
+			messages := gjson.GetBytes(requestBody, "messages")
 			require.True(t, messages.IsArray())
 			firstMsg := messages.Array()[0]
 			require.Equal(t, "user", firstMsg.Get("role").String())
@@ -866,6 +945,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDirect_NonStreamingSuc
 	body := []byte(`{"model":"claude-3-5-sonnet-latest","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`)
 	upstreamJSON := `{"id":"msg_1","type":"message","usage":{"input_tokens":12,"output_tokens":7,"cache_creation":{"ephemeral_5m_input_tokens":2,"ephemeral_1h_input_tokens":3},"cached_tokens":4}}`
 	upstream := &anthropicHTTPUpstreamRecorder{
+		respPayload: []byte(upstreamJSON),
 		resp: &http.Response{
 			StatusCode: http.StatusOK,
 			Header: http.Header{

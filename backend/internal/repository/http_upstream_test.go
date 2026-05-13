@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"sync/atomic"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -65,8 +67,25 @@ func (s *HTTPUpstreamSuite) TestCustomResponseHeaderTimeout() {
 // 验证解析失败时拒绝回退到直连模式
 func (s *HTTPUpstreamSuite) TestGetOrCreateClient_InvalidURLReturnsError() {
 	svc := s.newService()
-	_, err := svc.getClientEntry("://bad-proxy-url", 1, 1, false, false)
+	_, err := svc.getClientEntry("://bad-proxy-url", 1, 1, service.UpstreamRequestOptions{}, false, false)
 	require.Error(s.T(), err, "expected error for invalid proxy URL")
+}
+
+func (s *HTTPUpstreamSuite) TestApplyAccountUpstreamRequestOptionsEnablesSkipTLSVerify() {
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com", nil)
+	require.NoError(s.T(), err)
+
+	account := &service.Account{
+		Type:     service.AccountTypeAPIKey,
+		Platform: service.PlatformOpenAI,
+		Credentials: map[string]interface{}{
+			"base_url":         "https://gateway.example.com/v1",
+			"skip_tls_verify": true,
+		},
+	}
+
+	applied := service.ApplyAccountUpstreamRequestOptions(req, account)
+	require.True(s.T(), service.UpstreamRequestSkipsTLSVerify(applied))
 }
 
 // TestNormalizeProxyURL_Canonicalizes 测试代理 URL 规范化
@@ -281,10 +300,10 @@ func TestHTTPUpstreamSuite(t *testing.T) {
 	suite.Run(t, new(HTTPUpstreamSuite))
 }
 
-// mustGetOrCreateClient 测试辅助函数，调用 getOrCreateClient 并断言无错误
+// mustGetOrCreateClient 测试辅助函数，调用 getClientEntry 并断言无错误
 func mustGetOrCreateClient(t *testing.T, svc *httpUpstreamService, proxyURL string, accountID int64, concurrency int) *upstreamClientEntry {
 	t.Helper()
-	entry, err := svc.getOrCreateClient(proxyURL, accountID, concurrency)
+	entry, err := svc.getClientEntry(proxyURL, accountID, concurrency, service.UpstreamRequestOptions{}, false, false)
 	require.NoError(t, err, "getOrCreateClient(%q, %d, %d)", proxyURL, accountID, concurrency)
 	return entry
 }

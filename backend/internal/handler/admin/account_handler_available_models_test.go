@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -30,6 +31,7 @@ func setupAvailableModelsRouter(adminSvc service.AdminService) *gin.Engine {
 	router := gin.New()
 	handler := NewAccountHandler(adminSvc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	router.GET("/api/v1/admin/accounts/:id/models", handler.GetAvailableModels)
+	router.POST("/api/v1/admin/accounts/upstream-models/preview", handler.PreviewUpstreamModels)
 	return router
 }
 
@@ -104,8 +106,8 @@ func TestAccountHandlerGetAvailableModels_OpenAIOAuthPassthroughFallsBackToDefau
 	require.NotEqual(t, "gpt-5", resp.Data[0].ID)
 }
 
-func TestAccountHandlerFetchOpenAIUpstreamModelsAllowsLocalPreview(t *testing.T) {
-	handler := NewAccountHandler(newStubAdminService(), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+func TestAccountHandlerPreviewOpenAIUpstreamModelsAllowsLocalPreview(t *testing.T) {
+	router := setupAvailableModelsRouter(newStubAdminService())
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/v1/models", r.URL.Path)
 		require.Equal(t, "Bearer test-key", r.Header.Get("Authorization"))
@@ -114,9 +116,85 @@ func TestAccountHandlerFetchOpenAIUpstreamModelsAllowsLocalPreview(t *testing.T)
 	}))
 	defer upstream.Close()
 
-	models, err := handler.fetchOpenAIUpstreamModels(context.Background(), upstream.URL+"/v1", "test-key")
+	body := strings.NewReader(`{"platform":"openai","base_url":"` + upstream.URL + `/v1","api_key":"test-key"}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/upstream-models/preview", body)
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
 
-	require.NoError(t, err)
-	require.Len(t, models, 1)
-	require.Equal(t, "local-model", models[0].ID)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var resp struct {
+		Data struct {
+			Models []struct {
+				ID string `json:"id"`
+			} `json:"models"`
+			Source string `json:"source"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, "upstream", resp.Data.Source)
+	require.Len(t, resp.Data.Models, 1)
+	require.Equal(t, "local-model", resp.Data.Models[0].ID)
+}
+
+func TestAccountHandlerPreviewGeminiUpstreamModels(t *testing.T) {
+	router := setupAvailableModelsRouter(newStubAdminService())
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1beta/models", r.URL.Path)
+		require.Equal(t, "test-key", r.Header.Get("x-goog-api-key"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"name":"models/gemini-2.5-pro","displayName":"Gemini 2.5 Pro"}]}`))
+	}))
+	defer upstream.Close()
+
+	body := strings.NewReader(`{"platform":"gemini","base_url":"` + upstream.URL + `","api_key":"test-key","skip_tls_verify":true}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/upstream-models/preview", body)
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var resp struct {
+		Data struct {
+			Models []struct {
+				ID string `json:"id"`
+			} `json:"models"`
+			Source string `json:"source"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, "upstream", resp.Data.Source)
+	require.Len(t, resp.Data.Models, 1)
+	require.Equal(t, "gemini-2.5-pro", resp.Data.Models[0].ID)
+}
+
+func TestAccountHandlerPreviewAnthropicUpstreamModelsFallbacks(t *testing.T) {
+	router := setupAvailableModelsRouter(newStubAdminService())
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/models", r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"not found"}`))
+	}))
+	defer upstream.Close()
+
+	body := strings.NewReader(`{"platform":"anthropic","base_url":"` + upstream.URL + `","api_key":"test-key"}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/upstream-models/preview", body)
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var resp struct {
+		Data struct {
+			Models  []struct {
+				ID string `json:"id"`
+			} `json:"models"`
+			Source  string `json:"source"`
+			Message string `json:"message"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, "fallback", resp.Data.Source)
+	require.NotEmpty(t, resp.Data.Models)
+	require.Contains(t, resp.Data.Message, "无法从上游获取模型列表")
 }

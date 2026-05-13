@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { applyInterceptWarmup, isCustomOpenAIBaseURL } from '../credentialsBuilder'
+import {
+  applyInterceptWarmup,
+  getDefaultAPIKeyBaseURL,
+  isCustomOpenAIBaseURL,
+  isCustomPlatformBaseURL
+} from '../credentialsBuilder'
 
 describe('applyInterceptWarmup', () => {
   it('create + enabled=true: should set intercept_warmup_requests to true', () => {
@@ -55,5 +60,22 @@ describe('isCustomOpenAIBaseURL', () => {
   it('returns true for custom OpenAI-compatible upstream URLs', () => {
     expect(isCustomOpenAIBaseURL('https://gateway.example.com/v1')).toBe(true)
     expect(isCustomOpenAIBaseURL('https://openai-proxy.internal')).toBe(true)
+  })
+})
+
+describe('platform base URL helpers', () => {
+  it('returns platform defaults', () => {
+    expect(getDefaultAPIKeyBaseURL('openai')).toBe('https://api.openai.com')
+    expect(getDefaultAPIKeyBaseURL('gemini')).toBe('https://generativelanguage.googleapis.com')
+    expect(getDefaultAPIKeyBaseURL('anthropic')).toBe('https://api.anthropic.com')
+  })
+
+  it('detects custom Gemini and Anthropic base URLs', () => {
+    expect(isCustomPlatformBaseURL('gemini', 'https://generativelanguage.googleapis.com')).toBe(false)
+    expect(isCustomPlatformBaseURL('gemini', 'https://generativelanguage.googleapis.com/v1beta')).toBe(true)
+    expect(isCustomPlatformBaseURL('gemini', 'https://gemini-proxy.internal')).toBe(true)
+    expect(isCustomPlatformBaseURL('anthropic', 'https://api.anthropic.com')).toBe(false)
+    expect(isCustomPlatformBaseURL('anthropic', 'https://api.anthropic.com/v1')).toBe(false)
+    expect(isCustomPlatformBaseURL('anthropic', 'https://claude-proxy.internal')).toBe(true)
   })
 })

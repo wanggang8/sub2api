@@ -671,8 +671,7 @@ export type AccountType = 'oauth' | 'setup-token' | 'apikey' | 'upstream' | 'bed
 export type OAuthAddMethod = 'oauth' | 'setup-token'
 export type ProxyProtocol = 'http' | 'https' | 'socks5' | 'socks5h'
 
-// Claude Model type (returned by /v1/models and account models API)
-export interface ClaudeModel {
+export interface UpstreamModelOption {
   id: string
   type: string
   display_name: string

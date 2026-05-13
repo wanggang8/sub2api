@@ -20,7 +20,8 @@ vi.mock('@/api/admin', () => ({
   adminAPI: {
     accounts: {
       create: vi.fn(),
-      checkMixedChannelRisk: vi.fn()
+      checkMixedChannelRisk: vi.fn(),
+      previewUpstreamModels: vi.fn()
     },
     settings: {
       getSettings: vi.fn().mockResolvedValue({ account_quota_notify_enabled: false }),
@@ -108,20 +109,19 @@ async function switchToOpenAIAPIKey(wrapper: ReturnType<typeof mountModal>) {
 }
 
 describe('CreateAccountModal', () => {
-  it('shows upstream-only controls only for custom OpenAI API base URLs', async () => {
+  it('shows upstream-only controls for custom OpenAI API base URLs', async () => {
     const wrapper = mountModal()
 
     await switchToOpenAIAPIKey(wrapper)
 
-    expect(wrapper.text()).not.toContain('上游模型')
-    expect(wrapper.text()).not.toContain('OpenAI 上游协议')
+    expect(wrapper.text()).not.toContain('自定义上游')
 
     const baseUrlInput = wrapper.get('input[placeholder="https://api.openai.com"]')
     await baseUrlInput.setValue('https://gateway.example.com/v1')
     await nextTick()
 
-    expect(wrapper.text()).toContain('上游模型')
-    expect(wrapper.text()).toContain('OpenAI 上游协议')
+    expect(wrapper.text()).toContain('自定义上游')
     expect(wrapper.text()).toContain('读取上游模型')
+    expect(wrapper.text()).toContain('跳过 TLS 证书校验')
   })
 })

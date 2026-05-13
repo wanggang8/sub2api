@@ -1045,12 +1045,12 @@
         </div>
 
         <div
-          v-if="showOpenAIUpstreamProtocol"
+          v-if="showUpstreamSettings"
           class="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-dark-600 dark:bg-dark-700/40"
         >
           <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
-              <label class="input-label mb-0">上游模型</label>
+              <label class="input-label mb-0">自定义上游</label>
               <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                 使用当前基础地址和 API Key 读取上游模型，用于下面的模型白名单与映射候选项。
               </p>
@@ -1058,14 +1058,21 @@
             <button
               type="button"
               class="btn btn-secondary shrink-0"
-              :disabled="!canFetchOpenAIUpstreamModels || openaiFetching"
-              @click="fetchOpenAIUpstreamModelsPreview"
+              :disabled="!canFetchUpstreamModels || upstreamFetching"
+              @click="fetchUpstreamModelsPreview"
             >
-              <span v-if="openaiFetching">读取中...</span>
+              <span v-if="upstreamFetching">读取中...</span>
               <span v-else>读取上游模型</span>
             </button>
           </div>
-          <p v-if="openaiFetchHint" class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ openaiFetchHint }}</p>
+          <label class="mt-4 flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300">
+            <input v-model="apiKeySkipTLSVerify" type="checkbox" class="h-4 w-4 rounded border-gray-300" />
+            <span>跳过 TLS 证书校验</span>
+          </label>
+          <p class="mt-1 text-xs text-amber-600 dark:text-amber-400">
+            仅对自定义上游生效。开启后会忽略上游证书校验，仅建议用于自签名或证书异常环境。
+          </p>
+          <p v-if="upstreamFetchHint" class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ upstreamFetchHint }}</p>
         </div>
 
         <!-- Gemini API Key tier selection -->
@@ -2539,7 +2546,7 @@
 
       <!-- OpenAI 上游协议（仅 API Key） -->
       <div
-        v-if="showOpenAIUpstreamProtocol"
+        v-if="showUpstreamSettings && form.platform === 'openai'"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="mb-3">
@@ -3214,7 +3221,7 @@ import ProxySelector from '@/components/common/ProxySelector.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
 import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
-import { applyInterceptWarmup, isCustomOpenAIBaseURL } from '@/components/account/credentialsBuilder'
+import { applyInterceptWarmup, getDefaultAPIKeyBaseURL, isCustomPlatformBaseURL } from '@/components/account/credentialsBuilder'
 import { formatDateTimeLocalInput, parseDateTimeLocalInput } from '@/utils/format'
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
 import { VERTEX_LOCATION_OPTIONS } from '@/constants/account'
@@ -3336,6 +3343,7 @@ const submitting = ref(false)
 const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_account'>('oauth-based') // UI selection for account category
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
+const apiKeySkipTLSVerify = ref(false)
 const apiKeyValue = ref('')
 const editQuotaLimit = ref<number | null>(null)
 const editQuotaDailyLimit = ref<number | null>(null)
@@ -3350,9 +3358,9 @@ const modelMappings = ref<ModelMapping[]>([])
 const openAICompactModelMappings = ref<ModelMapping[]>([])
 const modelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
 const allowedModels = ref<string[]>([])
-const openaiFetchedModels = ref<string[] | null>(null)
-const openaiFetchHint = ref('')
-const openaiFetching = ref(false)
+const upstreamFetchedModels = ref<string[] | null>(null)
+const upstreamFetchHint = ref('')
+const upstreamFetching = ref(false)
 const DEFAULT_POOL_MODE_RETRY_COUNT = 3
 const MAX_POOL_MODE_RETRY_COUNT = 10
 const poolModeEnabled = ref(false)
@@ -3517,31 +3525,31 @@ const isOpenAIModelRestrictionDisabled = computed(() =>
   form.platform === 'openai' && openaiPassthroughEnabled.value
 )
 
-const canFetchOpenAIUpstreamModels = computed(() => (
-  form.platform === 'openai'
+const canFetchUpstreamModels = computed(() => (
+  ['openai', 'anthropic', 'gemini'].includes(form.platform)
   && accountCategory.value === 'apikey'
   && apiKeyBaseUrl.value.trim().length > 0
   && apiKeyValue.value.trim().length > 0
 ))
 
-const hasCustomOpenAIAPIKeyBaseURL = computed(() => (
-  form.platform === 'openai'
+const hasCustomAPIKeyBaseURL = computed(() => (
+  ['openai', 'anthropic', 'gemini'].includes(form.platform)
   && accountCategory.value === 'apikey'
-  && isCustomOpenAIBaseURL(apiKeyBaseUrl.value)
+  && isCustomPlatformBaseURL(form.platform, apiKeyBaseUrl.value)
 ))
 
-const showOpenAIUpstreamProtocol = computed(() => hasCustomOpenAIAPIKeyBaseURL.value)
+const showUpstreamSettings = computed(() => hasCustomAPIKeyBaseURL.value)
 
 const currentOpenAISelectableModels = computed(() => {
-  if (form.platform === 'openai' && accountCategory.value === 'apikey' && openaiFetchedModels.value && openaiFetchedModels.value.length > 0) {
-    return openaiFetchedModels.value
+  if (form.platform === 'openai' && accountCategory.value === 'apikey' && upstreamFetchedModels.value && upstreamFetchedModels.value.length > 0) {
+    return upstreamFetchedModels.value
   }
   return getModelsByPlatform('openai')
 })
 
 const presetMappings = computed(() => {
-  if (form.platform === 'openai' && accountCategory.value === 'apikey' && openaiFetchedModels.value && openaiFetchedModels.value.length > 0) {
-    const passthroughPresets = openaiFetchedModels.value.map((model, index) => ({
+  if (form.platform === 'openai' && accountCategory.value === 'apikey' && upstreamFetchedModels.value && upstreamFetchedModels.value.length > 0) {
+    const passthroughPresets = upstreamFetchedModels.value.map((model, index) => ({
       label: `${model}透传`,
       from: model,
       to: model,
@@ -3550,8 +3558,8 @@ const presetMappings = computed(() => {
         : 'bg-sky-100 text-sky-700 hover:bg-sky-200 dark:bg-sky-900/30 dark:text-sky-400'
     }))
 
-    const preferredTarget = openaiFetchedModels.value.find(model => ['gpt-5.4', 'gpt-5.2', 'gpt-5'].includes(model))
-      || openaiFetchedModels.value[0]
+    const preferredTarget = upstreamFetchedModels.value.find(model => ['gpt-5.4', 'gpt-5.2', 'gpt-5'].includes(model))
+      || upstreamFetchedModels.value[0]
 
     const bridgePresets = preferredTarget
       ? [
@@ -3683,7 +3691,7 @@ watch(
         .catch(() => { tlsFingerprintProfiles.value = [] })
       // Modal opened - fill related models
       allowedModels.value = [...getModelsByPlatform(form.platform)]
-      resetOpenAIFetchedModels()
+      resetUpstreamFetchedModels()
       // Antigravity: 默认使用映射模式并填充默认映射
       if (form.platform === 'antigravity') {
         antigravityModelRestrictionMode.value = 'mapping'
@@ -3732,16 +3740,12 @@ watch(
   () => form.platform,
   (newPlatform) => {
     // Reset base URL based on platform
-    apiKeyBaseUrl.value =
-      (newPlatform === 'openai')
-        ? 'https://api.openai.com'
-        : newPlatform === 'gemini'
-          ? 'https://generativelanguage.googleapis.com'
-          : 'https://api.anthropic.com'
+    apiKeyBaseUrl.value = getDefaultAPIKeyBaseURL(newPlatform)
+    apiKeySkipTLSVerify.value = false
     // Clear model-related settings
     allowedModels.value = []
     modelMappings.value = []
-    resetOpenAIFetchedModels()
+    resetUpstreamFetchedModels()
     // Antigravity: 默认使用映射模式并填充默认映射
     if (newPlatform === 'antigravity') {
       antigravityModelRestrictionMode.value = 'mapping'
@@ -4149,6 +4153,7 @@ const resetForm = () => {
   accountCategory.value = 'oauth-based'
   addMethod.value = 'oauth'
   apiKeyBaseUrl.value = 'https://api.anthropic.com'
+  apiKeySkipTLSVerify.value = false
   apiKeyValue.value = ''
   editQuotaLimit.value = null
   editQuotaDailyLimit.value = null
@@ -4227,13 +4232,16 @@ const resetForm = () => {
 
 watch([() => form.platform, accountCategory], ([platform, category], [prevPlatform, prevCategory]) => {
   if (platform !== prevPlatform || category !== prevCategory) {
-    resetOpenAIFetchedModels()
+    resetUpstreamFetchedModels()
   }
 })
 
 watch([apiKeyBaseUrl, apiKeyValue], ([baseUrl, apiKey], [prevBaseUrl, prevApiKey]) => {
   if (baseUrl !== prevBaseUrl || apiKey !== prevApiKey) {
-    resetOpenAIFetchedModels()
+    resetUpstreamFetchedModels()
+    if (!showUpstreamSettings.value) {
+      apiKeySkipTLSVerify.value = false
+    }
   }
 })
 
@@ -4256,7 +4264,7 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
     extra.openai_apikey_responses_websockets_v2_mode = openaiAPIKeyResponsesWebSocketV2Mode.value
     extra.openai_apikey_responses_websockets_v2_enabled = isOpenAIWSModeEnabled(openaiAPIKeyResponsesWebSocketV2Mode.value)
 
-    if (hasCustomOpenAIAPIKeyBaseURL.value) {
+    if (showUpstreamSettings.value && form.platform === 'openai') {
       if (openaiUpstreamCapability.value === 'responses') {
         extra.openai_upstream_supports_responses = true
         extra.openai_upstream_supports_chat_completions = false
@@ -4351,32 +4359,34 @@ const handleMixedChannelCancel = () => {
   clearMixedChannelDialog()
 }
 
-const resetOpenAIFetchedModels = () => {
-  openaiFetchedModels.value = null
-  openaiFetchHint.value = ''
-  openaiFetching.value = false
+const resetUpstreamFetchedModels = () => {
+  upstreamFetchedModels.value = null
+  upstreamFetchHint.value = ''
+  upstreamFetching.value = false
 }
 
-const fetchOpenAIUpstreamModelsPreview = async () => {
-  if (!canFetchOpenAIUpstreamModels.value || openaiFetching.value) {
+const fetchUpstreamModelsPreview = async () => {
+  if (!canFetchUpstreamModels.value || upstreamFetching.value) {
     return
   }
-  openaiFetching.value = true
+  upstreamFetching.value = true
   try {
-    const result = await adminAPI.accounts.previewOpenAIUpstreamModels({
+    const result = await adminAPI.accounts.previewUpstreamModels({
+      platform: form.platform,
       base_url: apiKeyBaseUrl.value.trim(),
-      api_key: apiKeyValue.value.trim()
+      api_key: apiKeyValue.value.trim(),
+      skip_tls_verify: showUpstreamSettings.value ? apiKeySkipTLSVerify.value : false
     })
     if (result.source === 'upstream' && result.models?.length) {
-      openaiFetchedModels.value = result.models.map(model => model.id)
-      openaiFetchHint.value = `已获取 ${result.models.length} 个上游模型，当前候选列表已更新。`
+      upstreamFetchedModels.value = result.models.map((model: { id: string }) => model.id)
+      upstreamFetchHint.value = `已获取 ${result.models.length} 个上游模型，当前候选列表已更新。`
     } else {
-      openaiFetchHint.value = result.message || '读取失败，继续使用内置模型列表。'
+      upstreamFetchHint.value = result.message || '读取失败，继续使用内置模型列表。'
     }
   } catch (error: any) {
-    openaiFetchHint.value = error.message || '读取失败，继续使用内置模型列表。'
+    upstreamFetchHint.value = error.message || '读取失败，继续使用内置模型列表。'
   } finally {
-    openaiFetching.value = false
+    upstreamFetching.value = false
   }
 }
 
@@ -4582,18 +4592,15 @@ const handleSubmit = async () => {
     return
   }
 
-  // Determine default base URL based on platform
-  const defaultBaseUrl =
-    form.platform === 'openai'
-      ? 'https://api.openai.com'
-      : form.platform === 'gemini'
-        ? 'https://generativelanguage.googleapis.com'
-        : 'https://api.anthropic.com'
+  const defaultBaseUrl = getDefaultAPIKeyBaseURL(form.platform)
 
   // Build credentials with optional model mapping
   const credentials: Record<string, unknown> = {
     base_url: apiKeyBaseUrl.value.trim() || defaultBaseUrl,
     api_key: apiKeyValue.value.trim()
+  }
+  if (showUpstreamSettings.value && apiKeySkipTLSVerify.value) {
+    credentials.skip_tls_verify = true
   }
   if (form.platform === 'gemini') {
     credentials.tier_id = geminiTierAIStudio.value

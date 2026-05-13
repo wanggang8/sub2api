@@ -25,7 +25,8 @@ vi.mock('@/api/admin', () => ({
   adminAPI: {
     accounts: {
       update: updateAccountMock,
-      checkMixedChannelRisk: checkMixedChannelRiskMock
+      checkMixedChannelRisk: checkMixedChannelRiskMock,
+      previewUpstreamModels: vi.fn()
     },
     settings: {
       getSettings: vi.fn().mockResolvedValue({ account_quota_notify_enabled: false }),
@@ -151,6 +152,15 @@ function buildCustomBaseURLAccount() {
   return account
 }
 
+function buildCustomBaseURLAccountWithSkipTLS() {
+  const account = buildCustomBaseURLAccount()
+  account.credentials = {
+    ...account.credentials,
+    skip_tls_verify: true
+  }
+  return account
+}
+
 function mountModal(account = buildAccount()) {
   return mount(EditAccountModal, {
     props: {
@@ -173,15 +183,33 @@ function mountModal(account = buildAccount()) {
 }
 
 describe('EditAccountModal', () => {
-  it('shows upstream-only controls only for custom OpenAI API base URLs', () => {
+  it('shows upstream-only controls for custom OpenAI API base URLs', () => {
     const officialWrapper = mountModal(buildAccount())
-    expect(officialWrapper.text()).not.toContain('上游模型')
-    expect(officialWrapper.text()).not.toContain('OpenAI 上游协议')
+    expect(officialWrapper.text()).not.toContain('自定义上游')
 
     const customWrapper = mountModal(buildCustomBaseURLAccount())
-    expect(customWrapper.text()).toContain('上游模型')
-    expect(customWrapper.text()).toContain('OpenAI 上游协议')
+    expect(customWrapper.text()).toContain('自定义上游')
     expect(customWrapper.text()).toContain('读取上游模型')
+    expect(customWrapper.text()).toContain('跳过 TLS 证书校验')
+  })
+
+  it('clears skip_tls_verify when custom upstream toggle is unchecked before submit', async () => {
+    const account = buildCustomBaseURLAccountWithSkipTLS()
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const checkbox = wrapper.findAll('input[type="checkbox"]').find((node) => node.element.nextElementSibling?.textContent?.includes('跳过 TLS 证书校验'))
+    expect(checkbox).toBeTruthy()
+    expect((checkbox!.element as HTMLInputElement).checked).toBe(true)
+
+    await checkbox!.setValue(false)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty('skip_tls_verify')
   })
 
   it('reopening the same account rehydrates the OpenAI whitelist from props', async () => {
