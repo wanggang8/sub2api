@@ -5,12 +5,14 @@ package tlsfingerprint
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 
 	utls "github.com/refraction-networking/utls"
 	"golang.org/x/net/proxy"
@@ -34,22 +36,25 @@ type Profile struct {
 
 // Dialer creates TLS connections with custom fingerprints.
 type Dialer struct {
-	profile    *Profile
-	baseDialer func(ctx context.Context, network, addr string) (net.Conn, error)
+	profile       *Profile
+	baseDialer    func(ctx context.Context, network, addr string) (net.Conn, error)
+	skipTLSVerify bool
 }
 
 // HTTPProxyDialer creates TLS connections through HTTP/HTTPS proxies with custom fingerprints.
 // It handles the CONNECT tunnel establishment before performing TLS handshake.
 type HTTPProxyDialer struct {
-	profile  *Profile
-	proxyURL *url.URL
+	profile       *Profile
+	proxyURL      *url.URL
+	skipTLSVerify bool
 }
 
 // SOCKS5ProxyDialer creates TLS connections through SOCKS5 proxies with custom fingerprints.
 // It uses golang.org/x/net/proxy to establish the SOCKS5 tunnel.
 type SOCKS5ProxyDialer struct {
-	profile  *Profile
-	proxyURL *url.URL
+	profile       *Profile
+	proxyURL      *url.URL
+	skipTLSVerify bool
 }
 
 // Default TLS fingerprint values captured from Claude Code (Node.js 24.x)
@@ -120,22 +125,37 @@ var (
 // baseDialer is used for TCP connection establishment (supports proxy scenarios).
 // If baseDialer is nil, direct TCP dial is used.
 func NewDialer(profile *Profile, baseDialer func(ctx context.Context, network, addr string) (net.Conn, error)) *Dialer {
+	return NewDialerWithSkipTLSVerify(profile, baseDialer, false)
+}
+
+// NewDialerWithSkipTLSVerify creates a new TLS fingerprint dialer with optional certificate verification bypass.
+func NewDialerWithSkipTLSVerify(profile *Profile, baseDialer func(ctx context.Context, network, addr string) (net.Conn, error), skipTLSVerify bool) *Dialer {
 	if baseDialer == nil {
 		baseDialer = (&net.Dialer{}).DialContext
 	}
-	return &Dialer{profile: profile, baseDialer: baseDialer}
+	return &Dialer{profile: profile, baseDialer: baseDialer, skipTLSVerify: skipTLSVerify}
 }
 
 // NewHTTPProxyDialer creates a new TLS fingerprint dialer that works through HTTP/HTTPS proxies.
 // It establishes a CONNECT tunnel before performing TLS handshake with custom fingerprint.
 func NewHTTPProxyDialer(profile *Profile, proxyURL *url.URL) *HTTPProxyDialer {
-	return &HTTPProxyDialer{profile: profile, proxyURL: proxyURL}
+	return NewHTTPProxyDialerWithSkipTLSVerify(profile, proxyURL, false)
+}
+
+// NewHTTPProxyDialerWithSkipTLSVerify creates an HTTP proxy TLS fingerprint dialer with optional certificate verification bypass.
+func NewHTTPProxyDialerWithSkipTLSVerify(profile *Profile, proxyURL *url.URL, skipTLSVerify bool) *HTTPProxyDialer {
+	return &HTTPProxyDialer{profile: profile, proxyURL: proxyURL, skipTLSVerify: skipTLSVerify}
 }
 
 // NewSOCKS5ProxyDialer creates a new TLS fingerprint dialer that works through SOCKS5 proxies.
 // It establishes a SOCKS5 tunnel before performing TLS handshake with custom fingerprint.
 func NewSOCKS5ProxyDialer(profile *Profile, proxyURL *url.URL) *SOCKS5ProxyDialer {
-	return &SOCKS5ProxyDialer{profile: profile, proxyURL: proxyURL}
+	return NewSOCKS5ProxyDialerWithSkipTLSVerify(profile, proxyURL, false)
+}
+
+// NewSOCKS5ProxyDialerWithSkipTLSVerify creates a SOCKS5 proxy TLS fingerprint dialer with optional certificate verification bypass.
+func NewSOCKS5ProxyDialerWithSkipTLSVerify(profile *Profile, proxyURL *url.URL, skipTLSVerify bool) *SOCKS5ProxyDialer {
+	return &SOCKS5ProxyDialer{profile: profile, proxyURL: proxyURL, skipTLSVerify: skipTLSVerify}
 }
 
 // DialTLSContext establishes a TLS connection through SOCKS5 proxy with the configured fingerprint.
@@ -176,7 +196,7 @@ func (d *SOCKS5ProxyDialer) DialTLSContext(ctx context.Context, network, addr st
 	slog.Debug("tls_fingerprint_socks5_tunnel_established")
 
 	// Step 3: Perform TLS handshake on the tunnel with utls fingerprint
-	return performTLSHandshake(ctx, conn, d.profile, addr)
+	return performTLSHandshake(ctx, conn, d.profile, addr, d.skipTLSVerify)
 }
 
 // DialTLSContext establishes a TLS connection through HTTP proxy with the configured fingerprint.
@@ -202,6 +222,19 @@ func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr stri
 	if err != nil {
 		slog.Debug("tls_fingerprint_http_proxy_connect_failed", "error", err)
 		return nil, fmt.Errorf("connect to proxy: %w", err)
+	}
+	if strings.EqualFold(d.proxyURL.Scheme, "https") {
+		proxyHost := d.proxyURL.Hostname()
+		if proxyHost == "" {
+			proxyHost = proxyAddr
+		}
+		tlsConn := tls.Client(conn, &tls.Config{ServerName: proxyHost})
+		if err := tlsConn.HandshakeContext(ctx); err != nil {
+			_ = conn.Close()
+			slog.Debug("tls_fingerprint_https_proxy_tls_failed", "error", err)
+			return nil, fmt.Errorf("TLS handshake with proxy: %w", err)
+		}
+		conn = tlsConn
 	}
 	slog.Debug("tls_fingerprint_http_proxy_connected", "proxy_addr", proxyAddr)
 
@@ -247,7 +280,7 @@ func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr stri
 	slog.Debug("tls_fingerprint_http_proxy_tunnel_established")
 
 	// Step 4: Perform TLS handshake on the tunnel with utls fingerprint
-	return performTLSHandshake(ctx, conn, d.profile, addr)
+	return performTLSHandshake(ctx, conn, d.profile, addr, d.skipTLSVerify)
 }
 
 // DialTLSContext establishes a TLS connection with the configured fingerprint.
@@ -263,20 +296,20 @@ func (d *Dialer) DialTLSContext(ctx context.Context, network, addr string) (net.
 	slog.Debug("tls_fingerprint_tcp_connected", "addr", addr)
 
 	// Perform TLS handshake with utls fingerprint
-	return performTLSHandshake(ctx, conn, d.profile, addr)
+	return performTLSHandshake(ctx, conn, d.profile, addr, d.skipTLSVerify)
 }
 
 // performTLSHandshake performs the uTLS handshake on an established connection.
 // It builds a ClientHello spec from the profile, applies it, and completes the handshake.
 // On failure, conn is closed and an error is returned.
-func performTLSHandshake(ctx context.Context, conn net.Conn, profile *Profile, addr string) (net.Conn, error) {
+func performTLSHandshake(ctx context.Context, conn net.Conn, profile *Profile, addr string, skipTLSVerify bool) (net.Conn, error) {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		host = addr
 	}
 
 	spec := buildClientHelloSpecFromProfile(profile)
-	tlsConn := utls.UClient(conn, &utls.Config{ServerName: host}, utls.HelloCustom)
+	tlsConn := utls.UClient(conn, &utls.Config{ServerName: host, InsecureSkipVerify: skipTLSVerify}, utls.HelloCustom) //nolint:gosec // Account-level escape hatch for broken custom upstream certificates.
 
 	if err := tlsConn.ApplyPreset(spec); err != nil {
 		_ = conn.Close()

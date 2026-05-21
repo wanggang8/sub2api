@@ -39,6 +39,13 @@ if (
   })
 }
 
+if (typeof window !== 'undefined' && typeof window.localStorage?.getItem !== 'function') {
+  Object.defineProperty(window, 'localStorage', {
+    configurable: true,
+    value: globalThis.localStorage,
+  })
+}
+
 // Mock requestIdleCallback (Safari < 15 不支持)
 if (typeof globalThis.requestIdleCallback === 'undefined') {
   globalThis.requestIdleCallback = ((callback: IdleRequestCallback) => {
