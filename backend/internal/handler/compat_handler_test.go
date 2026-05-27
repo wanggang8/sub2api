@@ -396,7 +396,7 @@ func TestCursorCompatHandlerChatCompletionsOpenAIResponsesBridgeInjectsInstructi
 			ForcedCodexInstructionsTemplate: "cursor-handler-template",
 		},
 	}
-	billingCacheService := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg)
+	billingCacheService := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
 	defer billingCacheService.Stop()
 
 	gatewayService := service.NewOpenAIGatewayService(
@@ -414,6 +414,7 @@ func TestCursorCompatHandlerChatCompletionsOpenAIResponsesBridgeInjectsInstructi
 		nil,
 		billingCacheService,
 		upstream,
+		nil,
 		nil,
 		nil,
 		nil,
@@ -503,7 +504,7 @@ func TestCursorCompatHandlerChatCompletionsOpenAIResponsesBridgeConvertsApplyPat
 	}}
 
 	cfg := &config.Config{RunMode: config.RunModeSimple}
-	billingCacheService := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg)
+	billingCacheService := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
 	defer billingCacheService.Stop()
 
 	gatewayService := service.NewOpenAIGatewayService(
@@ -521,6 +522,7 @@ func TestCursorCompatHandlerChatCompletionsOpenAIResponsesBridgeConvertsApplyPat
 		nil,
 		billingCacheService,
 		upstream,
+		nil,
 		nil,
 		nil,
 		nil,
