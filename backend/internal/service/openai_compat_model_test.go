@@ -286,6 +286,51 @@ func TestForwardAsAnthropic_InjectsPromptCacheKeyForAPIKeyMessagesDispatch(t *te
 	require.Equal(t, 3, result.Usage.CacheReadInputTokens)
 }
 
+func TestForwardAsAnthropic_DirectMessagesUsesAccountPoolRetryStatusCodes(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{"model":"claude-sonnet-4-5","max_tokens":16,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusBadGateway,
+		Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid_messages_502"}},
+		Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"bad gateway"}}`)),
+	}}
+
+	svc := &OpenAIGatewayService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := &Account{
+		ID:          1,
+		Name:        "openai-apikey",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":                        "sk-test",
+			"base_url":                       "https://custom-openai.example/v1",
+			"pool_mode":                      true,
+			"pool_mode_retry_status_codes":   []any{float64(http.StatusBadGateway)},
+			"openai_apikey_base_url_enabled": true,
+		},
+		Extra: map[string]any{
+			"openai_upstream_supports_messages": true,
+		},
+	}
+
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "gpt-5.1")
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.True(t, failoverErr.RetryableOnSameAccount)
+}
+
 func TestForwardAsAnthropic_AutoDerivesPromptCacheKeyWhenMessagesDispatchHasNoSessionID(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
