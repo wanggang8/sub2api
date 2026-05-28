@@ -332,12 +332,15 @@ describe('EmailVerifyView', () => {
     await wrapper.get('form').trigger('submit.prevent')
     await flushPromises()
 
-    expect(apiClientPostMock).toHaveBeenCalledWith('/auth/oauth/pending/create-account', {
-      email: 'fresh@example.com',
-      password: 'secret-123',
-      verify_code: '123456',
-      aff_code: 'AFF123',
-    })
+    expect(apiClientPostMock).toHaveBeenCalledWith(
+      '/auth/oauth/pending/create-account',
+      expect.objectContaining({
+        email: 'fresh@example.com',
+        password: 'secret-123',
+        verify_code: '123456',
+      })
+    )
+    expect(apiClientPostMock.mock.calls[0][1]).not.toHaveProperty('aff_code')
     expect(persistOAuthTokenContextMock).toHaveBeenCalledWith({
       access_token: 'oauth-access-token',
       refresh_token: 'oauth-refresh-token',
