@@ -278,14 +278,14 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 				Message:            upstreamMsg,
 				Detail:             upstreamDetail,
 			})
-			s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
+			s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, upstreamModel)
 			return nil, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
-				RetryableOnSameAccount: account.IsPoolMode() && (isPoolModeRetryableStatus(resp.StatusCode) || isOpenAITransientProcessingError(resp.StatusCode, upstreamMsg, respBody)),
+				RetryableOnSameAccount: account.IsPoolMode() && (account.IsPoolModeRetryableStatus(resp.StatusCode) || isOpenAITransientProcessingError(resp.StatusCode, upstreamMsg, respBody)),
 			}
 		}
-		return s.handleChatCompletionsErrorResponse(resp, c, account)
+		return s.handleChatCompletionsErrorResponse(resp, c, account, billingModel)
 	}
 
 	var result *OpenAIForwardResult
@@ -371,6 +371,17 @@ func normalizeResponsesShapeForChatCompletionsDirect(body []byte) ([]byte, error
 		}
 	}
 	return normalized, nil
+}
+
+// handleChatCompletionsErrorResponse reads an upstream error and returns it in
+// OpenAI Chat Completions error format.
+func (s *OpenAIGatewayService) handleChatCompletionsErrorResponse(
+	resp *http.Response,
+	c *gin.Context,
+	account *Account,
+	requestedModel ...string,
+) (*OpenAIForwardResult, error) {
+	return s.handleCompatErrorResponse(resp, c, account, writeChatCompletionsError, requestedModel...)
 }
 
 func (s *OpenAIGatewayService) forwardOpenAIChatCompletionsDirect(
@@ -473,10 +484,6 @@ func ensureChatCompletionsStreamUsage(body []byte) []byte {
 		return body
 	}
 	return patched
-}
-
-func (s *OpenAIGatewayService) handleChatCompletionsErrorResponse(resp *http.Response, c *gin.Context, account *Account) (*OpenAIForwardResult, error) {
-	return s.handleCompatErrorResponse(resp, c, account, writeChatCompletionsError)
 }
 
 func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(resp *http.Response, c *gin.Context, originalModel string, billingModel string, upstreamModel string, startTime time.Time) (*OpenAIForwardResult, error) {
