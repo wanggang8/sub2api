@@ -58,6 +58,10 @@ const ExtraKeyResponsesMode = "openai_responses_mode"
 // 值类型为 bool：true=支持、false=不支持、键缺失=未探测。
 const ExtraKeyResponsesSupported = "openai_responses_supported"
 
+// ExtraKeyMessagesSupported 是 accounts.extra JSON 中存储 /v1/messages 自动探测结果的键名。
+// 值类型为 bool：true=支持、false=不支持、键缺失=未探测。
+const ExtraKeyMessagesSupported = "openai_messages_supported"
+
 // NormalizeResponsesSupportMode 归一化账号级 Responses API 路由覆盖模式。
 // 缺失或非法值按 auto 处理，以保持存量行为。
 func NormalizeResponsesSupportMode(mode string) ResponsesSupportMode {

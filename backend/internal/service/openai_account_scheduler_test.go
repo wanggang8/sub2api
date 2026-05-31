@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/stretchr/testify/require"
 )
 
@@ -515,8 +516,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_FiltersByOpenAIRequestC
 		Priority:    0,
 		Credentials: map[string]any{"api_key": "k1", "base_url": "https://gateway.example/v1"},
 		Extra: map[string]any{
-			"openai_upstream_supports_chat_completions": false,
-			"openai_upstream_supports_responses":        true,
+			openai_compat.ExtraKeyResponsesSupported: true,
 		},
 	}
 	chatOnly := Account{
@@ -529,8 +529,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_FiltersByOpenAIRequestC
 		Priority:    5,
 		Credentials: map[string]any{"api_key": "k2", "base_url": "https://gateway.example/v1"},
 		Extra: map[string]any{
-			"openai_upstream_supports_chat_completions": true,
-			"openai_upstream_supports_responses":        false,
+			openai_compat.ExtraKeyResponsesSupported: false,
 		},
 	}
 	svc := &OpenAIGatewayService{
@@ -559,12 +558,10 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_FiltersByChatCompletion
 		Priority:    5,
 		Credentials: map[string]any{"api_key": "k1", "base_url": "https://gateway.example/v1"},
 		Extra: map[string]any{
-			"openai_upstream_supports_chat_completions": false,
-			"openai_upstream_supports_messages":         false,
-			"openai_upstream_supports_responses":        true,
+			openai_compat.ExtraKeyResponsesSupported: true,
 		},
 	}
-	messagesOnly := Account{
+	chatOnly := Account{
 		ID:          36002,
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeAPIKey,
@@ -574,13 +571,11 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_FiltersByChatCompletion
 		Priority:    0,
 		Credentials: map[string]any{"api_key": "k2", "base_url": "https://gateway.example/v1"},
 		Extra: map[string]any{
-			"openai_upstream_supports_chat_completions": false,
-			"openai_upstream_supports_messages":         true,
-			"openai_upstream_supports_responses":        false,
+			openai_compat.ExtraKeyResponsesSupported: false,
 		},
 	}
 	svc := &OpenAIGatewayService{
-		accountRepo:        stubOpenAIAccountRepo{accounts: []Account{responsesOnly, messagesOnly}},
+		accountRepo:        stubOpenAIAccountRepo{accounts: []Account{responsesOnly, chatOnly}},
 		cfg:                &config.Config{},
 		concurrencyService: NewConcurrencyService(stubConcurrencyCache{}),
 	}
@@ -589,7 +584,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_FiltersByChatCompletion
 	require.NoError(t, err)
 	require.NotNil(t, selection)
 	require.NotNil(t, selection.Account)
-	require.Equal(t, responsesOnly.ID, selection.Account.ID)
+	require.Equal(t, chatOnly.ID, selection.Account.ID)
 }
 
 func TestOpenAIGatewayService_SelectAccountWithScheduler_FiltersByMessagesCompatibility(t *testing.T) {
@@ -605,9 +600,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_FiltersByMessagesCompat
 		Priority:    0,
 		Credentials: map[string]any{"api_key": "k1", "base_url": "https://gateway.example/v1"},
 		Extra: map[string]any{
-			"openai_upstream_supports_chat_completions": true,
-			"openai_upstream_supports_messages":         false,
-			"openai_upstream_supports_responses":        false,
+			openai_compat.ExtraKeyResponsesSupported: false,
 		},
 	}
 	messagesOnly := Account{
@@ -620,9 +613,8 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_FiltersByMessagesCompat
 		Priority:    5,
 		Credentials: map[string]any{"api_key": "k2", "base_url": "https://gateway.example/v1"},
 		Extra: map[string]any{
-			"openai_upstream_supports_chat_completions": false,
-			"openai_upstream_supports_messages":         true,
-			"openai_upstream_supports_responses":        false,
+			openai_compat.ExtraKeyResponsesSupported: false,
+			openai_compat.ExtraKeyMessagesSupported:  true,
 		},
 	}
 	svc := &OpenAIGatewayService{
@@ -657,7 +649,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_ReturnsModelSupportErro
 			},
 		},
 		Extra: map[string]any{
-			"openai_upstream_supports_responses": true,
+			openai_compat.ExtraKeyResponsesSupported: true,
 		},
 	}
 	svc := &OpenAIGatewayService{
@@ -984,6 +976,87 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyDBRuntimeR
 	require.NotNil(t, selection)
 	require.NotNil(t, selection.Account)
 	require.Equal(t, int64(33002), selection.Account.ID)
+	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyDBCapabilityRecheckSkipsStaleCachedAccount(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(10109)
+	staleSticky := &Account{
+		ID:          39001,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    0,
+		Credentials: map[string]any{"api_key": "stale-sticky", "base_url": "https://gateway.example/v1"},
+		Extra: map[string]any{
+			openai_compat.ExtraKeyResponsesSupported: false,
+			openai_compat.ExtraKeyMessagesSupported:  true,
+		},
+	}
+	staleBackup := &Account{
+		ID:          39002,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    5,
+		Credentials: map[string]any{"api_key": "backup", "base_url": "https://gateway.example/v1"},
+		Extra: map[string]any{
+			openai_compat.ExtraKeyResponsesSupported: false,
+			openai_compat.ExtraKeyMessagesSupported:  true,
+		},
+	}
+	dbSticky := Account{
+		ID:          39001,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    0,
+		Credentials: map[string]any{"api_key": "db-sticky", "base_url": "https://gateway.example/v1"},
+		Extra: map[string]any{
+			openai_compat.ExtraKeyResponsesSupported: false,
+			openai_compat.ExtraKeyMessagesSupported:  false,
+		},
+	}
+	dbBackup := Account{
+		ID:          39002,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    5,
+		Credentials: map[string]any{"api_key": "backup", "base_url": "https://gateway.example/v1"},
+		Extra: map[string]any{
+			openai_compat.ExtraKeyResponsesSupported: false,
+			openai_compat.ExtraKeyMessagesSupported:  true,
+		},
+	}
+	cache := &schedulerTestGatewayCache{sessionBindings: map[string]int64{"openai:session_hash_db_capability_recheck": 39001}}
+	snapshotCache := &openAISnapshotCacheStub{
+		snapshotAccounts: []*Account{staleSticky, staleBackup},
+		accountsByID:     map[int64]*Account{39001: staleSticky, 39002: staleBackup},
+	}
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: []Account{dbSticky, dbBackup}},
+		cache:              cache,
+		cfg:                &config.Config{},
+		rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true"),
+		schedulerSnapshot:  &SchedulerSnapshotService{cache: snapshotCache},
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+	}
+
+	selection, decision, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "session_hash_db_capability_recheck", "gpt-5.1", nil, OpenAIUpstreamTransportAny, OpenAIUpstreamCapabilityMessages, false)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, int64(39002), selection.Account.ID)
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
 }
 

@@ -16,6 +16,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 )
 
 type Account struct {
@@ -1156,16 +1157,10 @@ func (a *Account) SupportsOpenAIResponsesUpstream() bool {
 	if a.IsOpenAIOAuth() {
 		return true
 	}
-	if !a.hasCustomOpenAIBaseURL() {
-		return true
+	if !a.IsOpenAIApiKey() {
+		return false
 	}
-	if a.Extra == nil {
-		return true
-	}
-	if enabled, ok := a.Extra["openai_upstream_supports_responses"].(bool); ok {
-		return enabled
-	}
-	return true
+	return openai_compat.ShouldUseResponsesAPI(a.Extra)
 }
 
 func (a *Account) SupportsOpenAIChatCompletionsUpstream() bool {
@@ -1175,13 +1170,10 @@ func (a *Account) SupportsOpenAIChatCompletionsUpstream() bool {
 	if a.IsOpenAIOAuth() {
 		return false
 	}
-	if !a.hasCustomOpenAIBaseURL() || a.Extra == nil {
+	if !a.IsOpenAIApiKey() {
 		return false
 	}
-	if enabled, ok := a.Extra["openai_upstream_supports_chat_completions"].(bool); ok {
-		return enabled
-	}
-	return false
+	return !openai_compat.ShouldUseResponsesAPI(a.Extra)
 }
 
 func (a *Account) SupportsOpenAIMessagesUpstream() bool {
@@ -1191,10 +1183,10 @@ func (a *Account) SupportsOpenAIMessagesUpstream() bool {
 	if a.IsOpenAIOAuth() {
 		return false
 	}
-	if !a.hasCustomOpenAIBaseURL() || a.Extra == nil {
+	if !a.IsOpenAIApiKey() || a.Extra == nil {
 		return false
 	}
-	if enabled, ok := a.Extra["openai_upstream_supports_messages"].(bool); ok {
+	if enabled, ok := a.Extra[openai_compat.ExtraKeyMessagesSupported].(bool); ok {
 		return enabled
 	}
 	return false
@@ -1219,9 +1211,6 @@ func (a *Account) hasCustomOpenAIBaseURL() bool {
 
 func sanitizeOpenAIUpstreamCapabilityExtra(account *Account) {
 	if account == nil || account.Extra == nil {
-		return
-	}
-	if account.IsOpenAIApiKey() && account.hasCustomOpenAIBaseURL() {
 		return
 	}
 	delete(account.Extra, "openai_upstream_supports_responses")

@@ -645,16 +645,14 @@ func (h *AccountHandler) Update(c *gin.Context) {
 		return
 	}
 
-	// OpenAI APIKey: credentials 修改后重新探测上游能力（base_url/api_key 可能变更）。
-	// 异步执行，探测失败不影响账号更新响应。
-	if len(req.Credentials) > 0 {
-		h.scheduleOpenAIResponsesProbe(account)
-	}
+	// OpenAI APIKey: 保存后重新探测上游能力，确保编辑账号即可刷新
+	// /v1/responses 与 /v1/messages 支持状态。异步执行，探测失败不影响更新响应。
+	h.scheduleOpenAIResponsesProbe(account)
 
 	response.Success(c, h.buildAccountResponseWithRuntime(c.Request.Context(), account))
 }
 
-// scheduleOpenAIResponsesProbe 异步触发 OpenAI APIKey 账号的 Responses API 能力探测。
+// scheduleOpenAIResponsesProbe 异步触发 OpenAI APIKey 账号的 Responses/Messages API 能力探测。
 //
 // 仅对 platform=openai && type=apikey 账号生效；其他账号无操作。
 // 探测本身在 goroutine 中执行（会发一次 HTTP 请求到上游），不会阻塞

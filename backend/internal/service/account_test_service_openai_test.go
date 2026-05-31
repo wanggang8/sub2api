@@ -349,15 +349,13 @@ func TestResolveOpenAIAccountTestProtocol(t *testing.T) {
 				"base_url": "https://gateway.example/v1",
 			},
 			Extra: map[string]any{
-				"openai_upstream_supports_responses":        true,
-				"openai_upstream_supports_chat_completions": false,
-				"openai_upstream_supports_messages":         false,
+				openai_compat.ExtraKeyResponsesSupported: true,
 			},
 		}
 		require.Equal(t, openAIAccountTestProtocolResponses, resolveOpenAIAccountTestProtocol(account))
 	})
 
-	t.Run("messages preferred over chat for legacy mixed flag", func(t *testing.T) {
+	t.Run("messages preferred over chat when probe supports messages", func(t *testing.T) {
 		account := &Account{
 			Platform: PlatformOpenAI,
 			Type:     AccountTypeAPIKey,
@@ -366,9 +364,8 @@ func TestResolveOpenAIAccountTestProtocol(t *testing.T) {
 				"base_url": "https://gateway.example/v1",
 			},
 			Extra: map[string]any{
-				"openai_upstream_supports_responses":        false,
-				"openai_upstream_supports_chat_completions": true,
-				"openai_upstream_supports_messages":         true,
+				openai_compat.ExtraKeyResponsesSupported: false,
+				openai_compat.ExtraKeyMessagesSupported:  true,
 			},
 		}
 		require.Equal(t, openAIAccountTestProtocolMessages, resolveOpenAIAccountTestProtocol(account))
@@ -383,12 +380,26 @@ func TestResolveOpenAIAccountTestProtocol(t *testing.T) {
 				"base_url": "https://gateway.example/v1",
 			},
 			Extra: map[string]any{
-				"openai_upstream_supports_responses":        false,
-				"openai_upstream_supports_chat_completions": true,
-				"openai_upstream_supports_messages":         false,
+				openai_compat.ExtraKeyResponsesSupported: false,
 			},
 		}
 		require.Equal(t, openAIAccountTestProtocolChatCompletions, resolveOpenAIAccountTestProtocol(account))
+	})
+
+	t.Run("force responses overrides stale chat flag", func(t *testing.T) {
+		account := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"api_key":  "k",
+				"base_url": "https://gateway.example/v1",
+			},
+			Extra: map[string]any{
+				openai_compat.ExtraKeyResponsesMode:      string(openai_compat.ResponsesSupportModeForceResponses),
+				openai_compat.ExtraKeyResponsesSupported: false,
+			},
+		}
+		require.Equal(t, openAIAccountTestProtocolResponses, resolveOpenAIAccountTestProtocol(account))
 	})
 }
 
@@ -414,9 +425,7 @@ func TestAccountTestService_OpenAIAPIKeyUsesSelectedUpstreamProtocolForTest(t *t
 			Concurrency: 1,
 			Credentials: map[string]any{"api_key": "test-key", "base_url": "https://gateway.example/v1"},
 			Extra: map[string]any{
-				"openai_upstream_supports_responses":        true,
-				"openai_upstream_supports_chat_completions": false,
-				"openai_upstream_supports_messages":         false,
+				openai_compat.ExtraKeyResponsesSupported: true,
 			},
 		}
 
@@ -453,9 +462,7 @@ func TestAccountTestService_OpenAIAPIKeyUsesSelectedUpstreamProtocolForTest(t *t
 			Concurrency: 1,
 			Credentials: map[string]any{"api_key": "test-key", "base_url": "https://gateway.example/v1"},
 			Extra: map[string]any{
-				"openai_upstream_supports_responses":        false,
-				"openai_upstream_supports_chat_completions": true,
-				"openai_upstream_supports_messages":         false,
+				openai_compat.ExtraKeyResponsesSupported: false,
 			},
 		}
 
@@ -492,9 +499,8 @@ func TestAccountTestService_OpenAIAPIKeyUsesSelectedUpstreamProtocolForTest(t *t
 			Concurrency: 1,
 			Credentials: map[string]any{"api_key": "test-key", "base_url": "https://gateway.example/v1"},
 			Extra: map[string]any{
-				"openai_upstream_supports_responses":        false,
-				"openai_upstream_supports_chat_completions": false,
-				"openai_upstream_supports_messages":         true,
+				openai_compat.ExtraKeyResponsesSupported: false,
+				openai_compat.ExtraKeyMessagesSupported:  true,
 			},
 		}
 
@@ -590,7 +596,7 @@ func TestAccountTestService_OpenAIAPIKeyResponsesUnsupportedUsesChatCompletionsP
 	require.Equal(t, "text/event-stream", upstream.lastReq.Header.Get("Accept"))
 	require.Equal(t, "gpt-5.4", gjson.GetBytes(upstream.lastBody, "model").String())
 	require.True(t, gjson.GetBytes(upstream.lastBody, "stream").Bool())
-	require.Equal(t, "hello", gjson.GetBytes(upstream.lastBody, "messages.0.content").String())
+	require.Equal(t, "hello", gjson.GetBytes(upstream.lastBody, "messages.1.content").String())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "input").Exists())
 	body := recorder.Body.String()
 	require.Contains(t, body, "pong")

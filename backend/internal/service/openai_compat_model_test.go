@@ -17,6 +17,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -320,7 +321,7 @@ func TestForwardAsAnthropic_DirectMessagesUsesAccountPoolRetryStatusCodes(t *tes
 			"openai_apikey_base_url_enabled": true,
 		},
 		Extra: map[string]any{
-			"openai_upstream_supports_messages": true,
+			openai_compat.ExtraKeyMessagesSupported: true,
 		},
 	}
 

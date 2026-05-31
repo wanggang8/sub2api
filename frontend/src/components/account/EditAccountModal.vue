@@ -1386,60 +1386,6 @@
         </div>
       </div>
 
-      <!-- OpenAI 上游协议（仅 API Key） -->
-      <div
-        v-if="showUpstreamSettings && account.platform === 'openai'"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600"
-      >
-        <div class="mb-3">
-          <label class="input-label mb-0">OpenAI 上游协议</label>
-          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            为自定义 OpenAI 基础地址指定上游实际支持的接口协议。
-          </p>
-        </div>
-        <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
-          <button
-            type="button"
-            @click="openaiUpstreamCapability = 'responses'"
-            :class="[
-              'rounded-lg border-2 p-3 text-left transition-all',
-              openaiUpstreamCapability === 'responses'
-                ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
-                : 'border-gray-200 hover:border-green-300 dark:border-dark-600 dark:hover:border-green-700'
-            ]"
-          >
-            <div class="text-sm font-medium text-gray-900 dark:text-white">响应接口</div>
-            <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">默认 OpenAI 兼容接口</div>
-          </button>
-          <button
-            type="button"
-            @click="openaiUpstreamCapability = 'chat_completions'"
-            :class="[
-              'rounded-lg border-2 p-3 text-left transition-all',
-              openaiUpstreamCapability === 'chat_completions'
-                ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
-                : 'border-gray-200 hover:border-green-300 dark:border-dark-600 dark:hover:border-green-700'
-            ]"
-          >
-            <div class="text-sm font-medium text-gray-900 dark:text-white">聊天补全接口</div>
-            <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">对应 `/v1/chat/completions`</div>
-          </button>
-          <button
-            type="button"
-            @click="openaiUpstreamCapability = 'messages'"
-            :class="[
-              'rounded-lg border-2 p-3 text-left transition-all',
-              openaiUpstreamCapability === 'messages'
-                ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
-                : 'border-gray-200 hover:border-green-300 dark:border-dark-600 dark:hover:border-green-700'
-            ]"
-          >
-            <div class="text-sm font-medium text-gray-900 dark:text-white">消息接口</div>
-            <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">对应 `/v1/messages`</div>
-          </button>
-        </div>
-      </div>
-
       <!-- OpenAI Codex 图片生成桥接账号级覆盖 -->
       <div
         v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'apikey')"
@@ -2668,7 +2614,6 @@ const customBaseUrl = ref('')
 
 // OpenAI 自动透传开关（OAuth/API Key）
 const openaiPassthroughEnabled = ref(false)
-const openaiUpstreamCapability = ref<'responses' | 'chat_completions' | 'messages'>('responses')
 const openAICompactMode = ref<OpenAICompactMode>('auto')
 const openAIResponsesMode = ref<OpenAIResponsesMode>('auto')
 const openAIEndpointCapabilities = ref<OpenAIEndpointCapability[]>(['chat_completions', 'embeddings'])
@@ -3093,7 +3038,6 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 
   // Load OpenAI passthrough toggle (OpenAI OAuth/API Key)
   openaiPassthroughEnabled.value = false
-  openaiUpstreamCapability.value = 'responses'
   openAICompactMode.value = 'auto'
   openAIResponsesMode.value = 'auto'
   openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
@@ -3107,15 +3051,6 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   webSearchEmulationMode.value = 'default'
   if (newAccount.platform === 'openai' && (newAccount.type === 'oauth' || newAccount.type === 'apikey')) {
     openaiPassthroughEnabled.value = extra?.openai_passthrough === true || extra?.openai_oauth_passthrough === true
-    if (newAccount.type === 'apikey') {
-      if (extra?.openai_upstream_supports_messages === true) {
-        openaiUpstreamCapability.value = 'messages'
-      } else if (extra?.openai_upstream_supports_chat_completions === true && extra?.openai_upstream_supports_responses === false) {
-        openaiUpstreamCapability.value = 'chat_completions'
-      } else {
-        openaiUpstreamCapability.value = 'responses'
-      }
-    }
     openAICompactMode.value = (extra?.openai_compact_mode as OpenAICompactMode) || 'auto'
     if (newAccount.type === 'apikey') {
       openAIResponsesMode.value = normalizeOpenAIResponsesMode(extra?.openai_responses_mode)
@@ -4292,27 +4227,9 @@ const handleSubmit = async () => {
         delete newExtra.openai_passthrough
         delete newExtra.openai_oauth_passthrough
       }
-      if (props.account.type === 'apikey') {
-        if (showUpstreamSettings.value && props.account.platform === 'openai') {
-          if (openaiUpstreamCapability.value === 'responses') {
-            newExtra.openai_upstream_supports_responses = true
-            newExtra.openai_upstream_supports_chat_completions = false
-            newExtra.openai_upstream_supports_messages = false
-          } else if (openaiUpstreamCapability.value === 'chat_completions') {
-            newExtra.openai_upstream_supports_responses = false
-            newExtra.openai_upstream_supports_chat_completions = true
-            newExtra.openai_upstream_supports_messages = false
-          } else {
-            newExtra.openai_upstream_supports_responses = false
-            newExtra.openai_upstream_supports_chat_completions = false
-            newExtra.openai_upstream_supports_messages = true
-          }
-        } else {
-          delete newExtra.openai_upstream_supports_responses
-          delete newExtra.openai_upstream_supports_chat_completions
-          delete newExtra.openai_upstream_supports_messages
-        }
-      }
+      delete newExtra.openai_upstream_supports_responses
+      delete newExtra.openai_upstream_supports_chat_completions
+      delete newExtra.openai_upstream_supports_messages
       if (openAICompactMode.value === 'auto') {
         delete newExtra.openai_compact_mode
       } else {

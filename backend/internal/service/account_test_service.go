@@ -569,7 +569,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		case openAIAccountTestProtocolMessages:
 			apiURL = buildOpenAIMessagesURL(normalizedBaseURL)
 		case openAIAccountTestProtocolChatCompletions:
-			apiURL = buildOpenAIChatCompletionsURL(normalizedBaseURL)
+			return s.testOpenAIChatCompletionsConnection(c, account, testModelID, prompt, normalizedBaseURL, authToken)
 		default:
 			if !openai_compat.ShouldUseResponsesAPI(account.Extra) {
 				return s.testOpenAIChatCompletionsConnection(c, account, testModelID, prompt, normalizedBaseURL, authToken)
@@ -1316,11 +1316,19 @@ func resolveOpenAIAccountTestProtocol(account *Account) openAIAccountTestProtoco
 	if account == nil {
 		return openAIAccountTestProtocolResponses
 	}
+	if account.Type == AccountTypeAPIKey && account.Extra != nil {
+		mode, _ := account.Extra[openai_compat.ExtraKeyResponsesMode].(string)
+		switch openai_compat.NormalizeResponsesSupportMode(mode) {
+		case openai_compat.ResponsesSupportModeForceResponses:
+			return openAIAccountTestProtocolResponses
+		case openai_compat.ResponsesSupportModeForceChatCompletions:
+			return openAIAccountTestProtocolChatCompletions
+		}
+	}
 	if account.SupportsOpenAIResponsesUpstream() {
 		return openAIAccountTestProtocolResponses
 	}
-	// Older UI saved "messages" as chat+messages. Prefer messages when both are true
-	// so account testing matches the visible admin selection as closely as possible.
+	// Responses 不可用时再按 /v1/messages 探测结果测试直连 Messages 路径。
 	if account.SupportsOpenAIMessagesUpstream() {
 		return openAIAccountTestProtocolMessages
 	}

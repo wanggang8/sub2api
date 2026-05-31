@@ -44,8 +44,23 @@ func openaiResponsesProbePayload(modelID string) []byte {
 	return body
 }
 
+func openaiMessagesProbePayload(modelID string) []byte {
+	if strings.TrimSpace(modelID) == "" {
+		modelID = openai.DefaultTestModel
+	}
+	body, _ := json.Marshal(map[string]any{
+		"model": modelID,
+		"messages": []map[string]any{
+			{"role": "user", "content": "hi"},
+		},
+		"max_tokens": 1,
+		"stream":     false,
+	})
+	return body
+}
+
 // ProbeOpenAIAPIKeyResponsesSupport 探测 OpenAI APIKey 账号上游是否支持
-// /v1/responses 端点，并将结果持久化到 accounts.extra.openai_responses_supported。
+// /v1/responses 和 /v1/messages 端点，并将结果持久化到 accounts.extra。
 //
 // 调用时机：账号创建/更新后，且仅当 platform=openai && type=apikey 时。
 //
@@ -85,19 +100,22 @@ func (s *AccountTestService) ProbeOpenAIAPIKeyResponsesSupport(ctx context.Conte
 		return
 	}
 
-	probeURL := buildOpenAIResponsesURL(normalizedBaseURL)
+	s.probeOpenAIAPIKeyEndpointSupport(ctx, account, buildOpenAIResponsesURL(normalizedBaseURL), openaiResponsesProbePayload(""), openai_compat.ExtraKeyResponsesSupported)
+	s.probeOpenAIAPIKeyEndpointSupport(ctx, account, buildOpenAIMessagesURL(normalizedBaseURL), openaiMessagesProbePayload(""), openai_compat.ExtraKeyMessagesSupported)
+}
 
+func (s *AccountTestService) probeOpenAIAPIKeyEndpointSupport(ctx context.Context, account *Account, probeURL string, payload []byte, extraKey string) {
 	probeCtx, cancel := context.WithTimeout(ctx, openaiResponsesProbeTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(probeCtx, http.MethodPost, probeURL, bytes.NewReader(openaiResponsesProbePayload("")))
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodPost, probeURL, bytes.NewReader(payload))
 	if err != nil {
-		logger.LegacyPrintf("service.openai_probe", "probe_build_request_failed: account_id=%d err=%v", accountID, err)
+		logger.LegacyPrintf("service.openai_probe", "probe_build_request_failed: account_id=%d key=%s err=%v", account.ID, extraKey, err)
 		return
 	}
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Authorization", "Bearer "+account.GetOpenAIApiKey())
 	req.Header.Set("Accept", "application/json")
 
 	proxyURL := ""
@@ -108,7 +126,7 @@ func (s *AccountTestService) ProbeOpenAIAPIKeyResponsesSupport(ctx context.Conte
 	resp, err := s.httpUpstream.DoWithTLS(ApplyAccountUpstreamRequestOptions(req, account), proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
 		// 网络层失败：不写标记，保持 unknown，下次重试或由网关 fallback 处理
-		logger.LegacyPrintf("service.openai_probe", "probe_request_failed: account_id=%d url=%s err=%v", accountID, probeURL, err)
+		logger.LegacyPrintf("service.openai_probe", "probe_request_failed: account_id=%d key=%s url=%s err=%v", account.ID, extraKey, probeURL, err)
 		return
 	}
 	defer func() {
@@ -118,16 +136,16 @@ func (s *AccountTestService) ProbeOpenAIAPIKeyResponsesSupport(ctx context.Conte
 
 	supported := isResponsesEndpointSupportedByStatus(resp.StatusCode)
 
-	if err := s.accountRepo.UpdateExtra(ctx, accountID, map[string]any{
-		openai_compat.ExtraKeyResponsesSupported: supported,
+	if err := s.accountRepo.UpdateExtra(ctx, account.ID, map[string]any{
+		extraKey: supported,
 	}); err != nil {
-		logger.LegacyPrintf("service.openai_probe", "probe_persist_failed: account_id=%d supported=%v err=%v", accountID, supported, err)
+		logger.LegacyPrintf("service.openai_probe", "probe_persist_failed: account_id=%d key=%s supported=%v err=%v", account.ID, extraKey, supported, err)
 		return
 	}
 
 	logger.LegacyPrintf("service.openai_probe",
-		"probe_done: account_id=%d base_url=%s status=%d supported=%v",
-		accountID, normalizedBaseURL, resp.StatusCode, supported,
+		"probe_done: account_id=%d key=%s url=%s status=%d supported=%v",
+		account.ID, extraKey, probeURL, resp.StatusCode, supported,
 	)
 }
 

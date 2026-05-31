@@ -11,10 +11,10 @@ import (
 
 type openAIUpstreamCapabilityAccountRepoStub struct {
 	mockAccountRepoForGemini
-	account      *Account
-	created      *Account
-	createCalls  int
-	updateCalls  int
+	account     *Account
+	created     *Account
+	createCalls int
+	updateCalls int
 }
 
 func (r *openAIUpstreamCapabilityAccountRepoStub) Create(_ context.Context, account *Account) error {
@@ -45,6 +45,30 @@ func TestCreateAccount_OfficialOpenAIBaseURLClearsUpstreamCapabilityFlags(t *tes
 		Platform:             PlatformOpenAI,
 		Type:                 AccountTypeAPIKey,
 		Credentials:          map[string]any{"api_key": "sk-test", "base_url": "https://api.openai.com"},
+		Extra:                map[string]any{"openai_upstream_supports_responses": false, "openai_upstream_supports_chat_completions": true, "openai_upstream_supports_messages": true},
+		Concurrency:          1,
+		Priority:             1,
+		SkipDefaultGroupBind: true,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, account)
+	require.Equal(t, 1, repo.createCalls)
+	require.NotNil(t, repo.created)
+	require.NotContains(t, repo.created.Extra, "openai_upstream_supports_responses")
+	require.NotContains(t, repo.created.Extra, "openai_upstream_supports_chat_completions")
+	require.NotContains(t, repo.created.Extra, "openai_upstream_supports_messages")
+}
+
+func TestCreateAccount_CustomOpenAIBaseURLClearsLegacyUpstreamCapabilityFlags(t *testing.T) {
+	repo := &openAIUpstreamCapabilityAccountRepoStub{}
+	svc := &adminServiceImpl{accountRepo: repo}
+
+	account, err := svc.CreateAccount(context.Background(), &CreateAccountInput{
+		Name:                 "Custom OpenAI",
+		Platform:             PlatformOpenAI,
+		Type:                 AccountTypeAPIKey,
+		Credentials:          map[string]any{"api_key": "sk-test", "base_url": "https://gateway.example.com/v1"},
 		Extra:                map[string]any{"openai_upstream_supports_responses": false, "openai_upstream_supports_chat_completions": true, "openai_upstream_supports_messages": true},
 		Concurrency:          1,
 		Priority:             1,

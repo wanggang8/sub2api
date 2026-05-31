@@ -3,6 +3,7 @@ package service
 import (
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/stretchr/testify/require"
 )
 
@@ -204,19 +205,43 @@ func TestAccount_IsOpenAIResponsesWebSocketV2Enabled(t *testing.T) {
 		require.False(t, customBase.SupportsOpenAIMessagesUpstream())
 	})
 
-	t.Run("显式声明能力字段覆盖默认推断", func(t *testing.T) {
+	t.Run("上游 responses 探测结果决定 chat completions 能力", func(t *testing.T) {
+		customChat := &Account{
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Credentials: map[string]any{"api_key": "k-chat", "base_url": "https://gateway.example/v1"},
+			Extra: map[string]any{
+				openai_compat.ExtraKeyResponsesSupported: false,
+			},
+		}
+		require.False(t, customChat.SupportsOpenAIResponsesUpstream())
+		require.True(t, customChat.SupportsOpenAIChatCompletionsUpstream())
+	})
+
+	t.Run("force responses 覆盖残留旧 chat 字段", func(t *testing.T) {
+		customResponses := &Account{
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Credentials: map[string]any{"api_key": "k-responses", "base_url": "https://gateway.example/v1"},
+			Extra: map[string]any{
+				openai_compat.ExtraKeyResponsesMode:         string(openai_compat.ResponsesSupportModeForceResponses),
+				"openai_upstream_supports_responses":        false,
+				"openai_upstream_supports_chat_completions": true,
+			},
+		}
+		require.True(t, customResponses.SupportsOpenAIResponsesUpstream())
+		require.False(t, customResponses.SupportsOpenAIChatCompletionsUpstream())
+	})
+
+	t.Run("messages 能力由自动探测字段决定", func(t *testing.T) {
 		customMessages := &Account{
 			Platform:    PlatformOpenAI,
 			Type:        AccountTypeAPIKey,
 			Credentials: map[string]any{"api_key": "k-msg", "base_url": "https://gateway.example/v1"},
 			Extra: map[string]any{
-				"openai_upstream_supports_responses":        false,
-				"openai_upstream_supports_chat_completions": true,
-				"openai_upstream_supports_messages":         true,
+				openai_compat.ExtraKeyMessagesSupported: true,
 			},
 		}
-		require.False(t, customMessages.SupportsOpenAIResponsesUpstream())
-		require.True(t, customMessages.SupportsOpenAIChatCompletionsUpstream())
 		require.True(t, customMessages.SupportsOpenAIMessagesUpstream())
 	})
 
