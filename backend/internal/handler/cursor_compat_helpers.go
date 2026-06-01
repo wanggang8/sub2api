@@ -109,18 +109,6 @@ func applyCursorCompatSession(c *gin.Context, body []byte) []byte {
 	}
 }
 
-func cursorCompatRequestStream(c *gin.Context) bool {
-	if c == nil || c.Request == nil || c.Request.Body == nil {
-		return false
-	}
-	body, err := io.ReadAll(c.Request.Body)
-	if err != nil {
-		return false
-	}
-	rewriteCursorCompatRequestBody(c, body)
-	return cursorCompatRequestStreamFromBody(body)
-}
-
 func cursorCompatRequestStreamFromBody(body []byte) bool {
 	if len(body) == 0 {
 		return false
@@ -132,18 +120,6 @@ func cursorCompatRequestStreamFromBody(body []byte) bool {
 		return false
 	}
 	return payload.Stream
-}
-
-func cursorCompatRequestModel(c *gin.Context) string {
-	if c == nil || c.Request == nil || c.Request.Body == nil {
-		return ""
-	}
-	body, err := io.ReadAll(c.Request.Body)
-	if err != nil {
-		return ""
-	}
-	rewriteCursorCompatRequestBody(c, body)
-	return cursorCompatRequestModelFromBody(body)
 }
 
 func cursorCompatRequestModelFromBody(body []byte) string {
@@ -224,9 +200,10 @@ func writeCursorCompatAnthropicError(c *gin.Context, result *executorcompat.Exec
 	if errType == "" {
 		errType = "invalid_request_error"
 	}
-	payload := gin.H{"type": "error", "error": gin.H{"type": errType, "message": message}}
+	errorPayload := gin.H{"type": errType, "message": message}
+	payload := gin.H{"type": "error", "error": errorPayload}
 	if strings.TrimSpace(code) != "" {
-		payload["error"].(gin.H)["code"] = code
+		errorPayload["code"] = code
 	}
 	c.JSON(status, payload)
 }

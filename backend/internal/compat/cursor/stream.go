@@ -34,7 +34,7 @@ func PatchMessagesStreamChunk(chunk []byte, state *MessagesStreamState) ([]byte,
 	var output bytes.Buffer
 	eventName, data, ok := parseMessagesSSEChunk(chunk)
 	if !ok {
-		output.Write(chunk)
+		_, _ = output.Write(chunk)
 		return output.Bytes(), nil
 	}
 	if data == "[DONE]" {
@@ -47,7 +47,7 @@ func PatchMessagesStreamChunk(chunk []byte, state *MessagesStreamState) ([]byte,
 
 	payload, ok := decodeMessagesJSONObject([]byte(data))
 	if !ok {
-		output.Write(chunk)
+		_, _ = output.Write(chunk)
 		return output.Bytes(), nil
 	}
 	for _, item := range formatMessagesStreamEvent(eventName, payload, state) {
@@ -220,22 +220,22 @@ func writeMessagesSSEChunk(buffer *bytes.Buffer, eventName string, payload any) 
 		return
 	}
 	if eventName != "" {
-		buffer.WriteString("event: ")
-		buffer.WriteString(eventName)
-		buffer.WriteByte('\n')
+		_, _ = buffer.WriteString("event: ")
+		_, _ = buffer.WriteString(eventName)
+		_ = buffer.WriteByte('\n')
 	}
-	buffer.WriteString("data: ")
+	_, _ = buffer.WriteString("data: ")
 	switch value := payload.(type) {
 	case string:
-		buffer.WriteString(value)
+		_, _ = buffer.WriteString(value)
 	case map[string]any:
 		encoded, _ := json.Marshal(value)
-		buffer.Write(encoded)
+		_, _ = buffer.Write(encoded)
 	default:
 		encoded, _ := json.Marshal(value)
-		buffer.Write(encoded)
+		_, _ = buffer.Write(encoded)
 	}
-	buffer.WriteString("\n\n")
+	_, _ = buffer.WriteString("\n\n")
 }
 
 func decodeMessagesJSONObject(body []byte) (map[string]any, bool) {

@@ -30,12 +30,12 @@ func PatchChatStreamChunk(chunk []byte, clientModel string, state *ChatStreamSta
 	var output bytes.Buffer
 	eventName, data, ok := parseMessagesSSEChunk(chunk)
 	if !ok {
-		output.Write(chunk)
+		_, _ = output.Write(chunk)
 		return output.Bytes(), nil
 	}
 	if data == "[DONE]" {
 		if closeChunk := finalizeChatThinkingChunk(state, clientModel); len(closeChunk) > 0 {
-			output.Write(closeChunk)
+			_, _ = output.Write(closeChunk)
 		}
 		writeMessagesSSEChunk(&output, "", "[DONE]")
 		return output.Bytes(), nil
@@ -43,7 +43,7 @@ func PatchChatStreamChunk(chunk []byte, clientModel string, state *ChatStreamSta
 
 	payload, ok := decodeMessagesJSONObject([]byte(data))
 	if !ok {
-		output.Write(chunk)
+		_, _ = output.Write(chunk)
 		return output.Bytes(), nil
 	}
 
@@ -332,11 +332,11 @@ func convertLegacyStreamFunctionCall(delta map[string]any, choice map[string]any
 	}
 
 	toolCall := map[string]any{
-		"index":    0,
-		"type":     "function",
-		"function": map[string]any{},
+		"index": 0,
+		"type":  "function",
 	}
-	functionMap := toolCall["function"].(map[string]any)
+	functionMap := map[string]any{}
+	toolCall["function"] = functionMap
 	if name := messagesStringValue(functionCall["name"]); name != "" {
 		functionMap["name"] = name
 	}

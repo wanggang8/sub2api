@@ -396,7 +396,7 @@ func responsesShapeReasoningText(item responsesShapeInputItem) string {
 	var builder strings.Builder
 	for _, part := range parts {
 		if part.Type == "summary_text" && part.Text != "" {
-			builder.WriteString(part.Text)
+			_, _ = builder.WriteString(part.Text)
 		}
 	}
 	return builder.String()

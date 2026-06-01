@@ -609,14 +609,14 @@ func normalizeCursorToolDefinition(tool any) any {
 		return tool
 	}
 	if name := strings.TrimSpace(fmt.Sprint(toolMap["name"])); name != "" {
-		normalized := map[string]any{
-			"type": "function",
-			"function": map[string]any{
-				"name":        name,
-				"description": strings.TrimSpace(fmt.Sprint(toolMap["description"])),
-			},
+		functionData := map[string]any{
+			"name":        name,
+			"description": strings.TrimSpace(fmt.Sprint(toolMap["description"])),
 		}
-		functionData := normalized["function"].(map[string]any)
+		normalized := map[string]any{
+			"type":     "function",
+			"function": functionData,
+		}
 		if inputSchema, exists := toolMap["input_schema"]; exists {
 			functionData["parameters"] = inputSchema
 		} else if parameters, exists := toolMap["parameters"]; exists {
@@ -1028,7 +1028,7 @@ func chatMessageContentToText(raw json.RawMessage) string {
 	var builder strings.Builder
 	for _, part := range parts {
 		if part.Type == "text" && part.Text != "" {
-			builder.WriteString(part.Text)
+			_, _ = builder.WriteString(part.Text)
 		}
 	}
 	return builder.String()

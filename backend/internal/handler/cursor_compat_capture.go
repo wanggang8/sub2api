@@ -10,11 +10,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func normalizeCursorRequestBody(c *gin.Context, fn func([]byte) ([]byte, error)) bool {
-	_, ok := normalizeCursorRequestBodyBytes(c, fn)
-	return ok
-}
-
 func normalizeCursorRequestBodyBytes(c *gin.Context, fn func([]byte) ([]byte, error)) ([]byte, bool) {
 	if c == nil || c.Request == nil || fn == nil {
 		return nil, true

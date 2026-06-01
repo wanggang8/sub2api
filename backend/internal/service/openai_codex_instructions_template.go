@@ -126,37 +126,6 @@ func applyForcedCodexInstructionsTemplateToChatCompletionsBodyIfNeeded(
 	return patchedBody, true, nil
 }
 
-func applyForcedCodexInstructionsTemplateToAnthropicBodyIfNeeded(
-	c *gin.Context,
-	body []byte,
-	templateText string,
-	data forcedCodexInstructionsTemplateData,
-) ([]byte, bool, error) {
-	if len(body) == 0 || strings.TrimSpace(templateText) == "" || !shouldApplyForcedCodexInstructionsForRequest(c, data.decisionModel()) {
-		return body, false, nil
-	}
-	var reqBody map[string]any
-	if err := json.Unmarshal(body, &reqBody); err != nil {
-		return nil, false, fmt.Errorf("unmarshal for forced codex instructions anthropic body: %w", err)
-	}
-
-	data.ExistingInstructions = strings.TrimSpace(extractAnthropicSystemText(reqBody["system"]))
-	rendered, err := renderForcedCodexInstructionsTemplate(templateText, data)
-	if err != nil {
-		return nil, false, err
-	}
-	if rendered == "" {
-		return body, false, nil
-	}
-
-	reqBody["system"] = rendered
-	patchedBody, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, false, fmt.Errorf("remarshal after forced codex instructions anthropic body: %w", err)
-	}
-	return patchedBody, true, nil
-}
-
 func extractSystemInstructionsFromChatMessages(messages []any) string {
 	if len(messages) == 0 {
 		return ""
@@ -219,27 +188,6 @@ func injectRenderedSystemMessage(messages []any, rendered string) []any {
 		out = append(out, msg)
 	}
 	return out
-}
-
-func extractAnthropicSystemText(raw any) string {
-	switch typed := raw.(type) {
-	case string:
-		return typed
-	case []any:
-		parts := make([]string, 0, len(typed))
-		for _, item := range typed {
-			block, ok := item.(map[string]any)
-			if !ok {
-				continue
-			}
-			if text := strings.TrimSpace(stringValue(block["text"])); text != "" {
-				parts = append(parts, text)
-			}
-		}
-		return strings.TrimSpace(strings.Join(parts, "\n\n"))
-	default:
-		return ""
-	}
 }
 
 func stringValue(v any) string {

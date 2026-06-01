@@ -32,19 +32,22 @@ func TestPatchChatResponseBodyRepairsLegacyFields(t *testing.T) {
 	require.NoError(t, json.Unmarshal(fixed, &payload))
 	require.Equal(t, "cursor-model", payload["model"])
 
-	choice := payload["choices"].([]any)[0].(map[string]any)
-	message := choice["message"].(map[string]any)
+	choice, message := requirePatchedChatChoice(t, payload)
 	require.NotEmpty(t, message["reasoning_content"])
 	_, hasLegacy := message["function_call"]
 	require.False(t, hasLegacy)
 
-	toolCalls := message["tool_calls"].([]any)
+	toolCalls, ok := message["tool_calls"].([]any)
+	require.True(t, ok)
 	require.Len(t, toolCalls, 1)
-	toolCall := toolCalls[0].(map[string]any)
+	toolCall, ok := toolCalls[0].(map[string]any)
+	require.True(t, ok)
 	require.Equal(t, "function", toolCall["type"])
 	require.NotEmpty(t, toolCall["id"])
 	require.Equal(t, float64(0), toolCall["index"])
-	require.Equal(t, "read_file", toolCall["function"].(map[string]any)["name"])
+	function, ok := toolCall["function"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "read_file", function["name"])
 	require.Equal(t, "tool_calls", choice["finish_reason"])
 }
 
@@ -77,13 +80,13 @@ func TestPatchChatResponseBodyNormalizesToolArguments(t *testing.T) {
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(fixed, &payload))
-	choice := payload["choices"].([]any)[0].(map[string]any)
-	message := choice["message"].(map[string]any)
-	toolCall := message["tool_calls"].([]any)[0].(map[string]any)
-	function := toolCall["function"].(map[string]any)
+	_, message := requirePatchedChatChoice(t, payload)
+	function := requireFirstToolFunction(t, message)
 
 	var args map[string]any
-	require.NoError(t, json.Unmarshal([]byte(function["arguments"].(string)), &args))
+	arguments, ok := function["arguments"].(string)
+	require.True(t, ok)
+	require.NoError(t, json.Unmarshal([]byte(arguments), &args))
 	require.Equal(t, filePath, args["path"])
 	_, hasFilePath := args["file_path"]
 	require.False(t, hasFilePath)
@@ -120,10 +123,32 @@ func TestPatchChatResponseBodyUnwrapsApplyPatchArguments(t *testing.T) {
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(fixed, &payload))
-	choice := payload["choices"].([]any)[0].(map[string]any)
-	message := choice["message"].(map[string]any)
-	toolCall := message["tool_calls"].([]any)[0].(map[string]any)
-	function := toolCall["function"].(map[string]any)
+	_, message := requirePatchedChatChoice(t, payload)
+	function := requireFirstToolFunction(t, message)
 	require.Equal(t, "ApplyPatch", function["name"])
 	require.Equal(t, "*** Begin Patch\n*** Add File: /tmp/a.txt\n+hello\n*** End Patch", function["arguments"])
+}
+
+func requirePatchedChatChoice(t *testing.T, payload map[string]any) (map[string]any, map[string]any) {
+	t.Helper()
+	choices, ok := payload["choices"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, choices)
+	choice, ok := choices[0].(map[string]any)
+	require.True(t, ok)
+	message, ok := choice["message"].(map[string]any)
+	require.True(t, ok)
+	return choice, message
+}
+
+func requireFirstToolFunction(t *testing.T, message map[string]any) map[string]any {
+	t.Helper()
+	toolCalls, ok := message["tool_calls"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, toolCalls)
+	toolCall, ok := toolCalls[0].(map[string]any)
+	require.True(t, ok)
+	function, ok := toolCall["function"].(map[string]any)
+	require.True(t, ok)
+	return function
 }

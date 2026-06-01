@@ -388,11 +388,6 @@ func (s *httpUpstreamService) acquireClient(proxyURL string, accountID int64, ac
 	return s.acquireClientWithProfileAndOptions(proxyURL, accountID, accountConcurrency, service.HTTPUpstreamProfileDefault, service.UpstreamRequestOptions{})
 }
 
-// acquireClientWithProfile 获取或创建客户端，并按请求 profile 选择协议策略。
-func (s *httpUpstreamService) acquireClientWithProfile(proxyURL string, accountID int64, accountConcurrency int, profile service.HTTPUpstreamProfile) (*upstreamClientEntry, error) {
-	return s.acquireClientWithProfileAndOptions(proxyURL, accountID, accountConcurrency, profile, service.UpstreamRequestOptions{})
-}
-
 func (s *httpUpstreamService) acquireClientWithProfileAndOptions(proxyURL string, accountID int64, accountConcurrency int, profile service.HTTPUpstreamProfile, opts service.UpstreamRequestOptions) (*upstreamClientEntry, error) {
 	return s.getClientEntry(proxyURL, accountID, accountConcurrency, profile, opts, true, true)
 }

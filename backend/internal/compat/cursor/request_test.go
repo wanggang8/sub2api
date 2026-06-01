@@ -7,6 +7,41 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func requirePayloadSlice(t *testing.T, payload map[string]any, key string) []any {
+	t.Helper()
+	items, ok := payload[key].([]any)
+	require.Truef(t, ok, "expected %q to be []any", key)
+	return items
+}
+
+func requireMapValue(t *testing.T, raw any) map[string]any {
+	t.Helper()
+	item, ok := raw.(map[string]any)
+	require.True(t, ok)
+	return item
+}
+
+func requireMapField(t *testing.T, item map[string]any, key string) map[string]any {
+	t.Helper()
+	field, ok := item[key].(map[string]any)
+	require.Truef(t, ok, "expected %q to be map[string]any", key)
+	return field
+}
+
+func requireSliceField(t *testing.T, item map[string]any, key string) []any {
+	t.Helper()
+	field, ok := item[key].([]any)
+	require.Truef(t, ok, "expected %q to be []any", key)
+	return field
+}
+
+func requireStringField(t *testing.T, item map[string]any, key string) string {
+	t.Helper()
+	field, ok := item[key].(string)
+	require.Truef(t, ok, "expected %q to be string", key)
+	return field
+}
+
 func TestNormalizeChatCompletionsRequestBodyMixedInput(t *testing.T) {
 	raw := []byte(`{
 		"model": "gpt-4.1",
@@ -27,17 +62,16 @@ func TestNormalizeChatCompletionsRequestBodyMixedInput(t *testing.T) {
 	require.Contains(t, payload, "messages")
 	require.Equal(t, "auto", payload["tool_choice"])
 
-	messages, ok := payload["messages"].([]any)
-	require.True(t, ok)
+	messages := requirePayloadSlice(t, payload, "messages")
 	require.Len(t, messages, 3)
 
-	systemMsg := messages[0].(map[string]any)
+	systemMsg := requireMapValue(t, messages[0])
 	require.Equal(t, "system", systemMsg["role"])
 
-	userMsg := messages[1].(map[string]any)
+	userMsg := requireMapValue(t, messages[1])
 	require.Equal(t, "user", userMsg["role"])
 
-	toolMsg := messages[2].(map[string]any)
+	toolMsg := requireMapValue(t, messages[2])
 	require.Equal(t, "tool", toolMsg["role"])
 	require.Equal(t, "call_1", toolMsg["tool_call_id"])
 	require.Equal(t, "done", toolMsg["content"])
@@ -56,9 +90,9 @@ func TestNormalizeChatCompletionsRequestBodyFunctionOutputStringPreserved(t *tes
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(normalized, &payload))
-	messages := payload["messages"].([]any)
+	messages := requirePayloadSlice(t, payload, "messages")
 	require.Len(t, messages, 1)
-	toolMsg := messages[0].(map[string]any)
+	toolMsg := requireMapValue(t, messages[0])
 	require.Equal(t, "tool", toolMsg["role"])
 	require.Equal(t, "call_1", toolMsg["tool_call_id"])
 	require.Equal(t, "plain result", toolMsg["content"])
@@ -84,9 +118,9 @@ func TestNormalizeChatCompletionsRequestBodyFunctionOutputArrayText(t *testing.T
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(normalized, &payload))
-	messages := payload["messages"].([]any)
+	messages := requirePayloadSlice(t, payload, "messages")
 	require.Len(t, messages, 1)
-	toolMsg := messages[0].(map[string]any)
+	toolMsg := requireMapValue(t, messages[0])
 	require.Equal(t, "tool", toolMsg["role"])
 	require.Equal(t, "call_1", toolMsg["tool_call_id"])
 	require.Equal(t, "line one\nline two", toolMsg["content"])
@@ -112,9 +146,9 @@ func TestNormalizeResponsesRequestBodyFunctionOutputArrayText(t *testing.T) {
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(normalized, &payload))
-	items := payload["input"].([]any)
+	items := requirePayloadSlice(t, payload, "input")
 	require.Len(t, items, 1)
-	item := items[0].(map[string]any)
+	item := requireMapValue(t, items[0])
 	require.Equal(t, "function_call_output", item["type"])
 	require.Equal(t, "call_1", item["call_id"])
 	require.Equal(t, "line one\nline two", item["output"])
@@ -134,17 +168,17 @@ func TestNormalizeResponsesRequestBodyConvertsCustomToolHistoryToFunctionHistory
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(normalized, &payload))
-	items := payload["input"].([]any)
+	items := requirePayloadSlice(t, payload, "input")
 	require.Len(t, items, 2)
 
-	call := items[0].(map[string]any)
+	call := requireMapValue(t, items[0])
 	require.Equal(t, "function_call", call["type"])
 	require.Equal(t, "call_1", call["call_id"])
 	require.Equal(t, "ApplyPatch", call["name"])
 	require.Equal(t, "*** Begin Patch\n*** End Patch", call["arguments"])
 	require.NotContains(t, call, "input")
 
-	output := items[1].(map[string]any)
+	output := requireMapValue(t, items[1])
 	require.Equal(t, "function_call_output", output["type"])
 	require.Equal(t, "call_1", output["call_id"])
 	require.Equal(t, "ok", output["output"])
@@ -167,11 +201,11 @@ func TestNormalizeOpenAIChatCompletionsRequestBodyWrapsApplyPatchHistory(t *test
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(normalized, &payload))
-	items := payload["input"].([]any)
-	call := items[0].(map[string]any)
+	items := requirePayloadSlice(t, payload, "input")
+	call := requireMapValue(t, items[0])
 	require.Equal(t, "function_call", call["type"])
 	require.Equal(t, "ApplyPatch", call["name"])
-	require.JSONEq(t, `{"patch":"*** Begin Patch\n*** Update File: /tmp/a.txt\n@@\n-old line\n*** End Patch"}`, call["arguments"].(string))
+	require.JSONEq(t, `{"patch":"*** Begin Patch\n*** Update File: /tmp/a.txt\n@@\n-old line\n*** End Patch"}`, requireStringField(t, call, "arguments"))
 }
 
 func TestNormalizeResponsesRequestBodyPreservesToolsForInputArray(t *testing.T) {
@@ -190,13 +224,13 @@ func TestNormalizeResponsesRequestBodyPreservesToolsForInputArray(t *testing.T) 
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(normalized, &payload))
-	tools := payload["tools"].([]any)
+	tools := requirePayloadSlice(t, payload, "tools")
 
 	names := make(map[string]bool)
 	for _, rawTool := range tools {
-		tool := rawTool.(map[string]any)
+		tool := requireMapValue(t, rawTool)
 		if fn, ok := tool["function"].(map[string]any); ok {
-			names[fn["name"].(string)] = true
+			names[requireStringField(t, fn, "name")] = true
 			continue
 		}
 		if name, ok := tool["name"].(string); ok {
@@ -225,13 +259,13 @@ func TestNormalizeResponsesRequestBodyConvertsTopLevelChatToolForChatShape(t *te
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(normalized, &payload))
-	tools := payload["tools"].([]any)
+	tools := requirePayloadSlice(t, payload, "tools")
 	require.Len(t, tools, 1)
-	tool := tools[0].(map[string]any)
+	tool := requireMapValue(t, tools[0])
 	require.Equal(t, "function", tool["type"])
 	require.Equal(t, "search_docs", tool["name"])
 	require.Equal(t, "Search docs", tool["description"])
-	params := tool["parameters"].(map[string]any)
+	params := requireMapField(t, tool, "parameters")
 	require.Equal(t, "object", params["type"])
 }
 
@@ -265,13 +299,13 @@ func TestNormalizeChatCompletionsRequestBodyPreservesCursorEditingToolsForInputA
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(normalized, &payload))
-	tools := payload["tools"].([]any)
+	tools := requirePayloadSlice(t, payload, "tools")
 
 	names := make(map[string]bool)
 	for _, rawTool := range tools {
-		tool := rawTool.(map[string]any)
-		fn := tool["function"].(map[string]any)
-		names[fn["name"].(string)] = true
+		tool := requireMapValue(t, rawTool)
+		fn := requireMapField(t, tool, "function")
+		names[requireStringField(t, fn, "name")] = true
 	}
 
 	require.True(t, names["Read"])
@@ -309,22 +343,21 @@ func TestNormalizeOpenAIChatCompletionsRequestBodyBridgesApplyPatchCustomTool(t 
 	require.False(t, hasMessages)
 	_, hasUser := payload["user"]
 	require.False(t, hasUser)
-	input, ok := payload["input"].([]any)
-	require.True(t, ok)
+	input := requirePayloadSlice(t, payload, "input")
 	require.Len(t, input, 1)
-	tools := payload["tools"].([]any)
+	tools := requirePayloadSlice(t, payload, "tools")
 	require.Len(t, tools, 1)
-	tool := tools[0].(map[string]any)
+	tool := requireMapValue(t, tools[0])
 	require.Equal(t, "function", tool["type"])
 	require.Equal(t, "ApplyPatch", tool["name"])
 	require.NotContains(t, tool, "format")
 	require.Equal(t, "Patch files", tool["description"])
-	parameters := tool["parameters"].(map[string]any)
+	parameters := requireMapField(t, tool, "parameters")
 	require.Equal(t, "object", parameters["type"])
-	properties := parameters["properties"].(map[string]any)
-	patch := properties["patch"].(map[string]any)
+	properties := requireMapField(t, parameters, "properties")
+	patch := requireMapField(t, properties, "patch")
 	require.Equal(t, "string", patch["type"])
-	patchDescription := patch["description"].(string)
+	patchDescription := requireStringField(t, patch, "description")
 	require.Contains(t, patchDescription, "*** Begin Patch")
 	require.Contains(t, patchDescription, "*** Add File:")
 	require.Contains(t, patchDescription, "*** Update File:")
@@ -377,28 +410,28 @@ func TestNormalizeChatCompletionsRequestBodyNormalizesTopLevelSystemAndAnthropic
 	require.NotContains(t, payload, "previous_response_id")
 	require.Equal(t, "required", payload["tool_choice"])
 
-	messages := payload["messages"].([]any)
+	messages := requirePayloadSlice(t, payload, "messages")
 	require.Len(t, messages, 3)
 
-	systemMsg := messages[0].(map[string]any)
+	systemMsg := requireMapValue(t, messages[0])
 	require.Equal(t, "system", systemMsg["role"])
 	require.Equal(t, "system prompt", systemMsg["content"])
 
-	assistantMsg := messages[1].(map[string]any)
+	assistantMsg := requireMapValue(t, messages[1])
 	require.Equal(t, "assistant", assistantMsg["role"])
 	require.Equal(t, "Working on it", assistantMsg["content"])
-	toolCalls := assistantMsg["tool_calls"].([]any)
+	toolCalls := requireSliceField(t, assistantMsg, "tool_calls")
 	require.Len(t, toolCalls, 1)
-	require.Equal(t, "ApplyPatch", toolCalls[0].(map[string]any)["function"].(map[string]any)["name"])
+	require.Equal(t, "ApplyPatch", requireMapField(t, requireMapValue(t, toolCalls[0]), "function")["name"])
 
-	toolMsg := messages[2].(map[string]any)
+	toolMsg := requireMapValue(t, messages[2])
 	require.Equal(t, "tool", toolMsg["role"])
 	require.Equal(t, "call_1", toolMsg["tool_call_id"])
 	require.Equal(t, "ok", toolMsg["content"])
 
-	tools := payload["tools"].([]any)
+	tools := requirePayloadSlice(t, payload, "tools")
 	require.Len(t, tools, 1)
-	function := tools[0].(map[string]any)["function"].(map[string]any)
+	function := requireMapField(t, requireMapValue(t, tools[0]), "function")
 	require.Equal(t, "ApplyPatch", function["name"])
 	require.Equal(t, "Patch files", function["description"])
 }
@@ -422,16 +455,16 @@ func TestNormalizeChatCompletionsRequestBodyRepairsDirtyAnthropicToolArguments(t
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(normalized, &payload))
-	messages := payload["messages"].([]any)
+	messages := requirePayloadSlice(t, payload, "messages")
 	require.Len(t, messages, 1)
-	assistantMsg := messages[0].(map[string]any)
-	toolCalls := assistantMsg["tool_calls"].([]any)
+	assistantMsg := requireMapValue(t, messages[0])
+	toolCalls := requireSliceField(t, assistantMsg, "tool_calls")
 	require.Len(t, toolCalls, 1)
-	function := toolCalls[0].(map[string]any)["function"].(map[string]any)
+	function := requireMapField(t, requireMapValue(t, toolCalls[0]), "function")
 	require.Equal(t, "str_replace_editor", function["name"])
 
 	var args map[string]any
-	require.NoError(t, json.Unmarshal([]byte(function["arguments"].(string)), &args))
+	require.NoError(t, json.Unmarshal([]byte(requireStringField(t, function, "arguments")), &args))
 	require.Equal(t, "src/main.go", args["path"])
 	require.NotContains(t, args, "file_path")
 	require.Equal(t, `fmt.Println("hello")`, args["old_string"])
@@ -451,22 +484,22 @@ func TestNormalizeChatCompletionsRequestBodyNormalizesArrayContentBlocks(t *test
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(normalized, &payload))
-	messages := payload["messages"].([]any)
+	messages := requirePayloadSlice(t, payload, "messages")
 	require.Len(t, messages, 1)
-	content := messages[0].(map[string]any)["content"].([]any)
+	content := requireSliceField(t, requireMapValue(t, messages[0]), "content")
 	require.Len(t, content, 3)
 
-	first := content[0].(map[string]any)
+	first := requireMapValue(t, content[0])
 	require.Equal(t, "text", first["type"])
 	require.Equal(t, "hello", first["text"])
 
-	second := content[1].(map[string]any)
+	second := requireMapValue(t, content[1])
 	require.Equal(t, "text", second["type"])
 	require.Equal(t, "world", second["text"])
 	_, hasCacheControl := second["cache_control"]
 	require.False(t, hasCacheControl)
 
-	third := content[2].(map[string]any)
+	third := requireMapValue(t, content[2])
 	require.Equal(t, "image_url", third["type"])
 }
 
@@ -488,22 +521,21 @@ func TestNormalizeChatCompletionsRequestBodyPreservesMultipleTools(t *testing.T)
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(normalized, &payload))
-	tools, ok := payload["tools"].([]any)
-	require.True(t, ok)
+	tools := requirePayloadSlice(t, payload, "tools")
 	require.Len(t, tools, 4)
-	toolA := tools[0].(map[string]any)
-	toolAFn := toolA["function"].(map[string]any)
+	toolA := requireMapValue(t, tools[0])
+	toolAFn := requireMapField(t, toolA, "function")
 	require.Equal(t, "tool_a", toolAFn["name"])
 	require.Contains(t, toolAFn, "parameters")
-	toolB := tools[1].(map[string]any)
-	toolBFn := toolB["function"].(map[string]any)
+	toolB := requireMapValue(t, tools[1])
+	toolBFn := requireMapField(t, toolB, "function")
 	require.Equal(t, "tool_b", toolBFn["name"])
-	toolC := tools[2].(map[string]any)
-	toolCFn := toolC["function"].(map[string]any)
+	toolC := requireMapValue(t, tools[2])
+	toolCFn := requireMapField(t, toolC, "function")
 	require.Equal(t, "tool_c", toolCFn["name"])
 	require.Equal(t, "Claude style", toolCFn["description"])
 	require.Contains(t, toolCFn, "parameters")
-	toolD := tools[3].(map[string]any)
+	toolD := requireMapValue(t, tools[3])
 	require.Equal(t, "web_search", toolD["type"])
 	require.Equal(t, "required", payload["tool_choice"])
 }
@@ -527,12 +559,12 @@ func TestNormalizeChatCompletionsRequestBodyRewritesMissingParallelToolInstructi
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(normalized, &payload))
-	messages := payload["messages"].([]any)
-	system := messages[0].(map[string]any)
-	content := system["content"].(string)
+	messages := requirePayloadSlice(t, payload, "messages")
+	system := requireMapValue(t, messages[0])
+	content := requireStringField(t, system, "content")
 	require.NotContains(t, content, "multi_tool_use.parallel")
 	require.Contains(t, content, "multiple tool_calls in the same assistant response")
-	require.Len(t, payload["tools"].([]any), 2)
+	require.Len(t, requirePayloadSlice(t, payload, "tools"), 2)
 }
 
 func TestNormalizeMessagesRequestBodyStructuredInputPreserved(t *testing.T) {
@@ -551,14 +583,12 @@ func TestNormalizeMessagesRequestBodyStructuredInputPreserved(t *testing.T) {
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(normalized, &payload))
-	tools, ok := payload["tools"].([]any)
-	require.True(t, ok)
+	tools := requirePayloadSlice(t, payload, "tools")
 	require.Len(t, tools, 1)
-	tool := tools[0].(map[string]any)
+	tool := requireMapValue(t, tools[0])
 	require.Contains(t, tool, "input_schema")
-	messages, ok := payload["messages"].([]any)
-	require.True(t, ok)
-	content := messages[0].(map[string]any)["content"].([]any)
-	toolUse := content[0].(map[string]any)
+	messages := requirePayloadSlice(t, payload, "messages")
+	content := requireSliceField(t, requireMapValue(t, messages[0]), "content")
+	toolUse := requireMapValue(t, content[0])
 	require.Equal(t, `{"q":"hello"}`, toolUse["input"])
 }

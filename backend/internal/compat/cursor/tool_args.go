@@ -67,11 +67,11 @@ func replaceCursorSmartQuotes(text string) string {
 	for _, ch := range text {
 		switch {
 		case containsCursorRune(smartDoubleQuotes, ch):
-			builder.WriteRune('"')
+			_, _ = builder.WriteRune('"')
 		case containsCursorRune(smartSingleQuotes, ch):
-			builder.WriteRune('\'')
+			_, _ = builder.WriteRune('\'')
 		default:
-			builder.WriteRune(ch)
+			_, _ = builder.WriteRune(ch)
 		}
 	}
 	return builder.String()

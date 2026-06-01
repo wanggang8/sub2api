@@ -49,7 +49,7 @@ func PatchResponsesStreamChunk(chunk []byte, clientModel string, state *Response
 	var output bytes.Buffer
 	eventName, data, ok := parseMessagesSSEChunk(chunk)
 	if !ok {
-		output.Write(chunk)
+		_, _ = output.Write(chunk)
 		return output.Bytes(), nil
 	}
 	if data == "[DONE]" {
@@ -57,7 +57,7 @@ func PatchResponsesStreamChunk(chunk []byte, clientModel string, state *Response
 	}
 	payload, ok := decodeMessagesJSONObject([]byte(data))
 	if !ok {
-		output.Write(chunk)
+		_, _ = output.Write(chunk)
 		return output.Bytes(), nil
 	}
 	if eventName == "" {
@@ -684,7 +684,7 @@ func extractResponsesMessageText(item map[string]any) string {
 	for _, partValue := range content {
 		part, ok := partValue.(map[string]any)
 		if ok && messagesStringValue(part["type"]) == "output_text" {
-			b.WriteString(messagesStringValue(part["text"]))
+			_, _ = b.WriteString(messagesStringValue(part["text"]))
 		}
 	}
 	return b.String()
@@ -699,7 +699,7 @@ func extractResponsesReasoningSummary(item map[string]any) string {
 	for _, partValue := range summary {
 		part, ok := partValue.(map[string]any)
 		if ok {
-			b.WriteString(messagesStringValue(part["text"]))
+			_, _ = b.WriteString(messagesStringValue(part["text"]))
 		}
 	}
 	return b.String()

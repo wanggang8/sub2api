@@ -70,8 +70,8 @@ func TestPatchChatStreamChunkSplitsContentAndToolCallsFromSameChunk(t *testing.T
 	require.Len(t, payloads, 2)
 	require.Equal(t, "Hello", payloadChoiceDelta(t, payloads[0])["content"])
 	require.Nil(t, payloadChoiceDelta(t, payloads[0])["tool_calls"])
-	toolCalls := payloadChoiceDelta(t, payloads[1])["tool_calls"].([]any)
-	require.Equal(t, "call_1", toolCalls[0].(map[string]any)["id"])
+	toolCall := requireFirstChatStreamToolCall(t, payloadChoiceDelta(t, payloads[1]))
+	require.Equal(t, "call_1", toolCall["id"])
 	require.Equal(t, "tool_calls", payloadChoice(t, payloads[1])["finish_reason"])
 }
 
@@ -88,13 +88,12 @@ func TestPatchChatStreamChunkConvertsLegacyFunctionCallDelta(t *testing.T) {
 	require.Equal(t, "tool_calls", choice["finish_reason"])
 	delta := payloadChoiceDelta(t, payloads[0])
 	require.NotContains(t, delta, "function_call")
-	toolCalls := delta["tool_calls"].([]any)
-	require.Len(t, toolCalls, 1)
-	toolCall := toolCalls[0].(map[string]any)
+	toolCall := requireFirstChatStreamToolCall(t, delta)
 	require.Equal(t, float64(0), toolCall["index"])
 	require.Equal(t, "function", toolCall["type"])
 	require.NotEmpty(t, toolCall["id"])
-	function := toolCall["function"].(map[string]any)
+	function, ok := toolCall["function"].(map[string]any)
+	require.True(t, ok)
 	require.Equal(t, "read_file", function["name"])
 	require.Equal(t, `{"path":"README.md"}`, function["arguments"])
 }
@@ -119,8 +118,7 @@ func TestPatchChatStreamChunkPreservesEmptyToolCallArgumentsForOpenCall(t *testi
 
 	payloads := decodeChatChunkPayloads(t, fixed)
 	require.Len(t, payloads, 1)
-	toolCalls := payloadChoiceDelta(t, payloads[0])["tool_calls"].([]any)
-	function := toolCalls[0].(map[string]any)["function"].(map[string]any)
+	function := requireFirstChatStreamToolFunction(t, payloadChoiceDelta(t, payloads[0]))
 	require.Equal(t, "ApplyPatch", function["name"])
 	require.Contains(t, function, "arguments")
 	require.Equal(t, "", function["arguments"])
@@ -138,12 +136,10 @@ func TestPatchChatStreamChunkUnwrapsApplyPatchArguments(t *testing.T) {
 
 	startPayloads := decodeChatChunkPayloads(t, fixedStart)
 	require.Len(t, startPayloads, 1)
-	firstToolCalls := payloadChoiceDelta(t, startPayloads[0])["tool_calls"].([]any)
-	require.Equal(t, "", firstToolCalls[0].(map[string]any)["function"].(map[string]any)["arguments"])
+	require.Equal(t, "", requireFirstChatStreamToolFunction(t, payloadChoiceDelta(t, startPayloads[0]))["arguments"])
 	donePayloads := decodeChatChunkPayloads(t, fixedDone)
 	require.Len(t, donePayloads, 1)
-	secondToolCalls := payloadChoiceDelta(t, donePayloads[0])["tool_calls"].([]any)
-	function := secondToolCalls[0].(map[string]any)["function"].(map[string]any)
+	function := requireFirstChatStreamToolFunction(t, payloadChoiceDelta(t, donePayloads[0]))
 	require.Equal(t, "*** Begin Patch\n*** Add File: /tmp/a.txt\n+hello\n*** End Patch", function["arguments"])
 }
 
@@ -159,8 +155,7 @@ func TestPatchChatStreamChunkUnwrapsApplyPatchDeletionArguments(t *testing.T) {
 
 	donePayloads := decodeChatChunkPayloads(t, fixedDone)
 	require.Len(t, donePayloads, 1)
-	toolCalls := payloadChoiceDelta(t, donePayloads[0])["tool_calls"].([]any)
-	function := toolCalls[0].(map[string]any)["function"].(map[string]any)
+	function := requireFirstChatStreamToolFunction(t, payloadChoiceDelta(t, donePayloads[0]))
 	require.Equal(t, "*** Begin Patch\n*** Update File: /tmp/a.txt\n@@\n-old line\n*** End Patch", function["arguments"])
 }
 
@@ -180,8 +175,7 @@ func TestPatchChatStreamChunkBuffersSplitApplyPatchArguments(t *testing.T) {
 	require.NoError(t, err)
 	payloads := decodeChatChunkPayloads(t, fixedPart2)
 	require.Len(t, payloads, 1)
-	toolCalls := payloadChoiceDelta(t, payloads[0])["tool_calls"].([]any)
-	function := toolCalls[0].(map[string]any)["function"].(map[string]any)
+	function := requireFirstChatStreamToolFunction(t, payloadChoiceDelta(t, payloads[0]))
 	require.Equal(t, "*** Begin Patch\n*** Add File: /tmp/a.txt\n+hello\n*** End Patch", function["arguments"])
 }
 
@@ -194,8 +188,7 @@ func TestPatchChatStreamChunkAddsMissingToolCallIndex(t *testing.T) {
 
 	payloads := decodeChatChunkPayloads(t, fixed)
 	require.Len(t, payloads, 1)
-	toolCalls := payloadChoiceDelta(t, payloads[0])["tool_calls"].([]any)
-	toolCall := toolCalls[0].(map[string]any)
+	toolCall := requireFirstChatStreamToolCall(t, payloadChoiceDelta(t, payloads[0]))
 	require.Equal(t, float64(0), toolCall["index"])
 	require.Equal(t, "function", toolCall["type"])
 	require.NotEmpty(t, toolCall["id"])
@@ -210,8 +203,7 @@ func TestPatchChatStreamChunkDropsEmptyToolCallIdentityFields(t *testing.T) {
 
 	payloads := decodeChatChunkPayloads(t, fixed)
 	require.Len(t, payloads, 1)
-	toolCalls := payloadChoiceDelta(t, payloads[0])["tool_calls"].([]any)
-	toolCall := toolCalls[0].(map[string]any)
+	toolCall := requireFirstChatStreamToolCall(t, payloadChoiceDelta(t, payloads[0]))
 	_, hasID := toolCall["id"]
 	require.False(t, hasID)
 	require.Equal(t, float64(0), toolCall["index"])
@@ -233,6 +225,24 @@ func decodeChatChunkPayloads(t *testing.T, bundle []byte) []map[string]any {
 		payloads = append(payloads, payload)
 	}
 	return payloads
+}
+
+func requireFirstChatStreamToolCall(t *testing.T, delta map[string]any) map[string]any {
+	t.Helper()
+	toolCalls, ok := delta["tool_calls"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, toolCalls)
+	toolCall, ok := toolCalls[0].(map[string]any)
+	require.True(t, ok)
+	return toolCall
+}
+
+func requireFirstChatStreamToolFunction(t *testing.T, delta map[string]any) map[string]any {
+	t.Helper()
+	toolCall := requireFirstChatStreamToolCall(t, delta)
+	function, ok := toolCall["function"].(map[string]any)
+	require.True(t, ok)
+	return function
 }
 
 func splitChatTestSSEBundle(bundle []byte) [][]byte {
@@ -257,11 +267,17 @@ func splitChatTestSSEBundle(bundle []byte) [][]byte {
 
 func payloadChoice(t *testing.T, payload map[string]any) map[string]any {
 	t.Helper()
-	choices := payload["choices"].([]any)
-	return choices[0].(map[string]any)
+	choices, ok := payload["choices"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, choices)
+	choice, ok := choices[0].(map[string]any)
+	require.True(t, ok)
+	return choice
 }
 
 func payloadChoiceDelta(t *testing.T, payload map[string]any) map[string]any {
 	t.Helper()
-	return payloadChoice(t, payload)["delta"].(map[string]any)
+	delta, ok := payloadChoice(t, payload)["delta"].(map[string]any)
+	require.True(t, ok)
+	return delta
 }

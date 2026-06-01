@@ -228,7 +228,7 @@ func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr stri
 		if proxyHost == "" {
 			proxyHost = proxyAddr
 		}
-		tlsConn := tls.Client(conn, &tls.Config{ServerName: proxyHost})
+		tlsConn := tls.Client(conn, &tls.Config{ServerName: proxyHost, MinVersion: tls.VersionTLS12})
 		if err := tlsConn.HandshakeContext(ctx); err != nil {
 			_ = conn.Close()
 			slog.Debug("tls_fingerprint_https_proxy_tls_failed", "error", err)

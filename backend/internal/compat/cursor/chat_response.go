@@ -85,17 +85,17 @@ func convertLegacyChatFunctionCall(message map[string]any, choice map[string]any
 	if !ok {
 		return
 	}
+	functionData := map[string]any{
+		"name":      strings.TrimSpace(messagesStringValue(functionCall["name"])),
+		"arguments": strings.TrimSpace(messagesStringValue(functionCall["arguments"])),
+	}
 	message["tool_calls"] = []any{
 		map[string]any{
-			"id":   "call_" + uuid.NewString(),
-			"type": "function",
-			"function": map[string]any{
-				"name":      strings.TrimSpace(messagesStringValue(functionCall["name"])),
-				"arguments": strings.TrimSpace(messagesStringValue(functionCall["arguments"])),
-			},
+			"id":       "call_" + uuid.NewString(),
+			"type":     "function",
+			"function": functionData,
 		},
 	}
-	functionData := message["tool_calls"].([]any)[0].(map[string]any)["function"].(map[string]any)
 	normalizeCursorFunctionArguments(functionData)
 	delete(message, "function_call")
 	rewriteChatFinishReason(choice)
