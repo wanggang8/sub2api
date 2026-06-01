@@ -1044,6 +1044,19 @@
           <p class="input-hint">{{ apiKeyHint }}</p>
         </div>
 
+        <div
+          v-if="showUpstreamSettings"
+          class="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-dark-600 dark:bg-dark-700/40"
+        >
+          <label class="flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300">
+            <input v-model="apiKeySkipTLSVerify" type="checkbox" class="h-4 w-4 rounded border-gray-300" />
+            <span>跳过 TLS 证书校验</span>
+          </label>
+          <p class="mt-1 text-xs text-amber-600 dark:text-amber-400">
+            仅对自定义上游生效。开启后会忽略上游证书校验，仅建议用于自签名或证书异常环境。
+          </p>
+        </div>
+
         <!-- Gemini API Key tier selection -->
         <div v-if="form.platform === 'gemini'">
           <label class="input-label">{{ t('admin.accounts.gemini.tier.label') }}</label>
@@ -1124,7 +1137,10 @@
 
             <!-- Whitelist Mode -->
             <div v-if="modelRestrictionMode === 'whitelist'">
-              <ModelWhitelistSelector v-model="allowedModels" :platform="form.platform" :sync-credentials="syncPreviewCredentials" />
+              <ModelWhitelistSelector
+                v-model="allowedModels"
+                :platform="form.platform"
+              />
               <p class="text-xs text-gray-500 dark:text-gray-400">
                 {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
                 <span v-if="allowedModels.length === 0">{{
@@ -1562,7 +1578,7 @@
 
           <!-- Whitelist Mode -->
           <div v-if="modelRestrictionMode === 'whitelist'">
-            <ModelWhitelistSelector v-model="allowedModels" platform="anthropic" :sync-credentials="syncPreviewCredentials" />
+            <ModelWhitelistSelector v-model="allowedModels" platform="anthropic" />
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
               <span v-if="allowedModels.length === 0">{{ t('admin.accounts.supportsAllModels') }}</span>
@@ -1813,7 +1829,7 @@
 
           <!-- Whitelist Mode -->
           <div v-if="modelRestrictionMode === 'whitelist'">
-            <ModelWhitelistSelector v-model="allowedModels" :platform="form.platform" :sync-credentials="syncPreviewCredentials" />
+            <ModelWhitelistSelector v-model="allowedModels" :platform="form.platform" />
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
               <span v-if="allowedModels.length === 0">{{
@@ -3238,7 +3254,7 @@ import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
 import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
-import { applyInterceptWarmup } from '@/components/account/credentialsBuilder'
+import { applyInterceptWarmup, getDefaultAPIKeyBaseURL, isCustomPlatformBaseURL } from '@/components/account/credentialsBuilder'
 import { formatDateTimeLocalInput, parseDateTimeLocalInput } from '@/utils/format'
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
 import { VERTEX_LOCATION_OPTIONS } from '@/constants/account'
@@ -3360,18 +3376,8 @@ const submitting = ref(false)
 const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_account'>('oauth-based') // UI selection for account category
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
+const apiKeySkipTLSVerify = ref(false)
 const apiKeyValue = ref('')
-
-const syncPreviewCredentials = computed(() => {
-  if (!apiKeyValue.value) return undefined
-  return {
-    platform: form.platform,
-    type: form.type,
-    base_url: apiKeyBaseUrl.value || undefined,
-    api_key: apiKeyValue.value
-  }
-})
-
 const editQuotaLimit = ref<number | null>(null)
 const editQuotaDailyLimit = ref<number | null>(null)
 const editQuotaWeeklyLimit = ref<number | null>(null)
@@ -3627,6 +3633,16 @@ const isOpenAIModelRestrictionDisabled = computed(() =>
   form.platform === 'openai' && openaiPassthroughEnabled.value
 )
 
+const hasCustomAPIKeyBaseURL = computed(() => (
+  ['openai', 'anthropic', 'gemini'].includes(form.platform)
+  && accountCategory.value === 'apikey'
+  && isCustomPlatformBaseURL(form.platform, apiKeyBaseUrl.value)
+))
+
+const showUpstreamSettings = computed(() => hasCustomAPIKeyBaseURL.value)
+
+const presetMappings = computed(() => getPresetMappingsByPlatform(form.platform))
+
 const mixedChannelWarningMessageText = computed(() => {
   if (mixedChannelWarningDetails.value) {
     return t('admin.accounts.mixedChannelWarning', mixedChannelWarningDetails.value)
@@ -3649,8 +3665,6 @@ const geminiHelpLinks = {
   countryChange: 'https://policies.google.com/country-association-form'
 }
 
-// Computed: current preset mappings based on platform
-const presetMappings = computed(() => getPresetMappingsByPlatform(form.platform))
 const tempUnschedPresets = computed(() => [
   {
     label: t('admin.accounts.tempUnschedulable.presets.overloadLabel'),
@@ -3752,11 +3766,11 @@ watch(
           antigravityModelMappings.value = [...mappings]
         })
         antigravityWhitelistModels.value = []
-      } else {
-        antigravityWhitelistModels.value = []
-        antigravityModelMappings.value = []
-        antigravityModelRestrictionMode.value = 'mapping'
-      }
+    } else {
+      antigravityWhitelistModels.value = []
+      antigravityModelMappings.value = []
+      antigravityModelRestrictionMode.value = 'mapping'
+    }
     } else {
       resetForm()
     }
@@ -3793,12 +3807,8 @@ watch(
   () => form.platform,
   (newPlatform) => {
     // Reset base URL based on platform
-    apiKeyBaseUrl.value =
-      (newPlatform === 'openai')
-        ? 'https://api.openai.com'
-        : newPlatform === 'gemini'
-          ? 'https://generativelanguage.googleapis.com'
-          : 'https://api.anthropic.com'
+    apiKeyBaseUrl.value = getDefaultAPIKeyBaseURL(newPlatform)
+    apiKeySkipTLSVerify.value = false
     // Clear model-related settings
     allowedModels.value = []
     modelMappings.value = []
@@ -4212,6 +4222,7 @@ const resetForm = () => {
   accountCategory.value = 'oauth-based'
   addMethod.value = 'oauth'
   apiKeyBaseUrl.value = 'https://api.anthropic.com'
+  apiKeySkipTLSVerify.value = false
   apiKeyValue.value = ''
   editQuotaLimit.value = null
   editQuotaDailyLimit.value = null
@@ -4291,6 +4302,14 @@ const resetForm = () => {
   antigravityMixedChannelConfirmed.value = false
   clearMixedChannelDialog()
 }
+
+watch([apiKeyBaseUrl, apiKeyValue], ([baseUrl, apiKey], [prevBaseUrl, prevApiKey]) => {
+  if (baseUrl !== prevBaseUrl || apiKey !== prevApiKey) {
+    if (!showUpstreamSettings.value) {
+      apiKeySkipTLSVerify.value = false
+    }
+  }
+})
 
 const handleClose = () => {
   antigravityMixedChannelConfirmed.value = false
@@ -4611,18 +4630,15 @@ const handleSubmit = async () => {
     return
   }
 
-  // Determine default base URL based on platform
-  const defaultBaseUrl =
-    form.platform === 'openai'
-      ? 'https://api.openai.com'
-      : form.platform === 'gemini'
-        ? 'https://generativelanguage.googleapis.com'
-        : 'https://api.anthropic.com'
+  const defaultBaseUrl = getDefaultAPIKeyBaseURL(form.platform)
 
   // Build credentials with optional model mapping
   const credentials: Record<string, unknown> = {
     base_url: apiKeyBaseUrl.value.trim() || defaultBaseUrl,
     api_key: apiKeyValue.value.trim()
+  }
+  if (showUpstreamSettings.value && apiKeySkipTLSVerify.value) {
+    credentials.skip_tls_verify = true
   }
   if (form.platform === 'gemini') {
     credentials.tier_id = geminiTierAIStudio.value

@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       simple_release:
-        description: 'Simple release: only x86_64 GHCR image, skip other artifacts'
+        description: 'Simple release: only x86_64 GHCR image, skips binary archives required by install.sh'
         required: false
         type: boolean
         default: false

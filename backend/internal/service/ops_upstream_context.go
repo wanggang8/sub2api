@@ -15,6 +15,7 @@ const (
 	OpsUpstreamErrorMessageKey = "ops_upstream_error_message"
 	OpsUpstreamErrorDetailKey  = "ops_upstream_error_detail"
 	OpsUpstreamErrorsKey       = "ops_upstream_errors"
+	OpsUpstreamRequestBodyKey  = "ops_upstream_request_body"
 
 	// Optional stage latencies (milliseconds) for troubleshooting and alerting.
 	OpsAuthLatencyMsKey      = "ops_auth_latency_ms"
@@ -42,6 +43,16 @@ const (
 	OpsClientBusinessLimitedReasonLocalFeatureGate       = "local_feature_gate"
 	OpsClientBusinessLimitedReasonLocalPolicyDenied      = "local_policy_denied"
 )
+
+func setOpsUpstreamRequestBody(c *gin.Context, body []byte) {
+	if c == nil || len(body) == 0 {
+		return
+	}
+	if _, ok := c.Get(cursorDebugRecordIDKey); !ok {
+		return
+	}
+	c.Set(OpsUpstreamRequestBodyKey, string(body))
+}
 
 func SetOpsLatencyMs(c *gin.Context, key string, value int64) {
 	if c == nil || strings.TrimSpace(key) == "" || value < 0 {

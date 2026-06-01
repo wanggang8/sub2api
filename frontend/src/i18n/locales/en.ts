@@ -366,6 +366,7 @@ export default {
     proxies: 'Proxies',
     redeemCodes: 'Redeem Codes',
     ops: 'Ops',
+    cursorDebug: 'Cursor Debug',
     promoCodes: 'Promo Codes',
     settings: 'Settings',
     myAccount: 'My Account',
@@ -1369,6 +1370,15 @@ export default {
 
   // Admin
   admin: {
+    cursorDebug: {
+      title: 'Cursor Debug',
+      description: 'Inspect Cursor compat request, upstream request, and response snapshots',
+      subtitle: 'Inspect Cursor request snapshots and export a complete capture.',
+      enabled: 'Capture enabled',
+      records: 'Records',
+      empty: 'No captures yet.',
+      selectRecord: 'Select a record to inspect.'
+    },
     // Dashboard
     dashboard: {
       title: 'Admin Dashboard',
@@ -3105,7 +3115,6 @@ export default {
         expiresAt: 'Expires At',
         actions: 'Actions'
       },
-      usageWindowsHint: '"5h / 7d" are the upstream account\'s official rolling usage windows (e.g. OpenAI ChatGPT, Claude). They are imposed by the upstream provider on the account itself — not configured by sub2api, and unrelated to the models you map. Usage resets automatically once each window rolls over, and the limit cannot be lifted from within sub2api.',
       allPrivacyModes: 'All Privacy States',
       privacyUnset: 'Unset',
       privacyTrainingOff: 'Training data sharing disabled',
@@ -3114,6 +3123,7 @@ export default {
       privacyAntigravitySet: 'Telemetry and marketing emails disabled',
       privacyAntigravityFailed: 'Privacy setting failed',
       setPrivacy: 'Set Privacy',
+      usageWindowsHint: 'Shows recent rolling-window usage and daily usage for accounts that report upstream quota data.',
       subscriptionAbnormal: 'Abnormal',
       subscriptionExpires: 'Expires',
       // Capacity status tooltips

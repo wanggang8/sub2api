@@ -75,6 +75,30 @@ func TestOpenAIRequestView_HasPatches(t *testing.T) {
 	require.False(t, view.HasPatches())
 }
 
+func TestNormalizeOpenAIResponsesFunctionCallOutputStrings(t *testing.T) {
+	body := []byte(`{"model":"gpt-5","input":[{"type":"function_call_output","call_id":"call_1","output":{"ok":true}}]}`)
+
+	normalized, changed, err := normalizeOpenAIResponsesFunctionCallOutputStrings(body)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, `{"ok":true}`, gjson.GetBytes(normalized, "input.0.output").String())
+}
+
+func TestNormalizeOpenAIResponsesRequestTools(t *testing.T) {
+	body := []byte(`{"model":"gpt-5","tools":[{"type":"function","function":{"name":"search","description":"Search","parameters":{"type":"object"}}}],"tool_choice":{"type":"function","function":{"name":"search"}}}`)
+
+	normalized, changed, err := normalizeOpenAIResponsesRequestTools(body)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "function", gjson.GetBytes(normalized, "tools.0.type").String())
+	require.Equal(t, "search", gjson.GetBytes(normalized, "tools.0.name").String())
+	require.Equal(t, "Search", gjson.GetBytes(normalized, "tools.0.description").String())
+	require.Equal(t, "object", gjson.GetBytes(normalized, "tools.0.parameters.type").String())
+	require.Equal(t, "function", gjson.GetBytes(normalized, "tool_choice.type").String())
+	require.Equal(t, "search", gjson.GetBytes(normalized, "tool_choice.name").String())
+	require.False(t, gjson.GetBytes(normalized, "tools.0.function").Exists())
+}
+
 func TestOpenAIGatewayService_Forward_HTTPPatchPathKeepsLargeInputRaw(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	upstream := &httpUpstreamRecorder{
@@ -113,6 +137,44 @@ func TestOpenAIGatewayService_Forward_HTTPPatchPathKeepsLargeInputRaw(t *testing
 	require.NotNil(t, upstream.lastReq)
 	require.JSONEq(t, `{"model":"gpt-5","stream":false,"reasoning":{"effort":"none"},"instructions":"You are a helpful coding assistant.","input":[{"type":"message","content":[{"type":"input_text","text":"hi","nonce":9007199254740993}]}]}`, string(upstream.lastBody))
 	require.Equal(t, "9007199254740993", gjson.GetBytes(upstream.lastBody, "input.0.content.0.nonce").Raw)
+}
+
+func TestOpenAIGatewayService_Forward_ForcedCodexInstructionsTemplateAppliesOnResponsesMainPath(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstream := &httpUpstreamRecorder{
+		resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"usage":{"input_tokens":1,"output_tokens":2}}`)),
+		},
+	}
+	cfg := &config.Config{}
+	cfg.Security.URLAllowlist.Enabled = false
+	cfg.Gateway.ForcedCodexInstructionsTemplate = "server-prefix\n\n{{ .ExistingInstructions }}"
+	svc := &OpenAIGatewayService{cfg: cfg, httpUpstream: upstream}
+	account := &Account{
+		ID:          1,
+		Name:        "openai-apikey",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://example.com",
+		},
+		Extra: map[string]any{"use_responses_api": true},
+	}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/cursor/v1/responses", nil)
+	SetForcedCodexInstructionsEnabled(c, true)
+	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+
+	body := []byte(`{"model":"gpt-5","stream":false,"instructions":"client instructions","input":[{"type":"message","content":[{"type":"input_text","text":"hi"}]}]}`)
+	result, err := svc.Forward(context.Background(), c, account, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "server-prefix\n\nclient instructions", gjson.GetBytes(upstream.lastBody, "instructions").String())
 }
 
 func TestOpenAIGatewayService_Forward_DecodedMutationKeepsLaterFieldDeletes(t *testing.T) {

@@ -6,7 +6,7 @@ api.sub2api.com {
 	# =========================================================================
 	@static {
 		path /assets/*
-		path /logo.png
+		path /logo.svg
 		path /favicon.ico
 	}
 	header @static {

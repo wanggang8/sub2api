@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { applyInterceptWarmup } from '../credentialsBuilder'
+import {
+  applyInterceptWarmup,
+  getDefaultAPIKeyBaseURL,
+  isCustomOpenAIBaseURL,
+  isCustomPlatformBaseURL
+} from '../credentialsBuilder'
 
 describe('applyInterceptWarmup', () => {
   it('create + enabled=true: should set intercept_warmup_requests to true', () => {
@@ -42,5 +47,36 @@ describe('applyInterceptWarmup', () => {
     expect(creds.api_key).toBe('sk')
     expect(creds.base_url).toBe('url')
     expect('intercept_warmup_requests' in creds).toBe(false)
+  })
+})
+
+describe('isCustomOpenAIBaseURL', () => {
+  it('returns false for official OpenAI base URLs', () => {
+    expect(isCustomOpenAIBaseURL('https://api.openai.com')).toBe(false)
+    expect(isCustomOpenAIBaseURL('https://api.openai.com/v1')).toBe(false)
+    expect(isCustomOpenAIBaseURL('HTTPS://API.OPENAI.COM/v1/')).toBe(false)
+  })
+
+  it('returns true for custom OpenAI-compatible upstream URLs', () => {
+    expect(isCustomOpenAIBaseURL('https://gateway.example.com/v1')).toBe(true)
+    expect(isCustomOpenAIBaseURL('https://openai-proxy.internal')).toBe(true)
+    expect(isCustomOpenAIBaseURL('https://api.openai.com:8443/v1')).toBe(true)
+  })
+})
+
+describe('platform base URL helpers', () => {
+  it('returns platform defaults', () => {
+    expect(getDefaultAPIKeyBaseURL('openai')).toBe('https://api.openai.com')
+    expect(getDefaultAPIKeyBaseURL('gemini')).toBe('https://generativelanguage.googleapis.com')
+    expect(getDefaultAPIKeyBaseURL('anthropic')).toBe('https://api.anthropic.com')
+  })
+
+  it('detects custom Gemini and Anthropic base URLs', () => {
+    expect(isCustomPlatformBaseURL('gemini', 'https://generativelanguage.googleapis.com')).toBe(false)
+    expect(isCustomPlatformBaseURL('gemini', 'https://generativelanguage.googleapis.com/v1beta')).toBe(false)
+    expect(isCustomPlatformBaseURL('gemini', 'https://gemini-proxy.internal')).toBe(true)
+    expect(isCustomPlatformBaseURL('anthropic', 'https://api.anthropic.com')).toBe(false)
+    expect(isCustomPlatformBaseURL('anthropic', 'https://api.anthropic.com/v1')).toBe(false)
+    expect(isCustomPlatformBaseURL('anthropic', 'https://claude-proxy.internal')).toBe(true)
   })
 })

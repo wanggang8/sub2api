@@ -190,6 +190,17 @@ func registerOpsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		// Request drilldown (success + error)
 		ops.GET("/requests", h.Admin.Ops.ListRequestDetails)
 
+		// Cursor compat debug captures
+		cursorDebug := ops.Group("/cursor-debug")
+		{
+			cursorDebug.GET("/config", h.Admin.Ops.GetCursorDebugConfig)
+			cursorDebug.PUT("/config", h.Admin.Ops.UpdateCursorDebugConfig)
+			cursorDebug.GET("/records", h.Admin.Ops.ListCursorDebugRecords)
+			cursorDebug.DELETE("/records", h.Admin.Ops.ClearCursorDebugRecords)
+			cursorDebug.GET("/records/:id", h.Admin.Ops.GetCursorDebugRecord)
+			cursorDebug.GET("/records/:id/export", h.Admin.Ops.ExportCursorDebugRecord)
+		}
+
 		// Indexed system logs
 		ops.GET("/system-logs", h.Admin.Ops.ListSystemLogs)
 		ops.POST("/system-logs/cleanup", h.Admin.Ops.CleanupSystemLogs)
@@ -302,7 +313,6 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		accounts.GET("/:id/temp-unschedulable", h.Admin.Account.GetTempUnschedulable)
 		accounts.DELETE("/:id/temp-unschedulable", h.Admin.Account.ClearTempUnschedulable)
 		accounts.POST("/:id/schedulable", h.Admin.Account.SetSchedulable)
-		accounts.POST("/models/sync-upstream-preview", h.Admin.Account.SyncUpstreamModelsPreview)
 		accounts.GET("/:id/models", h.Admin.Account.GetAvailableModels)
 		accounts.POST("/:id/models/sync-upstream", h.Admin.Account.SyncUpstreamModels)
 		accounts.POST("/batch", h.Admin.Account.BatchCreate)

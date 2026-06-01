@@ -88,6 +88,21 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 		upstreamBody = ReplaceModelInBody(body, upstreamModel)
 	}
 
+	forcedTemplateText := ""
+	if s.cfg != nil {
+		forcedTemplateText = s.cfg.Gateway.ForcedCodexInstructionsTemplate
+	}
+	if patched, _, err := applyForcedCodexInstructionsTemplateToChatCompletionsBodyIfNeeded(c, upstreamBody, forcedTemplateText, forcedCodexInstructionsTemplateData{
+		OriginalModel:   originalModel,
+		NormalizedModel: upstreamModel,
+		BillingModel:    billingModel,
+		UpstreamModel:   upstreamModel,
+	}); err != nil {
+		return nil, err
+	} else {
+		upstreamBody = patched
+	}
+
 	// 4. Apply OpenAI fast policy on the CC body
 	updatedBody, policyErr := s.applyOpenAIFastPolicyToBody(ctx, account, upstreamModel, upstreamBody)
 	if policyErr != nil {
@@ -136,6 +151,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	if err != nil {
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
+	upstreamReq = ApplyAccountUpstreamRequestOptions(upstreamReq, account)
 	upstreamReq = upstreamReq.WithContext(WithHTTPUpstreamProfile(upstreamReq.Context(), HTTPUpstreamProfileOpenAI))
 	upstreamReq.Header.Set("Content-Type", "application/json")
 	upstreamReq.Header.Set("Authorization", "Bearer "+apiKey)

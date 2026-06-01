@@ -1700,6 +1700,33 @@ func TestOpenAIInvalidBaseURLWhenAllowlistDisabled(t *testing.T) {
 	}
 }
 
+func TestOpenAIBuildUpstreamRequestAppliesSkipTLSOption(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Security: config.SecurityConfig{
+			URLAllowlist: config.URLAllowlistConfig{Enabled: false},
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"base_url":        "https://api.openai.com:8443/v1",
+			"skip_tls_verify": true,
+		},
+	}
+
+	req, err := svc.buildUpstreamRequest(c.Request.Context(), c, account, []byte("{}"), "token", false, "", false)
+	require.NoError(t, err)
+	require.True(t, UpstreamRequestOptionsFromContext(req.Context()).SkipTLSVerify)
+}
+
 func TestOpenAIValidateUpstreamBaseURLDisabledRequiresHTTPS(t *testing.T) {
 	cfg := &config.Config{
 		Security: config.SecurityConfig{

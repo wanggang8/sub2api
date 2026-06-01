@@ -5404,6 +5404,7 @@ func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
 	if err != nil {
 		return nil, nil, err
 	}
+	req = ApplyAccountUpstreamRequestOptions(req, account)
 
 	if c != nil && c.Request != nil {
 		for key, values := range c.Request.Header {
@@ -6296,6 +6297,7 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 	if err != nil {
 		return nil, nil, err
 	}
+	req = ApplyAccountUpstreamRequestOptions(req, account)
 
 	// 设置认证头（保持原始大小写）
 	if tokenType == "oauth" {
@@ -6413,6 +6415,7 @@ func (s *GatewayService) buildUpstreamRequestAnthropicVertex(
 	if err != nil {
 		return nil, err
 	}
+	req = ApplyAccountUpstreamRequestOptions(req, account)
 
 	if c != nil && c.Request != nil {
 		for key, values := range c.Request.Header {
@@ -9655,6 +9658,7 @@ func (s *GatewayService) buildCountTokensRequestAnthropicAPIKeyPassthrough(
 	if err != nil {
 		return nil, err
 	}
+	req = ApplyAccountUpstreamRequestOptions(req, account)
 
 	if c != nil && c.Request != nil {
 		for key, values := range c.Request.Header {
@@ -9763,6 +9767,7 @@ func (s *GatewayService) buildCountTokensRequest(ctx context.Context, c *gin.Con
 	if err != nil {
 		return nil, nil, err
 	}
+	req = ApplyAccountUpstreamRequestOptions(req, account)
 
 	// 设置认证头（保持原始大小写）
 	if tokenType == "oauth" {

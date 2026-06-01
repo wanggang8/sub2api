@@ -69,6 +69,19 @@
           <p class="input-hint">{{ t('admin.accounts.leaveEmptyToKeep') }}</p>
         </div>
 
+        <div
+          v-if="showUpstreamSettings"
+          class="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-dark-600 dark:bg-dark-700/40"
+        >
+          <label class="flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300">
+            <input v-model="editSkipTLSVerify" type="checkbox" class="h-4 w-4 rounded border-gray-300" />
+            <span>跳过 TLS 证书校验</span>
+          </label>
+          <p class="mt-1 text-xs text-amber-600 dark:text-amber-400">
+            仅对自定义上游生效。开启后会忽略上游证书校验，仅建议用于自签名或证书异常环境。
+          </p>
+        </div>
+
         <!-- Model Restriction Section (不适用于 Antigravity) -->
         <div v-if="account.platform !== 'antigravity'" class="border-t border-gray-200 pt-4 dark:border-dark-600">
           <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
@@ -2398,7 +2411,7 @@ import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
 import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
-import { applyInterceptWarmup } from '@/components/account/credentialsBuilder'
+import { applyInterceptWarmup, getDefaultAPIKeyBaseURL, isCustomPlatformBaseURL } from '@/components/account/credentialsBuilder'
 import { formatDateTime, formatDateTimeLocalInput, parseDateTimeLocalInput } from '@/utils/format'
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
 import { VERTEX_LOCATION_OPTIONS } from '@/constants/account'
@@ -2463,6 +2476,7 @@ interface TempUnschedRuleForm {
 // State
 const submitting = ref(false)
 const editBaseUrl = ref('https://api.anthropic.com')
+const editSkipTLSVerify = ref(false)
 const editApiKey = ref('')
 // Bedrock credentials
 const editBedrockAccessKeyId = ref('')
@@ -2806,7 +2820,14 @@ const openAICompactStatusKey = computed(() => {
   return 'admin.accounts.openai.compactAuto'
 })
 
-// Computed: current preset mappings based on platform
+const effectiveUpstreamBaseURL = computed(() => editBaseUrl.value.trim() || defaultBaseUrl.value.trim())
+
+const showUpstreamSettings = computed(() => (
+  ['openai', 'anthropic', 'gemini'].includes(props.account?.platform || '')
+  && props.account?.type === 'apikey'
+  && isCustomPlatformBaseURL(props.account?.platform || '', effectiveUpstreamBaseURL.value)
+))
+
 const presetMappings = computed(() => getPresetMappingsByPlatform(props.account?.platform || 'anthropic'))
 const tempUnschedPresets = computed(() => [
   {
@@ -2840,9 +2861,9 @@ const tempUnschedPresets = computed(() => [
 
 // Computed: default base URL based on platform
 const defaultBaseUrl = computed(() => {
-  if (props.account?.platform === 'openai') return 'https://api.openai.com'
-  if (props.account?.platform === 'gemini') return 'https://generativelanguage.googleapis.com'
-  return 'https://api.anthropic.com'
+  if (props.account?.platform === 'openai') return getDefaultAPIKeyBaseURL('openai')
+  if (props.account?.platform === 'gemini') return getDefaultAPIKeyBaseURL('gemini')
+  return getDefaultAPIKeyBaseURL('anthropic')
 })
 
 const mixedChannelWarningMessageText = computed(() => {
@@ -3099,6 +3120,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
           ? 'https://generativelanguage.googleapis.com'
           : 'https://api.anthropic.com'
     editBaseUrl.value = (credentials.base_url as string) || platformDefaultUrl
+    editSkipTLSVerify.value = credentials.skip_tls_verify === true
 
     // Load model mappings and detect mode
     loadModelRestrictionFromMapping(credentials.model_mapping as Record<string, unknown> | undefined)
@@ -3167,6 +3189,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
           ? 'https://generativelanguage.googleapis.com'
           : 'https://api.anthropic.com'
     editBaseUrl.value = platformDefaultUrl
+    editSkipTLSVerify.value = false
 
     // Load model mappings for OpenAI OAuth accounts
     if (newAccount.platform === 'openai' && newAccount.credentials) {
@@ -3208,7 +3231,6 @@ watch(
   },
   { immediate: true }
 )
-
 // Model mapping helpers
 const addModelMapping = () => {
   modelMappings.value.push({ from: '', to: '' })
@@ -3543,6 +3565,14 @@ function toPositiveNumber(value: unknown) {
   return Math.trunc(num)
 }
 
+watch([editBaseUrl, editApiKey], ([baseUrl, apiKey], [prevBaseUrl, prevApiKey]) => {
+  if (baseUrl !== prevBaseUrl || apiKey !== prevApiKey) {
+    if (!showUpstreamSettings.value) {
+      editSkipTLSVerify.value = false
+    }
+  }
+})
+
 const needsMixedChannelCheck = () => props.account?.platform === 'antigravity' || props.account?.platform === 'anthropic'
 
 const buildMixedChannelDetails = (resp?: CheckMixedChannelResponse) => {
@@ -3751,6 +3781,12 @@ const handleSubmit = async () => {
       } else {
         delete newCredentials.custom_error_codes_enabled
         delete newCredentials.custom_error_codes
+      }
+
+      if (showUpstreamSettings.value && editSkipTLSVerify.value) {
+        newCredentials.skip_tls_verify = true
+      } else {
+        delete newCredentials.skip_tls_verify
       }
 
       // Add intercept warmup requests setting

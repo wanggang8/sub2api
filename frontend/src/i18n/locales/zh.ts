@@ -366,6 +366,7 @@ export default {
     proxies: 'IP管理',
     redeemCodes: '兑换码',
     ops: '运维监控',
+    cursorDebug: 'Cursor 调试',
     promoCodes: '优惠码',
     settings: '系统设置',
     myAccount: '我的账户',
@@ -1373,6 +1374,15 @@ export default {
 
   // Admin
   admin: {
+    cursorDebug: {
+      title: 'Cursor 调试',
+      description: '查看 Cursor 兼容链路的请求、上游请求与响应快照',
+      subtitle: '查看 Cursor 请求快照并导出完整记录。',
+      enabled: '启用采集',
+      records: '记录',
+      empty: '暂无采集记录',
+      selectRecord: '选择一条记录查看详情'
+    },
     // Dashboard
     dashboard: {
       title: '管理控制台',
@@ -3143,7 +3153,6 @@ export default {
         expiresAt: '过期时间',
         actions: '操作'
       },
-      usageWindowsHint: '“5h / 7d”是上游账号（如 OpenAI ChatGPT、Claude）官方的滚动用量窗口限制，由上游对账号设定，并非 sub2api 配置，也与你映射的模型无关。窗口滚动到期后用量会自动重置，无法在 sub2api 端解除该限制。',
       allPrivacyModes: '全部Privacy状态',
       privacyUnset: '未设置',
       privacyTrainingOff: '已关闭训练数据共享',
@@ -3152,6 +3161,7 @@ export default {
       privacyAntigravitySet: '已关闭遥测和营销邮件',
       privacyAntigravityFailed: '隐私设置失败',
       setPrivacy: '设置隐私',
+      usageWindowsHint: '展示支持上游配额数据的账号近期滚动窗口用量和每日用量。',
       subscriptionAbnormal: '异常',
       subscriptionExpires: '到期',
       // 容量状态提示

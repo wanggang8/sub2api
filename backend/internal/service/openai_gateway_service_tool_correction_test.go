@@ -1,8 +1,12 @@
 package service
 
 import (
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
 )
 
 // TestOpenAIGatewayService_ToolCorrection 测试 OpenAIGatewayService 中的工具修正集成
@@ -75,6 +79,24 @@ func TestOpenAIGatewayService_ToolCorrection(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestOpenAIGatewayService_ToolCorrectionSkipsCursorCompatContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	MarkCursorCompatRequest(c)
+
+	service := &OpenAIGatewayService{
+		toolCorrector: NewCodexToolCorrector(),
+	}
+	input := []byte(`{"tool_calls":[{"function":{"name":"apply_patch"}}]}`)
+
+	result := service.correctToolCallsInResponseBodyForContext(c, input)
+
+	require.Equal(t, string(input), string(result))
+	require.Contains(t, string(result), `"name":"apply_patch"`)
+	require.NotContains(t, string(result), `"name":"edit"`)
 }
 
 // TestOpenAIGatewayService_ToolCorrectorInitialization 测试工具修正器是否正确初始化

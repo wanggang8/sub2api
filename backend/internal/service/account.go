@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"net/url"
+
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 )
@@ -229,6 +231,33 @@ func (a *Account) GetCredential(key string) string {
 		return strconv.Itoa(val)
 	default:
 		return ""
+	}
+}
+
+func (a *Account) GetCredentialBool(key string) bool {
+	if a == nil || a.Credentials == nil {
+		return false
+	}
+	v, ok := a.Credentials[key]
+	if !ok || v == nil {
+		return false
+	}
+	switch val := v.(type) {
+	case bool:
+		return val
+	case string:
+		normalized := strings.ToLower(strings.TrimSpace(val))
+		return normalized == "true" || normalized == "1" || normalized == "yes" || normalized == "on"
+	case json.Number:
+		return val.String() == "1"
+	case float64:
+		return val != 0
+	case int:
+		return val != 0
+	case int64:
+		return val != 0
+	default:
+		return false
 	}
 }
 
@@ -1073,6 +1102,51 @@ func (a *Account) GetOpenAIBaseURL() string {
 		}
 	}
 	return "https://api.openai.com"
+}
+
+func normalizeBaseURLForComparison(baseURL string) string {
+	trimmed := strings.TrimSpace(baseURL)
+	if trimmed == "" {
+		return ""
+	}
+	parsed, err := url.Parse(trimmed)
+	if err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		scheme := strings.ToLower(parsed.Scheme)
+		host := strings.ToLower(parsed.Host)
+		path := strings.TrimRight(parsed.EscapedPath(), "/")
+		return scheme + "://" + host + path
+	}
+	return strings.TrimRight(strings.ToLower(trimmed), "/")
+}
+
+func IsDefaultPlatformBaseURL(platform, baseURL string) bool {
+	normalized := normalizeBaseURLForComparison(baseURL)
+	if normalized == "" {
+		return true
+	}
+	switch platform {
+	case PlatformOpenAI:
+		return normalized == "https://api.openai.com" || normalized == "https://api.openai.com/v1"
+	case PlatformGemini:
+		return normalized == "https://generativelanguage.googleapis.com" ||
+			normalized == "https://generativelanguage.googleapis.com/v1beta"
+	case PlatformAnthropic:
+		return normalized == "https://api.anthropic.com" || normalized == "https://api.anthropic.com/v1"
+	default:
+		return false
+	}
+}
+
+func (a *Account) HasCustomBaseURL() bool {
+	if a == nil || a.Type != AccountTypeAPIKey {
+		return false
+	}
+	baseURL := strings.TrimSpace(a.GetCredential("base_url"))
+	return baseURL != "" && !IsDefaultPlatformBaseURL(a.Platform, baseURL)
+}
+
+func (a *Account) ShouldSkipTLSVerify() bool {
+	return a != nil && a.HasCustomBaseURL() && a.GetCredentialBool("skip_tls_verify")
 }
 
 func (a *Account) GetOpenAIAccessToken() string {

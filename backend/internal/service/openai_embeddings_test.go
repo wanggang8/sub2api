@@ -76,8 +76,9 @@ func TestForwardEmbeddings_APIKeyPassthroughRecordsUsageAndBatchInput(t *testing
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeAPIKey,
 		Credentials: map[string]any{
-			"api_key":  "sk-test",
-			"base_url": "https://api.jina.ai",
+			"api_key":         "sk-test",
+			"base_url":        "https://api.jina.ai",
+			"skip_tls_verify": true,
 			"model_mapping": map[string]any{
 				"nowledge-embedding": "jina-embeddings-v5-text-small",
 			},
@@ -89,6 +90,7 @@ func TestForwardEmbeddings_APIKeyPassthroughRecordsUsageAndBatchInput(t *testing
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.NotNil(t, result)
+	require.True(t, UpstreamRequestOptionsFromContext(upstream.lastReq.Context()).SkipTLSVerify)
 	require.Equal(t, "emb-rid", result.RequestID)
 	require.Equal(t, "nowledge-embedding", result.Model)
 	require.Equal(t, "jina-embeddings-v5-text-small", result.BillingModel)

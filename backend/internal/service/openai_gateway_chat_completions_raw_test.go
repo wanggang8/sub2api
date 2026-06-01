@@ -122,6 +122,37 @@ func TestForwardAsRawChatCompletions_ForcesStreamUsageUpstreamAndPassesUsageDown
 	require.Contains(t, rec.Body.String(), "data: [DONE]")
 }
 
+func TestForwardAsRawChatCompletions_ForcedCodexInstructionsTemplateAppliesToChatBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"system","content":"client-system"},{"role":"user","content":"hello"}],"stream":false}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/cursor/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	SetForcedCodexInstructionsEnabled(c, true)
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid_raw_forced_template"}},
+		Body:       io.NopCloser(strings.NewReader(`{"error":{"type":"invalid_request_error","message":"model not found"}}`)),
+	}}
+	cfg := rawChatCompletionsTestConfig()
+	cfg.Gateway.ForcedCodexInstructionsTemplate = "server-prefix\n\n{{ .ExistingInstructions }}"
+	svc := &OpenAIGatewayService{
+		cfg:          cfg,
+		httpUpstream: upstream,
+	}
+
+	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
+	require.Error(t, err)
+	require.Nil(t, result)
+	require.Equal(t, "system", gjson.GetBytes(upstream.lastBody, "messages.0.role").String())
+	require.Equal(t, "server-prefix\n\nclient-system", gjson.GetBytes(upstream.lastBody, "messages.0.content").String())
+	require.Equal(t, "user", gjson.GetBytes(upstream.lastBody, "messages.1.role").String())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "instructions").Exists())
+}
+
 func TestForwardAsRawChatCompletions_PreservesDeepSeekReasoningContentNonStreaming(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

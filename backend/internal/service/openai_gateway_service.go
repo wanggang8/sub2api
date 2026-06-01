@@ -2343,6 +2343,235 @@ func (s *OpenAIGatewayService) handleFailoverSideEffects(ctx context.Context, re
 	s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, body)
 }
 
+func normalizeOpenAIResponsesFunctionCallOutputStrings(body []byte) ([]byte, bool, error) {
+	if len(body) == 0 || !gjson.GetBytes(body, `input.#(type=="function_call_output")`).Exists() {
+		return body, false, nil
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return body, false, nil
+	}
+
+	input, ok := payload["input"].([]any)
+	if !ok {
+		return body, false, nil
+	}
+
+	changed := false
+	for _, raw := range input {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if itemType, _ := item["type"].(string); itemType != "function_call_output" {
+			continue
+		}
+		output, exists := item["output"]
+		if !exists {
+			continue
+		}
+		if _, ok := output.(string); ok {
+			continue
+		}
+		item["output"] = stringifyOpenAIResponsesFunctionCallOutput(output)
+		changed = true
+	}
+	if !changed {
+		return body, false, nil
+	}
+
+	normalized, err := json.Marshal(payload)
+	if err != nil {
+		return nil, false, fmt.Errorf("normalize function_call_output output: %w", err)
+	}
+	return normalized, true, nil
+}
+
+func normalizeOpenAIResponsesRequestTools(body []byte) ([]byte, bool, error) {
+	if len(body) == 0 || (!gjson.GetBytes(body, "tools").Exists() && !gjson.GetBytes(body, "tool_choice").Exists()) {
+		return body, false, nil
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return body, false, nil
+	}
+
+	changed := false
+	if rawTools, ok := payload["tools"].([]any); ok {
+		normalized := make([]any, 0, len(rawTools))
+		for _, rawTool := range rawTools {
+			tool, toolChanged := normalizeOpenAIResponsesToolDefinition(rawTool)
+			normalized = append(normalized, tool)
+			changed = changed || toolChanged
+		}
+		if changed {
+			payload["tools"] = normalized
+		}
+	}
+	if rawChoice, ok := payload["tool_choice"]; ok {
+		if choice, choiceChanged := normalizeOpenAIResponsesToolChoice(rawChoice); choiceChanged {
+			payload["tool_choice"] = choice
+			changed = true
+		}
+	}
+	if !changed {
+		return body, false, nil
+	}
+
+	normalizedBody, err := json.Marshal(payload)
+	if err != nil {
+		return nil, false, fmt.Errorf("normalize responses tools: %w", err)
+	}
+	return normalizedBody, true, nil
+}
+
+func normalizeOpenAIResponsesToolDefinition(rawTool any) (any, bool) {
+	tool, ok := rawTool.(map[string]any)
+	if !ok {
+		return rawTool, false
+	}
+
+	toolType, _ := tool["type"].(string)
+	toolType = strings.TrimSpace(toolType)
+	if toolType != "" && toolType != "function" {
+		return rawTool, false
+	}
+
+	function, hasFunction := tool["function"].(map[string]any)
+	if hasFunction {
+		name := trimmedStringField(function, "name")
+		if name == "" {
+			return rawTool, false
+		}
+		normalized := map[string]any{
+			"type": "function",
+			"name": name,
+			"parameters": normalizeResponsesToolParameters(
+				firstPresent(function["parameters"], tool["parameters"], tool["input_schema"]),
+			),
+		}
+		if description := trimmedStringField(function, "description"); description != "" {
+			normalized["description"] = description
+		} else if description := trimmedStringField(tool, "description"); description != "" {
+			normalized["description"] = description
+		}
+		if strict, ok := function["strict"]; ok {
+			normalized["strict"] = strict
+		} else if strict, ok := tool["strict"]; ok {
+			normalized["strict"] = strict
+		}
+		return normalized, true
+	}
+
+	name := trimmedStringField(tool, "name")
+	if name == "" {
+		return rawTool, false
+	}
+
+	parameters, hasParameters := tool["parameters"]
+	if !hasParameters {
+		parameters = tool["input_schema"]
+	}
+	_, hasInputSchema := tool["input_schema"]
+	if toolType == "function" && hasParameters && !hasInputSchema {
+		return rawTool, false
+	}
+
+	normalized := map[string]any{
+		"type":       "function",
+		"name":       name,
+		"parameters": normalizeResponsesToolParameters(parameters),
+	}
+	if description := trimmedStringField(tool, "description"); description != "" {
+		normalized["description"] = description
+	}
+	if strict, ok := tool["strict"]; ok {
+		normalized["strict"] = strict
+	}
+	return normalized, true
+}
+
+func firstPresent(values ...any) any {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
+func normalizeResponsesToolParameters(parameters any) any {
+	if parameters == nil {
+		return map[string]any{"type": "object", "properties": map[string]any{}}
+	}
+	return parameters
+}
+
+func trimmedStringField(payload map[string]any, key string) string {
+	value, ok := payload[key].(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
+func normalizeOpenAIResponsesToolChoice(rawChoice any) (any, bool) {
+	choice, ok := rawChoice.(map[string]any)
+	if !ok {
+		return rawChoice, false
+	}
+	choiceType, _ := choice["type"].(string)
+	if strings.TrimSpace(choiceType) != "function" {
+		return rawChoice, false
+	}
+	function, hasFunction := choice["function"].(map[string]any)
+	if !hasFunction {
+		return rawChoice, false
+	}
+	name := trimmedStringField(function, "name")
+	if name == "" {
+		return rawChoice, false
+	}
+	return map[string]any{"type": "function", "name": name}, true
+}
+
+func stringifyOpenAIResponsesFunctionCallOutput(output any) string {
+	switch v := output.(type) {
+	case nil:
+		return ""
+	case string:
+		return v
+	case []any:
+		parts := make([]string, 0, len(v))
+		for _, raw := range v {
+			block, ok := raw.(map[string]any)
+			if !ok {
+				if text := strings.TrimSpace(fmt.Sprint(raw)); text != "" {
+					parts = append(parts, text)
+				}
+				continue
+			}
+			if text, _ := block["text"].(string); strings.TrimSpace(text) != "" {
+				parts = append(parts, text)
+				continue
+			}
+			data, err := json.Marshal(block)
+			if err == nil {
+				parts = append(parts, string(data))
+			}
+		}
+		return strings.Join(parts, "\n")
+	default:
+		data, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Sprint(v)
+		}
+		return string(data)
+	}
+}
+
 // Forward forwards request to OpenAI API
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
 	startTime := time.Now()
@@ -2362,6 +2591,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 
 	originalBody := body
+	if normalizedBody, normalized, normalizeErr := normalizeOpenAIResponsesFunctionCallOutputStrings(body); normalizeErr != nil {
+		return nil, normalizeErr
+	} else if normalized {
+		body = normalizedBody
+		originalBody = normalizedBody
+	}
 	requestView := newOpenAIRequestView(body)
 	reqModel, reqStream, promptCacheKey := requestView.Model, requestView.Stream, requestView.PromptCacheKey
 	originalModel := reqModel
@@ -2597,6 +2832,25 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 		if codexResult.PromptCacheKey != "" {
 			promptCacheKey = codexResult.PromptCacheKey
+		}
+	}
+
+	forcedTemplateText := ""
+	if s.cfg != nil {
+		forcedTemplateText = s.cfg.Gateway.ForcedCodexInstructionsTemplate
+	}
+	if strings.TrimSpace(forcedTemplateText) != "" && shouldApplyForcedCodexInstructionsForRequest(c, upstreamModel) {
+		if decoded, decodeErr := ensureReqBody(); decodeErr != nil {
+			return nil, decodeErr
+		} else if changed, err := applyForcedCodexInstructionsTemplateIfNeeded(c, decoded, forcedTemplateText, forcedCodexInstructionsTemplateData{
+			OriginalModel:   requestView.Model,
+			NormalizedModel: upstreamModel,
+			BillingModel:    billingModel,
+			UpstreamModel:   upstreamModel,
+		}); err != nil {
+			return nil, err
+		} else if changed {
+			markDecodedModified()
 		}
 	}
 
@@ -3390,11 +3644,23 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 		}
 	}
 	targetURL = appendOpenAIResponsesRequestPathSuffix(targetURL, openAIResponsesRequestPathSuffix(c))
+	if normalizedBody, normalized, normalizeErr := normalizeOpenAIResponsesFunctionCallOutputStrings(body); normalizeErr != nil {
+		return nil, normalizeErr
+	} else if normalized {
+		body = normalizedBody
+	}
+	if normalizedBody, normalized, normalizeErr := normalizeOpenAIResponsesRequestTools(body); normalizeErr != nil {
+		return nil, normalizeErr
+	} else if normalized {
+		body = normalizedBody
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
+	req = ApplyAccountUpstreamRequestOptions(req, account)
+	setOpsUpstreamRequestBody(c, body)
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
 
 	// 透传客户端请求头（安全白名单）。
@@ -4008,7 +4274,7 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 			body = s.replaceModelInResponseBody(body, mappedModel, originalModel)
 		}
 		// Correct tool calls in final response
-		body = s.correctToolCallsInResponseBody(body)
+		body = s.correctToolCallsInResponseBodyForContext(c, body)
 	} else {
 		terminalType, terminalPayload, terminalOK := extractOpenAISSETerminalEvent(bodyText)
 		if terminalOK && terminalType == "response.failed" {
@@ -4115,11 +4381,23 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		targetURL = openaiPlatformAPIURL
 	}
 	targetURL = appendOpenAIResponsesRequestPathSuffix(targetURL, openAIResponsesRequestPathSuffix(c))
+	if normalizedBody, normalized, normalizeErr := normalizeOpenAIResponsesFunctionCallOutputStrings(body); normalizeErr != nil {
+		return nil, normalizeErr
+	} else if normalized {
+		body = normalizedBody
+	}
+	if normalizedBody, normalized, normalizeErr := normalizeOpenAIResponsesRequestTools(body); normalizeErr != nil {
+		return nil, normalizeErr
+	} else if normalized {
+		body = normalizedBody
+	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
+	req = ApplyAccountUpstreamRequestOptions(req, account)
+	setOpsUpstreamRequestBody(c, body)
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
 
 	// Set authentication header
@@ -4723,12 +5001,14 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 			}
 			imageCounter.AddSSEData(dataBytes)
 
-			// Correct Codex tool calls if needed (apply_patch -> edit, etc.)
-			if correctedData, corrected := s.toolCorrector.CorrectToolCallsInSSEBytes(dataBytes); corrected {
-				dataBytes = correctedData
-				data = string(correctedData)
-				line = "data: " + data
-				eventType = strings.TrimSpace(gjson.GetBytes(dataBytes, "type").String())
+			// Correct Codex tool calls if needed (apply_patch -> edit, etc.).
+			if !shouldSkipCodexToolCorrection(c) {
+				if correctedData, corrected := s.toolCorrector.CorrectToolCallsInSSEBytes(dataBytes); corrected {
+					dataBytes = correctedData
+					data = string(correctedData)
+					line = "data: " + data
+					eventType = strings.TrimSpace(gjson.GetBytes(dataBytes, "type").String())
+				}
 			}
 			startsClientOutput := forceFlushFailedEvent || openAIStreamDataStartsClientOutput(data, eventType)
 
@@ -5014,6 +5294,13 @@ func (s *OpenAIGatewayService) correctToolCallsInResponseBody(body []byte) []byt
 	return body
 }
 
+func (s *OpenAIGatewayService) correctToolCallsInResponseBodyForContext(c *gin.Context, body []byte) []byte {
+	if shouldSkipCodexToolCorrection(c) {
+		return body
+	}
+	return s.correctToolCallsInResponseBody(body)
+}
+
 func (s *OpenAIGatewayService) parseSSEUsage(data string, usage *OpenAIUsage) {
 	s.parseSSEUsageBytes([]byte(data), usage)
 }
@@ -5161,7 +5448,7 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 			body = s.replaceModelInResponseBody(body, mappedModel, originalModel)
 		}
 		// Correct tool calls in final response
-		body = s.correctToolCallsInResponseBody(body)
+		body = s.correctToolCallsInResponseBodyForContext(c, body)
 	} else {
 		terminalType, terminalPayload, terminalOK := extractOpenAISSETerminalEvent(bodyText)
 		if terminalOK && terminalType == "response.failed" {

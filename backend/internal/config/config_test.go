@@ -336,6 +336,26 @@ func TestLoadForcedCodexInstructionsTemplate(t *testing.T) {
 	require.Equal(t, "server-prefix\n\n{{ .ExistingInstructions }}", cfg.Gateway.ForcedCodexInstructionsTemplate)
 }
 
+func TestLoadForcedCodexInstructionsTemplateFromEnv(t *testing.T) {
+	resetViperWithJWTSecret(t)
+
+	templatePath := filepath.Join(t.TempDir(), "forced.tmpl")
+	require.NoError(t, os.WriteFile(templatePath, []byte("env-prefix\n\n{{ .ExistingInstructions }}"), 0o644))
+	t.Setenv("GATEWAY_FORCED_CODEX_INSTRUCTIONS_TEMPLATE_FILE", templatePath)
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, strings.TrimSpace(templatePath), cfg.Gateway.ForcedCodexInstructionsTemplateFile)
+	require.Equal(t, "env-prefix\n\n{{ .ExistingInstructions }}", cfg.Gateway.ForcedCodexInstructionsTemplate)
+}
+
+func TestDefaultCursorForcedCodexInstructionsTemplatePreservesExistingInstructions(t *testing.T) {
+	templatePath := filepath.Join("..", "..", "resources", "prompts", "cursor-gpt5-forced-instructions.tmpl")
+	content, err := os.ReadFile(templatePath)
+	require.NoError(t, err)
+	require.Contains(t, string(content), "{{ .ExistingInstructions }}")
+}
+
 func TestLoadDefaultSecurityToggles(t *testing.T) {
 	resetViperWithJWTSecret(t)
 

@@ -123,6 +123,14 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 				responsesBody = stripped
 			}
 		}
+		responsesBody, _, err = normalizeOpenAIResponsesFunctionCallOutputStrings(responsesBody)
+		if err != nil {
+			return nil, fmt.Errorf("normalize function_call_output output in responses-shape body: %w", err)
+		}
+		responsesBody, _, err = normalizeOpenAIResponsesRequestTools(responsesBody)
+		if err != nil {
+			return nil, fmt.Errorf("normalize responses tools in responses-shape body: %w", err)
+		}
 		responsesBody, normalizedServiceTier, err := normalizeResponsesBodyServiceTier(responsesBody)
 		if err != nil {
 			return nil, fmt.Errorf("normalize service_tier in responses-shape body: %w", err)
@@ -185,6 +193,21 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		if err != nil {
 			return nil, fmt.Errorf("remarshal after codex transform: %w", err)
 		}
+	}
+
+	forcedTemplateText := ""
+	if s.cfg != nil {
+		forcedTemplateText = s.cfg.Gateway.ForcedCodexInstructionsTemplate
+	}
+	if patched, _, err := applyForcedCodexInstructionsTemplateToBodyIfNeeded(c, responsesBody, forcedTemplateText, forcedCodexInstructionsTemplateData{
+		OriginalModel:   originalModel,
+		NormalizedModel: upstreamModel,
+		BillingModel:    billingModel,
+		UpstreamModel:   upstreamModel,
+	}); err != nil {
+		return nil, err
+	} else {
+		responsesBody = patched
 	}
 
 	// 4b. Apply OpenAI fast policy (may filter service_tier or block the request).

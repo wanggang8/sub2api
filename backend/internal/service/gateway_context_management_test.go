@@ -46,6 +46,60 @@ func TestAnthropicBetaTokensContains_EmptyInputs(t *testing.T) {
 	require.False(t, anthropicBetaTokensContains("oauth-2025-04-20", ""))
 }
 
+func TestAnthropicBuildUpstreamRequestAppliesSkipTLSOption(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	account := &Account{
+		ID:       403,
+		Platform: PlatformAnthropic,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"base_url":        "https://api.anthropic.com:8443",
+			"skip_tls_verify": true,
+		},
+		Status:      StatusActive,
+		Schedulable: true,
+	}
+	body := []byte(`{"model":"claude-sonnet-4-6","messages":[]}`)
+	svc := &GatewayService{cfg: &config.Config{}}
+	req, _, err := svc.buildUpstreamRequest(
+		context.Background(), c, account, body,
+		"api-key", "api_key", "claude-sonnet-4-6", false, false,
+	)
+	require.NoError(t, err)
+	require.True(t, UpstreamRequestOptionsFromContext(req.Context()).SkipTLSVerify)
+}
+
+func TestAnthropicAPIKeyPassthroughBuildUpstreamRequestAppliesSkipTLSOption(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	account := &Account{
+		ID:       404,
+		Platform: PlatformAnthropic,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":         "sk-ant-test",
+			"base_url":        "https://api.anthropic.com:8443",
+			"skip_tls_verify": true,
+		},
+		Status:      StatusActive,
+		Schedulable: true,
+	}
+	body := []byte(`{"model":"claude-sonnet-4-6","messages":[]}`)
+	svc := &GatewayService{cfg: &config.Config{}}
+	req, _, err := svc.buildUpstreamRequestAnthropicAPIKeyPassthrough(
+		context.Background(), c, account, body, "sk-ant-test",
+	)
+	require.NoError(t, err)
+	require.True(t, UpstreamRequestOptionsFromContext(req.Context()).SkipTLSVerify)
+}
+
 func TestAnthropicBetaTokensContains_SingleToken(t *testing.T) {
 	require.True(t, anthropicBetaTokensContains("context-management-2025-06-27", "context-management-2025-06-27"))
 }

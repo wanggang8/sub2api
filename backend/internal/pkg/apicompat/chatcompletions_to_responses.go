@@ -11,6 +11,14 @@ type chatMessageContent struct {
 	Parts []ChatContentPart
 }
 
+func marshalJSONRaw(value any) json.RawMessage {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	return raw
+}
+
 // ChatCompletionsToResponses converts a Chat Completions request into a
 // Responses API request. The upstream always streams, so Stream is forced to
 // true. store is always false and reasoning.encrypted_content is always
@@ -411,15 +419,36 @@ func convertChatToolsToResponses(tools []ChatTool, functions []ChatFunction) []R
 	var out []ResponsesTool
 
 	for _, t := range tools {
-		if t.Type != "function" || t.Function == nil {
+		toolType := strings.TrimSpace(t.Type)
+		if toolType != "" && toolType != "function" {
 			continue
+		}
+		fn := t.Function
+		if fn == nil {
+			parameters := t.Parameters
+			if len(parameters) == 0 {
+				parameters = t.InputSchema
+			}
+			fn = &ChatFunction{
+				Name:        t.Name,
+				Description: t.Description,
+				Parameters:  parameters,
+				Strict:      t.Strict,
+			}
+		}
+		if strings.TrimSpace(fn.Name) == "" {
+			continue
+		}
+		parameters := fn.Parameters
+		if len(parameters) == 0 {
+			parameters = marshalJSONRaw(map[string]any{"type": "object", "properties": map[string]any{}})
 		}
 		rt := ResponsesTool{
 			Type:        "function",
-			Name:        t.Function.Name,
-			Description: t.Function.Description,
-			Parameters:  t.Function.Parameters,
-			Strict:      t.Function.Strict,
+			Name:        fn.Name,
+			Description: fn.Description,
+			Parameters:  parameters,
+			Strict:      fn.Strict,
 		}
 		out = append(out, rt)
 	}

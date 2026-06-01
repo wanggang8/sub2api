@@ -113,6 +113,31 @@ func TestChatCompletionsToResponses_ToolCalls(t *testing.T) {
 	assert.Equal(t, "ping", resp.Tools[0].Name)
 }
 
+func TestChatCompletionsToResponses_TopLevelResponsesStyleTool(t *testing.T) {
+	req := &ChatCompletionsRequest{
+		Model: "gpt-5",
+		Messages: []ChatMessage{
+			{Role: "user", Content: json.RawMessage(`"hello"`)},
+		},
+		Tools: []ChatTool{
+			{
+				Type:        "function",
+				Name:        "search_docs",
+				Description: "Search documents",
+				InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}}}`),
+			},
+		},
+	}
+
+	resp, err := ChatCompletionsToResponses(req)
+	require.NoError(t, err)
+	require.Len(t, resp.Tools, 1)
+	assert.Equal(t, "function", resp.Tools[0].Type)
+	assert.Equal(t, "search_docs", resp.Tools[0].Name)
+	assert.Equal(t, "Search documents", resp.Tools[0].Description)
+	assert.JSONEq(t, `{"type":"object","properties":{"query":{"type":"string"}}}`, string(resp.Tools[0].Parameters))
+}
+
 func TestChatCompletionsToResponses_MaxTokens(t *testing.T) {
 	t.Run("max_tokens", func(t *testing.T) {
 		maxTokens := 100
@@ -824,6 +849,73 @@ func TestResponsesEventToChatChunks_TextDelta(t *testing.T) {
 	require.Len(t, chunks, 1)
 	require.NotNil(t, chunks[0].Choices[0].Delta.Content)
 	assert.Equal(t, "Hello", *chunks[0].Choices[0].Delta.Content)
+}
+
+func TestChatCompletionsChunkToResponsesEvents_ContentAndToolCallSameChunk(t *testing.T) {
+	state := NewChatCompletionsToResponsesStreamState("gpt-5.4")
+	content := "I will inspect it."
+	index := 0
+	finishReason := "tool_calls"
+
+	events := ChatCompletionsChunkToResponsesEvents(&ChatCompletionsChunk{
+		ID:    "chatcmpl_mixed",
+		Model: "gpt-5.4",
+		Choices: []ChatChunkChoice{{
+			Index: 0,
+			Delta: ChatDelta{
+				Content: &content,
+				ToolCalls: []ChatToolCall{{
+					Index: &index,
+					ID:    "call_1",
+					Type:  "function",
+					Function: ChatFunctionCall{
+						Name:      "read_file",
+						Arguments: `{"path":"README.md"}`,
+					},
+				}},
+			},
+			FinishReason: &finishReason,
+		}},
+	}, state)
+
+	require.Len(t, events, 5)
+	assert.Equal(t, "response.created", events[0].Type)
+	assert.Equal(t, "response.output_item.added", events[1].Type)
+	require.NotNil(t, events[1].Item)
+	assert.Equal(t, "message", events[1].Item.Type)
+	assert.Equal(t, "response.output_text.delta", events[2].Type)
+	assert.Equal(t, content, events[2].Delta)
+	assert.Equal(t, "response.output_item.added", events[3].Type)
+	require.NotNil(t, events[3].Item)
+	assert.Equal(t, "function_call", events[3].Item.Type)
+	assert.Equal(t, "call_1", events[3].Item.CallID)
+	assert.Equal(t, "read_file", events[3].Item.Name)
+	assert.Equal(t, "response.function_call_arguments.delta", events[4].Type)
+	assert.Equal(t, `{"path":"README.md"}`, events[4].Delta)
+
+	finalized := FinalizeChatCompletionsResponsesStream(state)
+	require.Len(t, finalized, 5)
+	assert.Equal(t, "response.output_text.done", finalized[0].Type)
+	assert.Equal(t, content, finalized[0].Text)
+	assert.Equal(t, "response.output_item.done", finalized[1].Type)
+	require.NotNil(t, finalized[1].Item)
+	assert.Equal(t, "message", finalized[1].Item.Type)
+	assert.Equal(t, "response.function_call_arguments.done", finalized[2].Type)
+	assert.Equal(t, `{"path":"README.md"}`, finalized[2].Arguments)
+	assert.Equal(t, "response.output_item.done", finalized[3].Type)
+	require.NotNil(t, finalized[3].Item)
+	assert.Equal(t, "function_call", finalized[3].Item.Type)
+	assert.Equal(t, "call_1", finalized[3].Item.CallID)
+	assert.Equal(t, `{"path":"README.md"}`, finalized[3].Item.Arguments)
+	assert.Equal(t, events[3].Item.ID, finalized[3].Item.ID)
+	assert.Equal(t, "response.completed", finalized[4].Type)
+	require.NotNil(t, finalized[4].Response)
+	require.Len(t, finalized[4].Response.Output, 2)
+	assert.Equal(t, "message", finalized[4].Response.Output[0].Type)
+	assert.Equal(t, "function_call", finalized[4].Response.Output[1].Type)
+	assert.Equal(t, "call_1", finalized[4].Response.Output[1].CallID)
+	assert.Equal(t, `{"path":"README.md"}`, finalized[4].Response.Output[1].Arguments)
+	assert.Equal(t, events[3].Item.ID, finalized[4].Response.Output[1].ID)
 }
 
 func TestResponsesEventToChatChunks_ToolCallDelta(t *testing.T) {

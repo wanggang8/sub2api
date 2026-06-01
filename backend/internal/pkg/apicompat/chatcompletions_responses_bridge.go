@@ -452,6 +452,7 @@ type ChatCompletionsToResponsesStreamState struct {
 	Text          strings.Builder
 	Reasoning     strings.Builder
 	ToolCalls     map[int]*ChatToolCall
+	ToolItemIDs   map[int]string
 
 	FinishReason string
 	Usage        *ResponsesUsage
@@ -460,10 +461,11 @@ type ChatCompletionsToResponsesStreamState struct {
 // NewChatCompletionsToResponsesStreamState returns an initialized stream state.
 func NewChatCompletionsToResponsesStreamState(model string) *ChatCompletionsToResponsesStreamState {
 	return &ChatCompletionsToResponsesStreamState{
-		ResponseID: generateResponsesID(),
-		Model:      model,
-		Created:    time.Now().Unix(),
-		ToolCalls:  make(map[int]*ChatToolCall),
+		ResponseID:  generateResponsesID(),
+		Model:       model,
+		Created:     time.Now().Unix(),
+		ToolCalls:   make(map[int]*ChatToolCall),
+		ToolItemIDs: make(map[int]string),
 	}
 }
 
@@ -520,13 +522,16 @@ func ChatCompletionsChunkToResponsesEvents(
 					copyCall.ID = generateItemID()
 				}
 				copyCall.Type = "function"
+				copyCall.Function.Arguments = ""
 				state.ToolCalls[idx] = &copyCall
 				stored = &copyCall
+				itemID := generateItemID()
+				state.ToolItemIDs[idx] = itemID
 				events = append(events, chatToResponsesEvent(state, "response.output_item.added", &ResponsesStreamEvent{
 					OutputIndex: idx + 1,
 					Item: &ResponsesOutput{
 						Type:   "function_call",
-						ID:     generateItemID(),
+						ID:     itemID,
 						CallID: stored.ID,
 						Name:   stored.Function.Name,
 						Status: "in_progress",
@@ -579,6 +584,33 @@ func FinalizeChatCompletionsResponsesStream(state *ChatCompletionsToResponsesStr
 				ID:     state.MessageItemID,
 				Role:   "assistant",
 				Status: "completed",
+			},
+		}))
+	}
+	for i := 0; i < len(state.ToolCalls); i++ {
+		toolCall, ok := state.ToolCalls[i]
+		if !ok || toolCall == nil {
+			continue
+		}
+		arguments := toolCall.Function.Arguments
+		if strings.TrimSpace(arguments) == "" {
+			arguments = "{}"
+		}
+		events = append(events, chatToResponsesEvent(state, "response.function_call_arguments.done", &ResponsesStreamEvent{
+			OutputIndex: i + 1,
+			Arguments:   arguments,
+			CallID:      toolCall.ID,
+			Name:        toolCall.Function.Name,
+		}))
+		events = append(events, chatToResponsesEvent(state, "response.output_item.done", &ResponsesStreamEvent{
+			OutputIndex: i + 1,
+			Item: &ResponsesOutput{
+				Type:      "function_call",
+				ID:        nonEmpty(state.ToolItemIDs[i], generateItemID()),
+				CallID:    toolCall.ID,
+				Name:      toolCall.Function.Name,
+				Arguments: arguments,
+				Status:    "completed",
 			},
 		}))
 	}
@@ -672,7 +704,7 @@ func (state *ChatCompletionsToResponsesStreamState) chatOutput() []ResponsesOutp
 		}
 		outputs = append(outputs, ResponsesOutput{
 			Type:      "function_call",
-			ID:        generateItemID(),
+			ID:        nonEmpty(state.ToolItemIDs[i], generateItemID()),
 			CallID:    toolCall.ID,
 			Name:      toolCall.Function.Name,
 			Arguments: arguments,

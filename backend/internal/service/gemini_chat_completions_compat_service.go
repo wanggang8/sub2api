@@ -319,6 +319,7 @@ func (s *GeminiMessagesCompatService) buildGeminiChatCompletionsUpstreamRequestF
 			if err != nil {
 				return nil, "", err
 			}
+			upstreamReq = ApplyAccountUpstreamRequestOptions(upstreamReq, account)
 			upstreamReq.Header.Set("Content-Type", "application/json")
 			upstreamReq.Header.Set("x-goog-api-key", apiKey)
 			return upstreamReq, "x-request-id", nil
@@ -364,6 +365,7 @@ func (s *GeminiMessagesCompatService) buildGeminiChatCompletionsUpstreamRequestF
 				if err != nil {
 					return nil, "", err
 				}
+				upstreamReq = ApplyAccountUpstreamRequestOptions(upstreamReq, account)
 				upstreamReq.Header.Set("Content-Type", "application/json")
 				upstreamReq.Header.Set("Authorization", "Bearer "+accessToken)
 				upstreamReq.Header.Set("User-Agent", geminicli.GeminiCLIUserAgent)
@@ -386,6 +388,7 @@ func (s *GeminiMessagesCompatService) buildGeminiChatCompletionsUpstreamRequestF
 			if err != nil {
 				return nil, "", err
 			}
+			upstreamReq = ApplyAccountUpstreamRequestOptions(upstreamReq, account)
 			upstreamReq.Header.Set("Content-Type", "application/json")
 			upstreamReq.Header.Set("Authorization", "Bearer "+accessToken)
 			return upstreamReq, "x-request-id", nil
@@ -415,6 +418,7 @@ func (s *GeminiMessagesCompatService) buildGeminiChatCompletionsUpstreamRequestF
 			if err != nil {
 				return nil, "", err
 			}
+			upstreamReq = ApplyAccountUpstreamRequestOptions(upstreamReq, account)
 			upstreamReq.Header.Set("Content-Type", "application/json")
 			upstreamReq.Header.Set("Authorization", "Bearer "+accessToken)
 			return upstreamReq, "x-request-id", nil
