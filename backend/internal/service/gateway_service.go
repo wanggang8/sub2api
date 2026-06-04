@@ -2444,7 +2444,7 @@ func (s *GatewayService) isAccountSchedulableForModelSelection(ctx context.Conte
 	if account == nil {
 		return false
 	}
-	return account.IsSchedulableForModelWithContext(ctx, requestedModel)
+	return account.IsSchedulableForModelWithContext(ctx, modelForChannelMappedSelection(ctx, requestedModel))
 }
 
 // isAccountInGroup checks if the account belongs to the specified group.
@@ -3775,12 +3775,15 @@ func summarizeSelectionFailureStats(stats selectionFailureStats) string {
 // isModelSupportedByAccountWithContext 根据账户平台检查模型支持（带 context）
 // 对于 Antigravity 平台，会先获取映射后的最终模型名（包括 thinking 后缀）再检查支持
 func (s *GatewayService) isModelSupportedByAccountWithContext(ctx context.Context, account *Account, requestedModel string) bool {
-	if account.Platform == PlatformAntigravity {
-		if strings.TrimSpace(requestedModel) == "" {
+	supported := func(model string) bool {
+		if account.Platform != PlatformAntigravity {
+			return s.isModelSupportedByAccount(account, model)
+		}
+		if strings.TrimSpace(model) == "" {
 			return true
 		}
 		// 使用与转发阶段一致的映射逻辑：自定义映射优先 → 默认映射兜底
-		mapped := mapAntigravityModel(account, requestedModel)
+		mapped := mapAntigravityModel(account, model)
 		if mapped == "" {
 			return false
 		}
@@ -3794,7 +3797,13 @@ func (s *GatewayService) isModelSupportedByAccountWithContext(ctx context.Contex
 		}
 		return true
 	}
-	return s.isModelSupportedByAccount(account, requestedModel)
+	if supported(requestedModel) {
+		return true
+	}
+	if mappedModel, ok := channelMappedSelectionModelFromContext(ctx, requestedModel); ok {
+		return supported(mappedModel)
+	}
+	return false
 }
 
 // isModelSupportedByAccount 根据账户平台检查模型支持（无 context，用于非 Antigravity 平台）
@@ -9239,7 +9248,7 @@ func (s *GatewayService) isUpstreamModelRestrictedByChannel(ctx context.Context,
 	if s.channelService == nil {
 		return false
 	}
-	upstreamModel := resolveAccountUpstreamModel(account, requestedModel)
+	upstreamModel := resolveAccountUpstreamModel(account, modelForChannelMappedSelection(ctx, requestedModel))
 	if upstreamModel == "" {
 		return false
 	}

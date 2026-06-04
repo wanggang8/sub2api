@@ -83,6 +83,9 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+	if channelMapping.Mapped {
+		c.Request = c.Request.WithContext(service.WithChannelMappedSelectionModel(c.Request.Context(), reqModel, channelMapping.MappedModel))
+	}
 
 	// Claude Code only restriction
 	if apiKey.Group != nil && apiKey.Group.ClaudeCodeOnly {
