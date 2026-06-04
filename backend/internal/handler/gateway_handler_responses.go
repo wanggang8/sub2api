@@ -83,9 +83,6 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
-	if channelMapping.Mapped {
-		c.Request = c.Request.WithContext(service.WithChannelMappedSelectionModel(c.Request.Context(), reqModel, channelMapping.MappedModel))
-	}
 
 	// Claude Code only restriction:
 	// /v1/responses is never a Claude Code endpoint.
