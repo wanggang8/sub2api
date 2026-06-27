@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
+  ANTIGRAVITY_PROJECT_ID_CREDENTIAL_KEY,
+  applyAntigravityProjectID,
   applyInterceptWarmup,
   getDefaultAPIKeyBaseURL,
   isCustomOpenAIBaseURL,
@@ -68,6 +70,7 @@ describe('platform base URL helpers', () => {
   it('returns platform defaults', () => {
     expect(getDefaultAPIKeyBaseURL('openai')).toBe('https://api.openai.com')
     expect(getDefaultAPIKeyBaseURL('gemini')).toBe('https://generativelanguage.googleapis.com')
+    expect(getDefaultAPIKeyBaseURL('grok')).toBe('https://api.x.ai/v1')
     expect(getDefaultAPIKeyBaseURL('anthropic')).toBe('https://api.anthropic.com')
   })
 
@@ -78,5 +81,41 @@ describe('platform base URL helpers', () => {
     expect(isCustomPlatformBaseURL('anthropic', 'https://api.anthropic.com')).toBe(false)
     expect(isCustomPlatformBaseURL('anthropic', 'https://api.anthropic.com/v1')).toBe(false)
     expect(isCustomPlatformBaseURL('anthropic', 'https://claude-proxy.internal')).toBe(true)
+    expect(isCustomPlatformBaseURL('grok', 'https://api.x.ai/v1')).toBe(false)
+    expect(isCustomPlatformBaseURL('grok', 'https://grok-proxy.internal/v1')).toBe(true)
+  })
+})
+
+describe('applyAntigravityProjectID', () => {
+  it('create + project id: trims and stores configured project fallback', () => {
+    const creds: Record<string, unknown> = { access_token: 'tok' }
+    applyAntigravityProjectID(creds, '  configured-project  ', 'create')
+    expect(creds[ANTIGRAVITY_PROJECT_ID_CREDENTIAL_KEY]).toBe('configured-project')
+  })
+
+  it('create + empty project id: should not add the field', () => {
+    const creds: Record<string, unknown> = { access_token: 'tok' }
+    applyAntigravityProjectID(creds, '   ', 'create')
+    expect(ANTIGRAVITY_PROJECT_ID_CREDENTIAL_KEY in creds).toBe(false)
+  })
+
+  it('edit + empty project id: deletes existing fallback', () => {
+    const creds: Record<string, unknown> = {
+      access_token: 'tok',
+      [ANTIGRAVITY_PROJECT_ID_CREDENTIAL_KEY]: 'old-project'
+    }
+    applyAntigravityProjectID(creds, '', 'edit')
+    expect(ANTIGRAVITY_PROJECT_ID_CREDENTIAL_KEY in creds).toBe(false)
+  })
+
+  it('does not affect onboard project_id or other credentials', () => {
+    const creds: Record<string, unknown> = {
+      project_id: 'onboard-project',
+      model_mapping: { 'gemini-*': 'gemini-2.5-flash' }
+    }
+    applyAntigravityProjectID(creds, 'configured-project', 'edit')
+    expect(creds.project_id).toBe('onboard-project')
+    expect(creds.model_mapping).toEqual({ 'gemini-*': 'gemini-2.5-flash' })
+    expect(creds[ANTIGRAVITY_PROJECT_ID_CREDENTIAL_KEY]).toBe('configured-project')
   })
 })

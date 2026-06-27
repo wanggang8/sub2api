@@ -16,6 +16,8 @@ export function getDefaultAPIKeyBaseURL(platform: string): string {
       return 'https://api.openai.com'
     case 'gemini':
       return 'https://generativelanguage.googleapis.com'
+    case 'grok':
+      return 'https://api.x.ai/v1'
     default:
       return 'https://api.anthropic.com'
   }
@@ -63,4 +65,19 @@ export function isCustomPlatformBaseURL(platform: string, baseURL: string): bool
 
 export function isCustomOpenAIBaseURL(baseURL: string): boolean {
   return isCustomPlatformBaseURL('openai', baseURL)
+}
+
+export const ANTIGRAVITY_PROJECT_ID_CREDENTIAL_KEY = 'antigravity_project_id'
+
+export function applyAntigravityProjectID(
+  credentials: Record<string, unknown>,
+  projectId: string,
+  mode: 'create' | 'edit'
+): void {
+  const trimmed = projectId.trim()
+  if (trimmed) {
+    credentials[ANTIGRAVITY_PROJECT_ID_CREDENTIAL_KEY] = trimmed
+  } else if (mode === 'edit') {
+    delete credentials[ANTIGRAVITY_PROJECT_ID_CREDENTIAL_KEY]
+  }
 }
