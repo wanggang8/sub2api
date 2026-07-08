@@ -1,13 +1,10 @@
 package service
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -292,12 +289,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 
 	// 8. Handle error response with failover
 	if resp.StatusCode >= 400 {
-		respBody := s.readUpstreamErrorBody(resp)
-		_ = resp.Body.Close()
-		resp.Body = io.NopCloser(bytes.NewReader(respBody))
-
-		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
-		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+		respBody, upstreamMsg := s.readOpenAIUpstreamError(resp)
 		if account.Type == AccountTypeAPIKey &&
 			openai_compat.ResolveResponsesSupport(account.Extra) == openai_compat.ResponsesSupportUnknown &&
 			!isResponsesEndpointSupportedByStatus(resp.StatusCode) {
@@ -308,31 +300,8 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 			)
 			return s.forwardAsRawChatCompletions(ctx, c, account, body, defaultMappedModel)
 		}
-		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
-			upstreamDetail := ""
-			if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
-				maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
-				if maxBytes <= 0 {
-					maxBytes = 2048
-				}
-				upstreamDetail = truncateString(string(respBody), maxBytes)
-			}
-			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
-				Platform:           account.Platform,
-				AccountID:          account.ID,
-				AccountName:        account.Name,
-				UpstreamStatusCode: resp.StatusCode,
-				UpstreamRequestID:  resp.Header.Get("x-request-id"),
-				Kind:               "failover",
-				Message:            upstreamMsg,
-				Detail:             upstreamDetail,
-			})
-			s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, upstreamModel)
-			return nil, &UpstreamFailoverError{
-				StatusCode:             resp.StatusCode,
-				ResponseBody:           respBody,
-				RetryableOnSameAccount: account.IsPoolMode() && (account.IsPoolModeRetryableStatus(resp.StatusCode) || isOpenAITransientProcessingError(resp.StatusCode, upstreamMsg, respBody)),
-			}
+		if foErr := s.failoverOpenAIUpstreamHTTPError(ctx, c, account, resp, respBody, upstreamMsg, upstreamModel); foErr != nil {
+			return nil, foErr
 		}
 		return s.handleChatCompletionsErrorResponse(resp, c, account, billingModel)
 	}
@@ -367,8 +336,9 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		}
 	}
 
-	// Extract and save Codex usage snapshot from response headers (for OAuth accounts)
-	if handleErr == nil && account.Type == AccountTypeOAuth {
+	// Extract and save Codex usage snapshot from response headers (for OAuth accounts).
+	// 排除 spark 影子:其 codex_* 仅由 QueryUsage(/wham/usage bengalfox)更新(外审第7轮 P1)。
+	if handleErr == nil && account.Type == AccountTypeOAuth && !account.IsShadow() {
 		if snapshot := ParseCodexRateLimitHeaders(resp.Header); snapshot != nil {
 			s.updateCodexUsageSnapshot(ctx, account.ID, snapshot)
 		}
@@ -402,6 +372,241 @@ func normalizeResponsesBodyServiceTier(body []byte) ([]byte, string, error) {
 	}
 	trimmed, err := sjson.SetBytes(body, "service_tier", normalizedServiceTier)
 	return trimmed, normalizedServiceTier, err
+}
+
+func normalizeOpenAIResponsesFunctionCallOutputStrings(body []byte) ([]byte, bool, error) {
+	if len(body) == 0 || !gjson.GetBytes(body, `input.#(type=="function_call_output")`).Exists() {
+		return body, false, nil
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return body, false, nil
+	}
+
+	input, ok := payload["input"].([]any)
+	if !ok {
+		return body, false, nil
+	}
+
+	changed := false
+	for _, raw := range input {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if itemType, _ := item["type"].(string); itemType != "function_call_output" {
+			continue
+		}
+		output, exists := item["output"]
+		if !exists {
+			continue
+		}
+		if _, ok := output.(string); ok {
+			continue
+		}
+		item["output"] = stringifyOpenAIResponsesFunctionCallOutput(output)
+		changed = true
+	}
+	if !changed {
+		return body, false, nil
+	}
+
+	normalized, err := json.Marshal(payload)
+	if err != nil {
+		return nil, false, fmt.Errorf("normalize function_call_output output: %w", err)
+	}
+	return normalized, true, nil
+}
+
+func normalizeOpenAIResponsesRequestTools(body []byte) ([]byte, bool, error) {
+	if len(body) == 0 || (!gjson.GetBytes(body, "tools").Exists() && !gjson.GetBytes(body, "tool_choice").Exists()) {
+		return body, false, nil
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return body, false, nil
+	}
+
+	changed := false
+	if rawTools, ok := payload["tools"].([]any); ok {
+		normalized := make([]any, 0, len(rawTools))
+		for _, rawTool := range rawTools {
+			tool, toolChanged := normalizeOpenAIResponsesToolDefinition(rawTool)
+			normalized = append(normalized, tool)
+			changed = changed || toolChanged
+		}
+		if changed {
+			payload["tools"] = normalized
+		}
+	}
+	if rawChoice, ok := payload["tool_choice"]; ok {
+		if choice, choiceChanged := normalizeOpenAIResponsesToolChoice(rawChoice); choiceChanged {
+			payload["tool_choice"] = choice
+			changed = true
+		}
+	}
+	if !changed {
+		return body, false, nil
+	}
+
+	normalizedBody, err := json.Marshal(payload)
+	if err != nil {
+		return nil, false, fmt.Errorf("normalize responses tools: %w", err)
+	}
+	return normalizedBody, true, nil
+}
+
+func normalizeOpenAIResponsesToolDefinition(rawTool any) (any, bool) {
+	tool, ok := rawTool.(map[string]any)
+	if !ok {
+		return rawTool, false
+	}
+
+	toolType, _ := tool["type"].(string)
+	toolType = strings.TrimSpace(toolType)
+	if toolType != "" && toolType != "function" {
+		return rawTool, false
+	}
+
+	function, hasFunction := tool["function"].(map[string]any)
+	if hasFunction {
+		name := trimmedStringField(function, "name")
+		if name == "" {
+			return rawTool, false
+		}
+		normalized := map[string]any{
+			"type": "function",
+			"name": name,
+			"parameters": normalizeResponsesToolParameters(
+				firstPresent(function["parameters"], tool["parameters"], tool["input_schema"]),
+			),
+		}
+		if description := trimmedStringField(function, "description"); description != "" {
+			normalized["description"] = description
+		} else if description := trimmedStringField(tool, "description"); description != "" {
+			normalized["description"] = description
+		}
+		if strict, ok := function["strict"]; ok {
+			normalized["strict"] = strict
+		} else if strict, ok := tool["strict"]; ok {
+			normalized["strict"] = strict
+		}
+		return normalized, true
+	}
+
+	name := trimmedStringField(tool, "name")
+	if name == "" {
+		return rawTool, false
+	}
+
+	parameters, hasParameters := tool["parameters"]
+	if !hasParameters {
+		parameters = tool["input_schema"]
+	}
+	_, hasInputSchema := tool["input_schema"]
+	if toolType == "function" && hasParameters && !hasInputSchema {
+		return rawTool, false
+	}
+
+	normalized := map[string]any{
+		"type":       "function",
+		"name":       name,
+		"parameters": normalizeResponsesToolParameters(parameters),
+	}
+	if description := trimmedStringField(tool, "description"); description != "" {
+		normalized["description"] = description
+	}
+	if strict, ok := tool["strict"]; ok {
+		normalized["strict"] = strict
+	}
+	return normalized, true
+}
+
+func firstPresent(values ...any) any {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
+func normalizeResponsesToolParameters(parameters any) any {
+	if parameters == nil {
+		return map[string]any{"type": "object", "properties": map[string]any{}}
+	}
+	return parameters
+}
+
+func trimmedStringField(payload map[string]any, key string) string {
+	value, ok := payload[key].(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
+func normalizeOpenAIResponsesToolChoice(rawChoice any) (any, bool) {
+	choice, ok := rawChoice.(map[string]any)
+	if !ok {
+		return rawChoice, false
+	}
+	choiceType := trimmedStringField(choice, "type")
+	switch choiceType {
+	case "any":
+		return "required", true
+	case "auto", "none", "required":
+		return choiceType, true
+	case "function", "tool":
+		name := ""
+		if function, ok := choice["function"].(map[string]any); ok {
+			name = trimmedStringField(function, "name")
+		}
+		if name == "" {
+			name = trimmedStringField(choice, "name")
+		}
+		if name != "" {
+			return map[string]any{"type": "function", "name": name}, true
+		}
+	}
+	return rawChoice, false
+}
+
+func stringifyOpenAIResponsesFunctionCallOutput(output any) string {
+	switch v := output.(type) {
+	case nil:
+		return ""
+	case string:
+		return v
+	case []any:
+		parts := make([]string, 0, len(v))
+		for _, raw := range v {
+			block, ok := raw.(map[string]any)
+			if !ok {
+				if text := strings.TrimSpace(fmt.Sprint(raw)); text != "" {
+					parts = append(parts, text)
+				}
+				continue
+			}
+			if text, _ := block["text"].(string); strings.TrimSpace(text) != "" {
+				parts = append(parts, text)
+				continue
+			}
+			data, err := json.Marshal(block)
+			if err == nil {
+				parts = append(parts, string(data))
+			}
+		}
+		return strings.Join(parts, "\n")
+	default:
+		data, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Sprint(v)
+		}
+		return string(data)
+	}
 }
 
 func normalizedOpenAIServiceTierValue(raw string) string {
@@ -473,7 +678,13 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 			writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", clientMsg)
 			return nil, fmt.Errorf("openai cyber_policy: %s", msg)
 		}
-		return nil, s.newOpenAIStreamFailoverError(c, account, false, requestID, payload, openAICompatFailedResponseMessage(finalResponse))
+		message := openAICompatFailedResponseMessage(finalResponse)
+		if openAIStreamFailedEventShouldFailover(payload, message) {
+			return nil, s.newOpenAIStreamFailoverError(c, account, false, requestID, payload, message)
+		}
+		message = s.recordOpenAIStreamUpstreamError(c, account, false, requestID, "http_error", payload, message)
+		writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", message)
+		return nil, fmt.Errorf("upstream response failed: %s", message)
 	}
 
 	// When the terminal event has an empty output array, reconstruct from
@@ -516,22 +727,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	requestBodyLen int,
 ) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
-
-	headersWritten := false
-	writeStreamHeaders := func() {
-		if headersWritten {
-			return
-		}
-		headersWritten = true
-		if s.responseHeaderFilter != nil {
-			responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
-		}
-		c.Writer.Header().Set("Content-Type", "text/event-stream")
-		c.Writer.Header().Set("Cache-Control", "no-cache")
-		c.Writer.Header().Set("Connection", "keep-alive")
-		c.Writer.Header().Set("X-Accel-Buffering", "no")
-		c.Writer.WriteHeader(http.StatusOK)
-	}
+	writeStreamHeaders := s.newStreamHeaderWriter(c, resp.Header)
 
 	state := apicompat.NewResponsesEventToChatState()
 	state.Model = originalModel
@@ -547,13 +743,9 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	pendingSSE := make([]string, 0, 4)
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	var streamFailoverErr *UpstreamFailoverError
+	var streamNonFailoverErr error
 
-	scanner := bufio.NewScanner(resp.Body)
-	maxLineSize := defaultMaxLineSize
-	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
-		maxLineSize = s.cfg.Gateway.MaxLineSize
-	}
-	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
+	scanner := s.newUpstreamSSEScanner(resp.Body)
 
 	streamInterval := time.Duration(0)
 	if s.cfg != nil && s.cfg.Gateway.StreamDataIntervalTimeout > 0 {
@@ -641,10 +833,34 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 					clientDisconnected = true
 				}
 				return true
-			} else {
+			}
+			if openAIStreamFailedEventShouldFailover(payloadBytes, message) {
 				streamFailoverErr = s.newOpenAIStreamFailoverError(c, account, false, requestID, payloadBytes, message)
 				return true
 			}
+			message = s.recordOpenAIStreamUpstreamError(c, account, false, requestID, "http_error", payloadBytes, message)
+			errorPayload, _ := json.Marshal(gin.H{
+				"error": gin.H{
+					"type":    "upstream_error",
+					"message": message,
+				},
+			})
+			if c != nil && c.Writer != nil && !c.Writer.Written() {
+				writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", message)
+				clientOutputStarted = true
+			} else if c != nil && c.Writer != nil && !clientDisconnected {
+				if _, err := fmt.Fprintf(c.Writer, "data: %s\n\n", errorPayload); err != nil {
+					clientDisconnected = true
+					logger.L().Info("openai chat_completions stream: client disconnected while writing upstream error",
+						zap.String("request_id", requestID),
+					)
+				}
+			}
+			if !clientDisconnected {
+				c.Writer.Flush()
+			}
+			streamNonFailoverErr = fmt.Errorf("upstream response failed: %s", message)
+			return true
 		}
 
 		chunks := apicompat.ResponsesEventToChatChunks(&event, state)
@@ -701,6 +917,9 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				return nil, streamFailoverErr
 			}
 			return resultWithUsage(), streamFailoverErr
+		}
+		if streamNonFailoverErr != nil {
+			return resultWithUsage(), streamNonFailoverErr
 		}
 		if finalChunks := apicompat.FinalizeResponsesChatStream(state); len(finalChunks) > 0 && !clientDisconnected {
 			for _, chunk := range finalChunks {

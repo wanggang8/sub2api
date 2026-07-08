@@ -41,6 +41,7 @@ export async function list(
     search?: string
     privacy_mode?: string
     lite?: string
+    include_scheduler_score?: string
     sort_by?: string
     sort_order?: 'asc' | 'desc'
   },
@@ -76,6 +77,7 @@ export async function listWithEtag(
     search?: string
     privacy_mode?: string
     lite?: string
+    include_scheduler_score?: string
     sort_by?: string
     sort_order?: 'asc' | 'desc'
   },
@@ -592,7 +594,9 @@ export async function importData(payload: {
 }
 
 export async function importCodexSession(payload: CodexSessionImportRequest): Promise<CodexSessionImportResult> {
-  const { data } = await apiClient.post<CodexSessionImportResult>('/admin/accounts/import/codex-session', payload)
+  const { data } = await apiClient.post<CodexSessionImportResult>('/admin/accounts/import/codex-session', payload, {
+    timeout: 120000 // 120s timeout for large session imports
+  })
   return data
 }
 
@@ -717,8 +721,13 @@ export interface OpenAIAdditionalRateLimit {
   rate_limit?: OpenAIRateLimit | null
 }
 
+export interface OpenAIRateLimitResetCreditDetail {
+  expires_at?: string
+}
+
 export interface OpenAIRateLimitResetCredits {
   available_count: number
+  credits?: OpenAIRateLimitResetCreditDetail[]
 }
 
 export interface OpenAIQuotaUsage {
@@ -761,6 +770,18 @@ export async function queryOpenAIQuota(id: number): Promise<OpenAIQuotaUsage> {
  */
 export async function resetOpenAIQuota(id: number): Promise<OpenAIQuotaResetResult> {
   const { data } = await apiClient.post<OpenAIQuotaResetResult>(`/admin/openai/accounts/${id}/reset-quota`)
+  return data
+}
+
+export interface SparkShadowCreatePayload {
+  name?: string
+  priority?: number
+  concurrency?: number
+  group_ids?: number[]
+}
+
+export async function createSparkShadow(parentId: number, payload: SparkShadowCreatePayload): Promise<Account> {
+  const { data } = await apiClient.post<Account>(`/admin/accounts/${parentId}/shadow`, payload)
   return data
 }
 
@@ -807,7 +828,8 @@ export const accountsAPI = {
   setPrivacy,
   revertProxyFallback,
   queryOpenAIQuota,
-  resetOpenAIQuota
+  resetOpenAIQuota,
+  createSparkShadow
 }
 
 export default accountsAPI
