@@ -440,6 +440,21 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		imageInputSize = imageCfg.InputSize
 	}
 
+	forcedTemplateText := ""
+	if s.cfg != nil {
+		forcedTemplateText = s.cfg.Gateway.ForcedCodexInstructionsTemplate
+	}
+	patchedBody, _, err := applyForcedCodexInstructionsTemplateToBodyIfNeeded(c, body, forcedTemplateText, forcedCodexInstructionsTemplateData{
+		OriginalModel:   originalModel,
+		NormalizedModel: reqModel,
+		BillingModel:    billingModel,
+		UpstreamModel:   upstreamModel,
+	})
+	if err != nil {
+		return nil, err
+	}
+	body = patchedBody
+
 	// Get access token
 	token, _, err := s.GetAccessToken(ctx, account)
 	if err != nil {
@@ -927,6 +942,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 
 	// 账号级请求头覆写（仅 openai api_key 账号启用时生效；OAuth 路径 no-op）
 	account.ApplyHeaderOverrides(req.Header)
+	req = ApplyAccountUpstreamRequestOptions(req, account)
 
 	return req, nil
 }
