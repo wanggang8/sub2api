@@ -490,6 +490,24 @@ export async function syncUpstreamModels(id: number): Promise<SyncUpstreamModels
   return data
 }
 
+export interface SyncUpstreamPreviewParams {
+  platform: string
+  type: string
+  base_url?: string
+  api_key: string
+  skip_tls_verify?: boolean
+}
+
+/**
+ * Preview upstream models without a saved account (create-flow)
+ * @param params - Connection credentials
+ * @returns List of model IDs returned by the upstream
+ */
+export async function syncUpstreamModelsPreview(params: SyncUpstreamPreviewParams): Promise<SyncUpstreamModelsResult> {
+  const { data } = await apiClient.post<SyncUpstreamModelsResult>('/admin/accounts/models/sync-upstream-preview', params)
+  return data
+}
+
 export interface CRSPreviewAccount {
   crs_account_id: string
   kind: string
@@ -543,7 +561,9 @@ export async function syncFromCrs(params: {
       action: string
       error?: string
     }>
-  }>('/admin/accounts/sync/crs', params)
+  }>('/admin/accounts/sync/crs', params, {
+    timeout: 180000 // 180s timeout: sync refreshes each existing account's OAuth token serially
+  })
   return data
 }
 
@@ -810,6 +830,7 @@ export const accountsAPI = {
   setSchedulable,
   getAvailableModels,
   syncUpstreamModels,
+  syncUpstreamModelsPreview,
   generateAuthUrl,
   exchangeCode,
   refreshOpenAIToken,

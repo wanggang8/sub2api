@@ -423,6 +423,7 @@ func (s *GatewayService) buildCountTokensRequestAnthropicAPIKeyPassthrough(
 
 	// 账号级请求头覆写（最终生效，覆盖上面所有来源的同名头）
 	account.ApplyHeaderOverrides(req.Header)
+	req = ApplyAccountUpstreamRequestOptions(req, account)
 
 	return req, nil
 }
@@ -564,6 +565,7 @@ func (s *GatewayService) buildCountTokensRequest(ctx context.Context, c *gin.Con
 
 	// 账号级请求头覆写（仅 anthropic/openai api_key 账号启用时生效；OAuth 路径 no-op）
 	account.ApplyHeaderOverrides(req.Header)
+	req = ApplyAccountUpstreamRequestOptions(req, account)
 
 	if c != nil && tokenType == "oauth" {
 		c.Set(claudeMimicDebugInfoKey, buildClaudeMimicDebugLine(req, body, account, tokenType, mimicClaudeCode))

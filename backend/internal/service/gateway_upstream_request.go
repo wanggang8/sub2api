@@ -207,6 +207,7 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 		logClaudeMimicDebug(req, body, account, tokenType, mimicClaudeCode)
 	}
 
+	req = ApplyAccountUpstreamRequestOptions(req, account)
 	return req, body, nil
 }
 

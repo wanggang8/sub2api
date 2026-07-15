@@ -60,6 +60,7 @@ type AccountHandler struct {
 	sessionLimitCache       service.SessionLimitCache
 	rpmCache                service.RPMCache
 	tokenCacheInvalidator   service.TokenCacheInvalidator
+	grokImportProber        grokUsageProber
 }
 
 // NewAccountHandler creates a new admin account handler
@@ -784,6 +785,10 @@ func (h *AccountHandler) Create(c *gin.Context) {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
+	if err := service.ValidateOpenAILongContextBillingExtra(req.Platform, req.Extra); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 	if req.RateMultiplier != nil && *req.RateMultiplier < 0 {
 		response.BadRequest(c, "rate_multiplier must be >= 0")
 		return
@@ -851,6 +856,7 @@ func (h *AccountHandler) Create(c *gin.Context) {
 	// OpenAI APIKey 账号创建后异步探测上游 /v1/responses 能力。
 	// 探测失败不影响账号创建响应。
 	h.scheduleOpenAIResponsesProbe(createdAccount)
+	h.scheduleGrokImportProbe(createdAccount)
 	response.Success(c, result.Data)
 }
 
@@ -1299,6 +1305,10 @@ func (h *AccountHandler) ApplyOAuthCredentials(c *gin.Context) {
 		response.ErrorFrom(c, infraerrors.BadRequest("NOT_OAUTH", "cannot apply oauth credentials to non-OAuth account"))
 		return
 	}
+	if err := service.ValidateOpenAILongContextBillingExtra(existing.Platform, req.Extra); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 
 	updatedAccount, err := h.adminService.UpdateAccount(ctx, accountID, &service.UpdateAccountInput{
 		Type:        req.Type,
@@ -1592,6 +1602,12 @@ func (h *AccountHandler) BatchCreate(c *gin.Context) {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
+	for _, item := range req.Accounts {
+		if err := service.ValidateOpenAILongContextBillingExtra(item.Platform, item.Extra); err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+	}
 
 	executeAdminIdempotentJSON(c, "admin.accounts.batch_create", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
 		success := 0
@@ -1653,6 +1669,7 @@ func (h *AccountHandler) BatchCreate(c *gin.Context) {
 			}
 			// OpenAI APIKey 账号异步探测 /v1/responses 能力。
 			h.scheduleOpenAIResponsesProbe(account)
+			h.scheduleGrokImportProbe(account)
 			success++
 			results = append(results, gin.H{
 				"name":    item.Name,
@@ -2462,6 +2479,58 @@ func (h *AccountHandler) SyncUpstreamModels(c *gin.Context) {
 		}
 
 		slog.Warn("sync_upstream_models_failed", "account_id", accountID)
+		response.Error(c, http.StatusBadGateway, "Failed to sync upstream models from upstream")
+		return
+	}
+
+	response.Success(c, gin.H{"models": models})
+}
+
+// SyncUpstreamModelsPreview handles syncing live supported models using provided credentials (no account ID needed).
+// POST /api/v1/admin/accounts/models/sync-upstream-preview
+func (h *AccountHandler) SyncUpstreamModelsPreview(c *gin.Context) {
+	var req struct {
+		Platform      string `json:"platform" binding:"required"`
+		Type          string `json:"type" binding:"required"`
+		BaseURL       string `json:"base_url"`
+		APIKey        string `json:"api_key" binding:"required"`
+		SkipTLSVerify bool   `json:"skip_tls_verify"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	tempAccount := &service.Account{
+		Platform: req.Platform,
+		Type:     req.Type,
+		Credentials: map[string]any{
+			"api_key":         req.APIKey,
+			"base_url":        req.BaseURL,
+			"skip_tls_verify": req.SkipTLSVerify,
+		},
+	}
+
+	if h.accountTestService == nil {
+		response.InternalError(c, "Account test service is not configured")
+		return
+	}
+
+	models, err := h.accountTestService.FetchUpstreamSupportedModels(c.Request.Context(), tempAccount)
+	if err != nil {
+		var syncErr *service.UpstreamModelSyncError
+		if errors.As(err, &syncErr) {
+			switch syncErr.Kind {
+			case service.UpstreamModelSyncErrorConfiguration, service.UpstreamModelSyncErrorUnsupported:
+				response.BadRequest(c, syncErr.SafeMessage())
+			default:
+				slog.Warn("sync_upstream_models_preview_failed", "platform", req.Platform, "kind", syncErr.Kind)
+				response.Error(c, http.StatusBadGateway, syncErr.SafeMessage())
+			}
+			return
+		}
+
+		slog.Warn("sync_upstream_models_preview_failed", "platform", req.Platform)
 		response.Error(c, http.StatusBadGateway, "Failed to sync upstream models from upstream")
 		return
 	}

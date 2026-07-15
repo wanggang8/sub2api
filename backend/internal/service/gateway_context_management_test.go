@@ -613,6 +613,39 @@ func TestBuildCountTokensRequest_APIKeyHaiku_StripsContextManagementEndToEnd(t *
 		"count_tokens API-key + 客户端未带 beta token → body strip")
 }
 
+func TestBuildCountTokensRequestsApplySkipTLSOption(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", nil)
+
+	account := &Account{
+		ID:       413,
+		Platform: PlatformAnthropic,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":         "sk-ant-xxx",
+			"base_url":        "https://anthropic.example.test",
+			"skip_tls_verify": true,
+		},
+		Status: StatusActive, Schedulable: true,
+	}
+	svc := &GatewayService{cfg: &config.Config{}}
+
+	standardReq, _, err := svc.buildCountTokensRequest(
+		context.Background(), c, account, []byte(`{"model":"claude-sonnet-4-5","messages":[]}`),
+		"sk-ant-xxx", "apikey", "claude-sonnet-4-5", false,
+	)
+	require.NoError(t, err)
+	require.True(t, UpstreamRequestSkipsTLSVerify(standardReq))
+
+	passthroughReq, err := svc.buildCountTokensRequestAnthropicAPIKeyPassthrough(
+		context.Background(), c, account, []byte(`{"model":"claude-sonnet-4-5","messages":[]}`), "sk-ant-xxx",
+	)
+	require.NoError(t, err)
+	require.True(t, UpstreamRequestSkipsTLSVerify(passthroughReq))
+}
+
 // count_tokens passthrough preserve 测试
 func TestBuildCountTokensRequestAnthropicAPIKeyPassthrough_PreservesContextManagementWhenClientHeaderHasBeta(t *testing.T) {
 	gin.SetMode(gin.TestMode)

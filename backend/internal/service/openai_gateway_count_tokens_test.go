@@ -66,8 +66,9 @@ func TestOpenAIGatewayService_ForwardCountTokensAsAnthropic_APIKeyUsesResponsesI
 		Type:        AccountTypeAPIKey,
 		Concurrency: 1,
 		Credentials: map[string]any{
-			"api_key":  "sk-test",
-			"base_url": "http://upstream.example",
+			"api_key":         "sk-test",
+			"base_url":        "http://upstream.example",
+			"skip_tls_verify": true,
 		},
 		Status:      StatusActive,
 		Schedulable: true,
@@ -78,6 +79,7 @@ func TestOpenAIGatewayService_ForwardCountTokensAsAnthropic_APIKeyUsesResponsesI
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.JSONEq(t, `{"input_tokens":42}`, rec.Body.String())
 	require.NotNil(t, upstream.lastReq)
+	require.True(t, UpstreamRequestSkipsTLSVerify(upstream.lastReq))
 	require.Equal(t, "http://upstream.example/v1/responses/input_tokens", upstream.lastReq.URL.String())
 	require.Equal(t, "Bearer sk-test", upstream.lastReq.Header.Get("authorization"))
 	require.Equal(t, "gpt-5.3-codex", gjson.GetBytes(upstream.lastBody, "model").String())

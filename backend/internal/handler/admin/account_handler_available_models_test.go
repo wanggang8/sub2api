@@ -38,15 +38,35 @@ func setupAvailableModelsRouter(adminSvc service.AdminService) *gin.Engine {
 }
 
 type syncUpstreamHTTPUpstream struct {
-	resp *http.Response
-	err  error
+	resp    *http.Response
+	err     error
+	lastReq *http.Request
 }
 
 func (u *syncUpstreamHTTPUpstream) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+	u.lastReq = req
 	if u.err != nil {
 		return nil, u.err
 	}
 	return u.resp, nil
+}
+
+func setupSyncUpstreamModelsPreviewRouter(upstream service.HTTPUpstream) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	accountTestSvc := service.NewAccountTestService(
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		upstream,
+		&config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+		nil,
+	)
+	handler := NewAccountHandler(newStubAdminService(), nil, nil, nil, nil, nil, nil, accountTestSvc, nil, nil, nil, nil, nil)
+	router.POST("/api/v1/admin/accounts/models/sync-upstream-preview", handler.SyncUpstreamModelsPreview)
+	return router
 }
 
 func (u *syncUpstreamHTTPUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
@@ -308,4 +328,27 @@ func TestAccountHandlerSyncUpstreamModels_UpstreamErrorDoesNotExposeBody(t *test
 	require.Equal(t, http.StatusBadGateway, rec.Code)
 	require.Contains(t, rec.Body.String(), "Upstream model list request failed with HTTP 502")
 	require.NotContains(t, rec.Body.String(), "SECRET_TOKEN")
+}
+
+func TestAccountHandlerSyncUpstreamModelsPreview_AppliesSkipTLSOption(t *testing.T) {
+	upstream := &syncUpstreamHTTPUpstream{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"data":[{"id":"gpt-preview"}]}`)),
+	}}
+	router := setupSyncUpstreamModelsPreviewRouter(upstream)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/admin/accounts/models/sync-upstream-preview",
+		strings.NewReader(`{"platform":"openai","type":"apikey","base_url":"https://openai.example.com","api_key":"sk-preview","skip_tls_verify":true}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), "gpt-preview")
+	require.NotNil(t, upstream.lastReq)
+	require.True(t, service.UpstreamRequestSkipsTLSVerify(upstream.lastReq))
 }

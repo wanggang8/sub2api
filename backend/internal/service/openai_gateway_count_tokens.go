@@ -215,7 +215,15 @@ func (s *OpenAIGatewayService) buildInputTokensUpstreamRequest(
 		return nil, err
 	}
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
-	req.Header.Set("authorization", "Bearer "+token)
+	authHeaders, err := s.buildOpenAIAuthenticationHeaders(ctx, account, token)
+	if err != nil {
+		return nil, err
+	}
+	for key, values := range authHeaders {
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
+	}
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("accept", "application/json")
 
@@ -233,6 +241,7 @@ func (s *OpenAIGatewayService) buildInputTokensUpstreamRequest(
 
 	// 账号级请求头覆写（仅 openai api_key 账号启用时生效；OAuth 路径 no-op）
 	account.ApplyHeaderOverrides(req.Header)
+	req = ApplyAccountUpstreamRequestOptions(req, account)
 
 	return req, nil
 }
