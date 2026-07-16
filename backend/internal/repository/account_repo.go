@@ -437,6 +437,34 @@ func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, cre
 	return nil
 }
 
+func (r *accountRepository) PatchCredentials(ctx context.Context, id int64, setFields map[string]any, removeFields []string) error {
+	setPayload, err := json.Marshal(normalizeJSONMap(setFields))
+	if err != nil {
+		return err
+	}
+
+	result, err := r.sql.ExecContext(ctx, `
+		UPDATE accounts
+		SET credentials = (
+			COALESCE(credentials, '{}'::jsonb) - COALESCE($2::text[], ARRAY[]::text[])
+		) || $3::jsonb,
+			updated_at = NOW()
+		WHERE id = $1 AND deleted_at IS NULL
+	`, id, pq.Array(removeFields), setPayload)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return service.ErrAccountNotFound
+	}
+	r.syncSchedulerAccountSnapshot(ctx, id)
+	return nil
+}
+
 func (r *accountRepository) Delete(ctx context.Context, id int64) error {
 	groupIDs, err := r.loadAccountGroupIDs(ctx, id)
 	if err != nil {

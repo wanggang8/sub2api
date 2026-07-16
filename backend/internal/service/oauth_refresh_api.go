@@ -192,6 +192,7 @@ func (api *OAuthRefreshAPI) RefreshIfNeeded(
 	}
 
 	// 4. 执行平台特定刷新逻辑
+	credentialsBeforeRefresh := shallowCopyMap(freshAccount.Credentials)
 	newCredentials, refreshErr := executor.Refresh(ctx, freshAccount)
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -219,9 +220,16 @@ func (api *OAuthRefreshAPI) RefreshIfNeeded(
 	}
 
 	// 5. 设置版本号 + 更新 DB
+	resultAccount := freshAccount
 	if newCredentials != nil {
 		newCredentials["_token_version"] = time.Now().UnixMilli()
-		if updateErr := persistAccountCredentials(ctx, api.accountRepo, freshAccount, newCredentials); updateErr != nil {
+		if updateErr := persistChangedAccountCredentials(
+			ctx,
+			api.accountRepo,
+			freshAccount,
+			credentialsBeforeRefresh,
+			newCredentials,
+		); updateErr != nil {
 			slog.Error("oauth_refresh_update_failed",
 				"account_id", freshAccount.ID,
 				"error", updateErr,
@@ -230,9 +238,6 @@ func (api *OAuthRefreshAPI) RefreshIfNeeded(
 				fmt.Errorf("%w: %v", errOAuthRefreshCredentialPersist, updateErr), freshAccount,
 			)
 		}
-	}
-	resultAccount := freshAccount
-	if isOAuthRefreshRequestPath(ctx) && freshAccount.Platform == PlatformGrok {
 		latestAccount, rereadErr := api.accountRepo.GetByID(ctx, freshAccount.ID)
 		if rereadErr != nil {
 			return nil, fmt.Errorf("%w: %v", errOAuthRefreshAccountRereadFailed, rereadErr)
@@ -240,8 +245,13 @@ func (api *OAuthRefreshAPI) RefreshIfNeeded(
 		if latestAccount == nil {
 			return nil, fmt.Errorf("%w: account not found after refresh", errOAuthRefreshAccountStateChanged)
 		}
-		if eligibilityErr := grokOAuthRequestAccountEligibilityError(latestAccount); eligibilityErr != nil {
-			return nil, withGrokCredentialFailureSnapshot(eligibilityErr, latestAccount)
+		if latestAccount.ID != freshAccount.ID {
+			return nil, fmt.Errorf("%w: account identity mismatch after refresh", errOAuthRefreshAccountRereadFailed)
+		}
+		if isOAuthRefreshRequestPath(ctx) && latestAccount.Platform == PlatformGrok {
+			if eligibilityErr := grokOAuthRequestAccountEligibilityError(latestAccount); eligibilityErr != nil {
+				return nil, withGrokCredentialFailureSnapshot(eligibilityErr, latestAccount)
+			}
 		}
 		resultAccount = latestAccount
 	}

@@ -3,10 +3,16 @@ package service
 import (
 	"context"
 	"log/slog"
+	"reflect"
+	"sort"
 )
 
 type accountCredentialsUpdater interface {
 	UpdateCredentials(ctx context.Context, id int64, credentials map[string]any) error
+}
+
+type accountCredentialsPatcher interface {
+	PatchCredentials(ctx context.Context, id int64, setFields map[string]any, removeFields []string) error
 }
 
 func persistAccountCredentials(ctx context.Context, repo AccountRepository, account *Account, credentials map[string]any) error {
@@ -28,6 +34,44 @@ func persistAccountCredentials(ctx context.Context, repo AccountRepository, acco
 		return updater.UpdateCredentials(ctx, account.ID, account.Credentials)
 	}
 	return repo.Update(ctx, account)
+}
+
+func persistChangedAccountCredentials(
+	ctx context.Context,
+	repo AccountRepository,
+	account *Account,
+	before map[string]any,
+	after map[string]any,
+) error {
+	setFields, removeFields := diffCredentialFields(before, after)
+	if patcher, ok := any(repo).(accountCredentialsPatcher); ok {
+		if len(setFields) == 0 && len(removeFields) == 0 {
+			return nil
+		}
+		return patcher.PatchCredentials(ctx, account.ID, setFields, removeFields)
+	}
+
+	return persistAccountCredentials(ctx, repo, account, after)
+}
+
+func diffCredentialFields(before, after map[string]any) (map[string]any, []string) {
+	setFields := make(map[string]any)
+	for key, afterValue := range after {
+		beforeValue, existed := before[key]
+		if !existed || !reflect.DeepEqual(beforeValue, afterValue) {
+			setFields[key] = afterValue
+		}
+	}
+
+	removeFields := make([]string, 0)
+	for key := range before {
+		if _, exists := after[key]; !exists {
+			removeFields = append(removeFields, key)
+		}
+	}
+	sort.Strings(removeFields)
+
+	return setFields, removeFields
 }
 
 // sparkShadowAllowedCredentialKeys 是 spark 影子账号唯一可写的凭据键集合(仅模型映射)。

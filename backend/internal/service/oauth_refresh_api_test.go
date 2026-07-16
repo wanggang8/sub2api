@@ -49,6 +49,27 @@ func (r *refreshAPIAccountRepo) UpdateCredentials(_ context.Context, id int64, c
 	return nil
 }
 
+func (r *refreshAPIAccountRepo) PatchCredentials(_ context.Context, id int64, setFields map[string]any, removeFields []string) error {
+	r.updateCalls++
+	r.updateCredentialsCalls++
+	if r.updateErr != nil {
+		return r.updateErr
+	}
+	if r.account == nil || r.account.ID != id {
+		r.account = &Account{ID: id}
+	}
+	if r.account.Credentials == nil {
+		r.account.Credentials = make(map[string]any)
+	}
+	for _, key := range removeFields {
+		delete(r.account.Credentials, key)
+	}
+	for key, value := range setFields {
+		r.account.Credentials[key] = value
+	}
+	return nil
+}
+
 // refreshAPIExecutorStub implements OAuthRefreshExecutor for tests.
 type refreshAPIExecutorStub struct {
 	needsRefresh  bool
@@ -56,6 +77,7 @@ type refreshAPIExecutorStub struct {
 	credentials   map[string]any
 	err           error
 	refreshCalls  int
+	onRefresh     func()
 }
 
 func (e *refreshAPIExecutorStub) CanRefresh(_ *Account) bool { return !e.cannotRefresh }
@@ -66,6 +88,9 @@ func (e *refreshAPIExecutorStub) NeedsRefresh(_ *Account, _ time.Duration) bool 
 
 func (e *refreshAPIExecutorStub) Refresh(_ context.Context, _ *Account) (map[string]any, error) {
 	e.refreshCalls++
+	if e.onRefresh != nil {
+		e.onRefresh()
+	}
 	if e.err != nil {
 		return nil, e.err
 	}
@@ -153,6 +178,79 @@ func TestRefreshIfNeeded_UpdateCredentialsPreservesRateLimitState(t *testing.T) 
 	require.Equal(t, 1, repo.updateCredentialsCalls)
 	require.NotNil(t, repo.account.RateLimitResetAt)
 	require.WithinDuration(t, resetAt, *repo.account.RateLimitResetAt, time.Second)
+}
+
+func TestRefreshIfNeeded_PreservesConcurrentCredentialConfigurationEdit(t *testing.T) {
+	account := &Account{
+		ID:       12,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Status:   StatusActive,
+		Credentials: map[string]any{
+			"access_token": "old-token",
+			"model_mapping": map[string]any{
+				"gpt-5.5": "gpt-5.5",
+			},
+		},
+	}
+	repo := &refreshAPIAccountRepo{account: account}
+	executor := &refreshAPIExecutorStub{
+		needsRefresh: true,
+		credentials: map[string]any{
+			"access_token": "new-token",
+			"model_mapping": map[string]any{
+				"gpt-5.5": "gpt-5.5",
+			},
+		},
+	}
+	executor.onRefresh = func() {
+		repo.account = &Account{
+			ID:       account.ID,
+			Platform: account.Platform,
+			Type:     account.Type,
+			Status:   account.Status,
+			Credentials: map[string]any{
+				"access_token": "old-token",
+				"model_mapping": map[string]any{
+					"gpt-5.5":     "gpt-5.5",
+					"gpt-5.6-sol": "gpt-5.6-sol",
+				},
+			},
+		}
+	}
+
+	api := NewOAuthRefreshAPI(repo, nil)
+	result, err := api.RefreshIfNeeded(context.Background(), account, executor, 3*time.Minute)
+
+	require.NoError(t, err)
+	require.True(t, result.Refreshed)
+	require.Equal(t, "new-token", repo.account.Credentials["access_token"])
+	require.Equal(t, map[string]any{
+		"gpt-5.5":     "gpt-5.5",
+		"gpt-5.6-sol": "gpt-5.6-sol",
+	}, repo.account.Credentials["model_mapping"])
+}
+
+func TestDiffCredentialFieldsIncludesOnlyRefreshChanges(t *testing.T) {
+	unchangedMapping := map[string]any{"gpt-5.5": "gpt-5.5"}
+	setFields, removeFields := diffCredentialFields(
+		map[string]any{
+			"access_token":  "old-token",
+			"id_token":      "old-id-token",
+			"model_mapping": unchangedMapping,
+		},
+		map[string]any{
+			"access_token":  "new-token",
+			"expires_at":    "2026-07-16T12:00:00Z",
+			"model_mapping": unchangedMapping,
+		},
+	)
+
+	require.Equal(t, map[string]any{
+		"access_token": "new-token",
+		"expires_at":   "2026-07-16T12:00:00Z",
+	}, setFields)
+	require.Equal(t, []string{"id_token"}, removeFields)
 }
 
 func TestRefreshIfNeeded_LockHeld(t *testing.T) {
