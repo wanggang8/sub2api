@@ -1,4 +1,6 @@
-<svg width="80" height="80" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg width="80" height="80" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Sub2API</title>
+  <desc id="desc">The fork's teal N-shaped Sub2API mark.</desc>
   <defs>
     <linearGradient id="bg" x1="10" y1="8" x2="70" y2="72" gradientUnits="userSpaceOnUse">
       <stop stop-color="#14B8A6"/>
