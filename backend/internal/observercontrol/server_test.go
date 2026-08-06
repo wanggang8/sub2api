@@ -150,7 +150,7 @@ func TestEmbeddedReleaseIsValid(t *testing.T) {
 	t.Setenv(observerDataDirEnv, t.TempDir())
 	server, err := NewEmbedded()
 	require.NoError(t, err)
-	require.Equal(t, "0.3.0", server.release.Version)
+	require.Equal(t, "0.3.1", server.release.Version)
 	require.Equal(t, "linux", server.release.GOOS)
 	require.Equal(t, "amd64", server.release.GOARCH)
 	require.NotEmpty(t, server.artifact)
