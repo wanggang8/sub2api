@@ -1,0 +1,12 @@
+{
+  "api_version": "fobrain-observer-remote/v1",
+  "version": "0.3.0",
+  "goos": "linux",
+  "goarch": "amd64",
+  "size": 7635096,
+  "sha256": "sha256:bc83bcd60b97104f6e7d7feff74124ee9b66455d5e72a0f35802426debf5e1ea",
+  "content_type": "application/octet-stream",
+  "download_path": "/api/v1/observer/releases/artifact",
+  "signature": "3pO7f97mYQgpikaMY91xwhSzw3WVtuH+01R3DV/hy+8AVxNafToY4OHtn8wPyjjy8aQR4XIMVGKf3M2zMsjKAw==",
+  "signing_key_id": "observer-release-v1"
+}
