@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -29,22 +30,27 @@ const (
 )
 
 type Config struct {
-	DataDir          string
-	AgentTokenSHA256 string
-	ReleaseManifest  ReleaseManifest
-	ReleaseArtifact  []byte
-	ReleasePublicKey ed25519.PublicKey
-	MaxArchiveBytes  int64
-	Now              func() time.Time
+	DataDir           string
+	AgentTokenSHA256  string
+	ExportTokenSHA256 string
+	ReleaseManifest   ReleaseManifest
+	ReleaseArtifact   []byte
+	ReleasePublicKey  ed25519.PublicKey
+	MaxArchiveBytes   int64
+	Now               func() time.Time
 }
 
 type Server struct {
-	dataDir         string
-	agentTokenHash  [sha256.Size]byte
-	release         ReleaseManifest
-	artifact        []byte
-	maxArchiveBytes int64
-	now             func() time.Time
+	dataDir          string
+	agentTokenHash   [sha256.Size]byte
+	exportTokenHash  [sha256.Size]byte
+	exportConfigured bool
+	release          ReleaseManifest
+	artifact         []byte
+	maxArchiveBytes  int64
+	now              func() time.Time
+	dataMu           sync.Mutex
+	exportMu         sync.Mutex
 }
 
 func New(config Config) (*Server, error) {
@@ -59,7 +65,23 @@ func New(config Config) (*Server, error) {
 	if err := validateEmbeddedRelease(config.ReleaseManifest, config.ReleaseArtifact, config.ReleasePublicKey); err != nil {
 		return nil, err
 	}
-	for _, directory := range []string{dataDir, filepath.Join(dataDir, "agents"), filepath.Join(dataDir, "observations")} {
+	var exportTokenHash [sha256.Size]byte
+	exportConfigured := false
+	if raw := strings.TrimSpace(config.ExportTokenSHA256); raw != "" {
+		if decoded, decodeErr := decodeSHA256(raw); decodeErr == nil {
+			exportTokenHash = decoded
+			exportConfigured = true
+		} else {
+			slog.Warn("observer export is disabled because its token digest is invalid")
+		}
+	}
+	for _, directory := range []string{
+		dataDir,
+		filepath.Join(dataDir, "agents"),
+		filepath.Join(dataDir, "observations"),
+		filepath.Join(dataDir, "exports"),
+		filepath.Join(dataDir, "export-receipts"),
+	} {
 		if err := os.MkdirAll(directory, 0o700); err != nil {
 			return nil, fmt.Errorf("create observer control data directory: %w", err)
 		}
@@ -79,16 +101,23 @@ func New(config Config) (*Server, error) {
 	if now == nil {
 		now = time.Now
 	}
-	return &Server{
-		dataDir: dataDir, agentTokenHash: tokenHash, release: config.ReleaseManifest,
+	server := &Server{
+		dataDir: dataDir, agentTokenHash: tokenHash, exportTokenHash: exportTokenHash, exportConfigured: exportConfigured,
+		release:  config.ReleaseManifest,
 		artifact: config.ReleaseArtifact, maxArchiveBytes: maxArchiveBytes, now: now,
-	}, nil
+	}
+	if err := server.recoverExportSnapshots(); err != nil {
+		slog.Warn("observer export recovery is incomplete", "error", err)
+	}
+	return server, nil
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/observer/agents/heartbeat", s.heartbeat)
 	mux.HandleFunc("POST /api/v1/observer/observations", s.upload)
+	mux.HandleFunc("POST /api/v1/observer/exports", s.createExport)
+	mux.HandleFunc("GET /api/v1/observer/exports/{export_id}", s.downloadExport)
 	mux.HandleFunc("GET /api/v1/observer/releases/latest", s.latestRelease)
 	mux.HandleFunc("GET /api/v1/observer/releases/artifact", s.releaseArtifact)
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -120,7 +149,10 @@ func (s *Server) heartbeat(writer http.ResponseWriter, request *http.Request) {
 	}
 	data = append(data, '\n')
 	path := filepath.Join(s.dataDir, "agents", metadata.InstallationID+".json")
-	if err := writeAtomic(path, data, true); err != nil {
+	s.dataMu.Lock()
+	err = writeAtomic(path, data, true)
+	s.dataMu.Unlock()
+	if err != nil {
 		s.writeInternalError(writer, err)
 		return
 	}
@@ -170,6 +202,20 @@ func (s *Server) authenticate(writer http.ResponseWriter, request *http.Request)
 	token := bearerToken(request.Header.Get("Authorization"))
 	provided := sha256.Sum256([]byte(token))
 	if token == "" || subtle.ConstantTimeCompare(provided[:], s.agentTokenHash[:]) != 1 {
+		s.writeError(writer, http.StatusUnauthorized, "unauthorized", "authentication failed")
+		return false
+	}
+	return true
+}
+
+func (s *Server) authenticateExport(writer http.ResponseWriter, request *http.Request) bool {
+	if !s.exportConfigured {
+		s.writeError(writer, http.StatusServiceUnavailable, "export_not_configured", "observer export is not configured")
+		return false
+	}
+	token := bearerToken(request.Header.Get("Authorization"))
+	provided := sha256.Sum256([]byte(token))
+	if token == "" || subtle.ConstantTimeCompare(provided[:], s.exportTokenHash[:]) != 1 {
 		s.writeError(writer, http.StatusUnauthorized, "unauthorized", "authentication failed")
 		return false
 	}

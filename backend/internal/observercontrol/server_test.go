@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,7 +22,50 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const testAgentToken = "observer-test-token"
+const (
+	testAgentToken  = "observer-test-token"
+	testExportToken = "observer-export-test-token"
+)
+
+func TestExportAuthenticationIsSeparateAndOptional(t *testing.T) {
+	t.Setenv(observerDataDirEnv, t.TempDir())
+	exportHash := sha256.Sum256([]byte(testExportToken))
+	t.Setenv(observerExportTokenSHA256Env, "sha256:"+hex.EncodeToString(exportHash[:]))
+	server, err := NewEmbedded()
+	require.NoError(t, err)
+
+	configured := performRequest(t, server.Handler(), http.MethodPost, "/api/v1/observer/exports", testExportToken, nil, nil)
+	require.Equal(t, http.StatusConflict, configured.Code)
+	require.Contains(t, configured.Body.String(), `"code":"no_exportable_data"`)
+
+	for _, token := range []string{"", testAgentToken, "wrong-export-token"} {
+		recorder := performRequest(t, server.Handler(), http.MethodPost, "/api/v1/observer/exports", token, nil, nil)
+		require.Equal(t, http.StatusUnauthorized, recorder.Code)
+	}
+
+	for _, configuredHash := range []string{"", "not-a-sha256"} {
+		t.Run("disabled_"+configuredHash, func(t *testing.T) {
+			t.Setenv(observerDataDirEnv, t.TempDir())
+			t.Setenv(observerExportTokenSHA256Env, configuredHash)
+			disabled, newErr := NewEmbedded()
+			require.NoError(t, newErr)
+			recorder := performRequest(t, disabled.Handler(), http.MethodPost, "/api/v1/observer/exports", testExportToken, nil, nil)
+			require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+			require.Contains(t, recorder.Body.String(), `"code":"export_not_configured"`)
+		})
+	}
+}
+
+func TestNewCreatesPrivateExportDirectories(t *testing.T) {
+	server, dataDir := newTestServer(t, 0)
+	require.NotNil(t, server)
+	for _, name := range []string{"exports", "export-receipts"} {
+		info, err := os.Stat(filepath.Join(dataDir, name))
+		require.NoError(t, err)
+		require.True(t, info.IsDir())
+		require.Equal(t, os.FileMode(0o700), info.Mode().Perm())
+	}
+}
 
 func TestHeartbeatAuthenticatesAndPersists(t *testing.T) {
 	server, dataDir := newTestServer(t, 0)
@@ -115,6 +159,28 @@ func TestUploadRejectsInvalidAndOversizedArchives(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, invalid.Code)
 }
 
+func TestUploadAcceptsTwoHundredConcurrentArchives(t *testing.T) {
+	server, dataDir := newTestServer(t, 0)
+	const count = 200
+	archives := make([][]byte, count)
+	for index := range archives {
+		archives[index] = validTestArchiveForSensor(t, fmt.Sprintf("sensor-%03d", index))
+	}
+	results := make(chan int, count)
+	for _, archive := range archives {
+		go func(data []byte) {
+			response := performRequest(t, server.Handler(), http.MethodPost, "/api/v1/observer/observations", testAgentToken, http.Header{"Content-Type": []string{"application/gzip"}}, data)
+			results <- response.Code
+		}(archive)
+	}
+	for range count {
+		require.Equal(t, http.StatusCreated, <-results)
+	}
+	entries, err := os.ReadDir(filepath.Join(dataDir, "observations"))
+	require.NoError(t, err)
+	require.Len(t, entries, count)
+}
+
 func TestUploadRejectsChecksumMismatch(t *testing.T) {
 	server, _ := newTestServer(t, 0)
 	observationData := []byte(`{"schema_version":"fobrain.network-observation/v1","collector":{"name":"fobrain-net-observer"},"sensor":{"sensor_id":"sensor-test"}}`)
@@ -150,7 +216,7 @@ func TestEmbeddedReleaseIsValid(t *testing.T) {
 	t.Setenv(observerDataDirEnv, t.TempDir())
 	server, err := NewEmbedded()
 	require.NoError(t, err)
-	require.Equal(t, "0.3.1", server.release.Version)
+	require.Equal(t, "0.3.2", server.release.Version)
 	require.Equal(t, "linux", server.release.GOOS)
 	require.Equal(t, "amd64", server.release.GOARCH)
 	require.NotEmpty(t, server.artifact)
@@ -160,14 +226,16 @@ func newTestServer(t *testing.T, maxArchiveBytes int64) (*Server, string) {
 	t.Helper()
 	artifact, manifest, publicKey := signedTestRelease(t)
 	tokenHash := sha256.Sum256([]byte(testAgentToken))
+	exportTokenHash := sha256.Sum256([]byte(testExportToken))
 	dataDir := filepath.Join(t.TempDir(), "observer-control")
 	server, err := New(Config{
-		DataDir:          dataDir,
-		AgentTokenSHA256: hex.EncodeToString(tokenHash[:]),
-		ReleaseManifest:  manifest,
-		ReleaseArtifact:  artifact,
-		ReleasePublicKey: publicKey,
-		MaxArchiveBytes:  maxArchiveBytes,
+		DataDir:           dataDir,
+		AgentTokenSHA256:  hex.EncodeToString(tokenHash[:]),
+		ExportTokenSHA256: hex.EncodeToString(exportTokenHash[:]),
+		ReleaseManifest:   manifest,
+		ReleaseArtifact:   artifact,
+		ReleasePublicKey:  publicKey,
+		MaxArchiveBytes:   maxArchiveBytes,
 		Now: func() time.Time {
 			return time.Date(2026, time.August, 6, 1, 2, 3, 0, time.UTC)
 		},
@@ -201,12 +269,18 @@ func validTestAgentMetadata() agentMetadata {
 }
 
 func validTestArchive(t *testing.T) []byte {
+	return validTestArchiveForSensor(t, "sensor-test")
+}
+
+func validTestArchiveForSensor(t *testing.T, sensorID string) []byte {
 	t.Helper()
-	observationData := []byte(`{"schema_version":"fobrain.network-observation/v1","collector":{"name":"fobrain-net-observer"},"sensor":{"sensor_id":"sensor-test"}}`)
+	observationData := []byte(fmt.Sprintf(`{"schema_version":"fobrain.network-observation/v1","collector":{"name":"fobrain-net-observer"},"sensor":{"sensor_id":%q}}`, sensorID))
 	observationHash := sha256.Sum256(observationData)
+	agent := validTestAgentMetadata()
+	agent.SensorID = sensorID
 	manifest := uploadManifest{
 		APIVersion: APIVersion, AgentVersion: "0.3.0", GOOS: "linux", GOARCH: "amd64",
-		CreatedAt: time.Now().UTC(), Agent: pointerTo(validTestAgentMetadata()),
+		CreatedAt: time.Now().UTC(), Agent: pointerTo(agent),
 		Files: []archiveFile{{Name: "observation.json", Size: int64(len(observationData)), SHA256: "sha256:" + hex.EncodeToString(observationHash[:])}},
 	}
 	manifestData, err := json.Marshal(manifest)

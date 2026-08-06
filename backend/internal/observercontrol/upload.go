@@ -47,6 +47,17 @@ func (s *Server) upload(writer http.ResponseWriter, request *http.Request) {
 	identifierDigest := sha256.Sum256([]byte(parsed.manifest.Agent.InstallationID + "\x00" + parsed.observationSHA))
 	uploadID := "obs_" + hex.EncodeToString(identifierDigest[:16])
 	path := filepath.Join(s.dataDir, "observations", uploadID+".tar.gz")
+	s.dataMu.Lock()
+	defer s.dataMu.Unlock()
+	receipted, err := s.hasExportReceipt(uploadID)
+	if err != nil {
+		s.writeInternalError(writer, err)
+		return
+	}
+	if receipted {
+		s.writeJSON(writer, http.StatusOK, map[string]any{"api_version": APIVersion, "upload_id": uploadID, "status": "accepted"})
+		return
+	}
 	created := true
 	if err := writeAtomic(path, archive, false); err != nil {
 		if !errors.Is(err, os.ErrExist) {

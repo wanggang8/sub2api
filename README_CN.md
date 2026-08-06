@@ -765,6 +765,39 @@ Antigravity 账户支持可选的**混合调度**功能。开启后，通用端�
 解决办法：shift + Tab，手动退出Plan mode，然后输入内容 告诉 Claude Code 同意或拒绝 Plan
 ---
 
+## Observer 采集数据批量导出
+
+内嵌 observer 控制服务支持使用独立管理 Token 将当前已上传的采集包和最新心跳记录打包为 `tar.gz`。该 Token 与节点共用的 agent Token 完全分离，服务器只配置 SHA-256 摘要：
+
+```bash
+OBSERVER_EXPORT_TOKEN_SHA256=sha256:<64位十六进制摘要>
+```
+
+Docker Compose 部署需同时在 `.env` 中配置该变量；未配置时只有导出接口返回 `503 export_not_configured`，心跳、采集上传、版本查询和升级下载不受影响。
+
+创建并下载新批次：
+
+```bash
+curl -fS -X POST \
+  -H "Authorization: Bearer ${OBSERVER_EXPORT_TOKEN}" \
+  -D observer-export.headers \
+  -o observer-export.tar.gz \
+  "https://<sub2api-host>/api/v1/observer/exports"
+```
+
+响应头 `X-Observer-Export-ID` 和 `X-Checksum-SHA256` 分别给出批次 ID 与压缩包校验和。压缩包包含 `manifest.json`、`observations/*.tar.gz` 和 `agents/*.json`。服务端仅在压缩包完整校验并原子落盘后清理本批次原文件；导出期间的新上传和新心跳保留到下一批。
+
+已完成批次会保存在 `${DATA_DIR}/observer-control/exports/`，可使用同一个独立 Token 重复下载：
+
+```bash
+curl -fS \
+  -H "Authorization: Bearer ${OBSERVER_EXPORT_TOKEN}" \
+  -o "observer-export-${EXPORT_ID}.tar.gz" \
+  "https://<sub2api-host>/api/v1/observer/exports/${EXPORT_ID}"
+```
+
+当前不会自动删除已完成批次。原始导出 Token 不得提交 Git、写入日志或编译进 observer/sub2api 二进制。
+
 ## 项目结构
 
 ```

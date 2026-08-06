@@ -11,7 +11,10 @@ import (
 	"strings"
 )
 
-const observerDataDirEnv = "OBSERVER_CONTROL_DATA_DIR"
+const (
+	observerDataDirEnv           = "OBSERVER_CONTROL_DATA_DIR"
+	observerExportTokenSHA256Env = "OBSERVER_EXPORT_TOKEN_SHA256"
+)
 
 var (
 	//go:embed assets/release-manifest.json
@@ -40,11 +43,12 @@ func NewEmbedded() (*Server, error) {
 		return nil, fmt.Errorf("decode embedded observer release public key")
 	}
 	return New(Config{
-		DataDir:          embeddedDataDir(),
-		AgentTokenSHA256: strings.TrimSpace(embeddedAgentTokenSHA256),
-		ReleaseManifest:  manifest,
-		ReleaseArtifact:  embeddedReleaseArtifact,
-		ReleasePublicKey: ed25519.PublicKey(publicKey),
+		DataDir:           embeddedDataDir(),
+		AgentTokenSHA256:  strings.TrimSpace(embeddedAgentTokenSHA256),
+		ExportTokenSHA256: strings.TrimSpace(os.Getenv(observerExportTokenSHA256Env)),
+		ReleaseManifest:   manifest,
+		ReleaseArtifact:   embeddedReleaseArtifact,
+		ReleasePublicKey:  ed25519.PublicKey(publicKey),
 	})
 }
 

@@ -80,7 +80,8 @@
 ### Task 4: Operator secret and documentation
 
 **Files:**
-- Modify: `backend/deploy/.env.example`
+- Modify: `deploy/.env.example`
+- Modify: `deploy/docker-compose.yml`
 - Modify: `README_CN.md`
 - Modify: `/Users/vick/Desktop/project/fofa-observer-agent/README.md`
 - Create locally (ignored): `/Users/vick/Desktop/project/fofa-observer-agent/local-evidence/embedded-release-secrets/observer-export.token`
