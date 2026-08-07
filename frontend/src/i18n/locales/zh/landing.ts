@@ -191,8 +191,8 @@ export default {
 
   // Setup Wizard
   setup: {
-    title: 'Sub2API 安装向导',
-    description: '配置您的 Sub2API 实例',
+    title: '牛马蓄水池安装向导',
+    description: '配置您的牛马蓄水池实例',
     database: {
       title: '数据库配置',
       description: '连接到您的 PostgreSQL 数据库',
