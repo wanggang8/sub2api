@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -43,60 +44,6 @@ import (
 func TestAnthropicBetaTokensContains_EmptyInputs(t *testing.T) {
 	require.False(t, anthropicBetaTokensContains("", "context-management-2025-06-27"))
 	require.False(t, anthropicBetaTokensContains("oauth-2025-04-20", ""))
-}
-
-func TestAnthropicBuildUpstreamRequestAppliesSkipTLSOption(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-
-	account := &Account{
-		ID:       403,
-		Platform: PlatformAnthropic,
-		Type:     AccountTypeAPIKey,
-		Credentials: map[string]any{
-			"base_url":        "https://api.anthropic.com:8443",
-			"skip_tls_verify": true,
-		},
-		Status:      StatusActive,
-		Schedulable: true,
-	}
-	body := []byte(`{"model":"claude-sonnet-4-6","messages":[]}`)
-	svc := &GatewayService{cfg: &config.Config{}}
-	req, _, err := svc.buildUpstreamRequest(
-		context.Background(), c, account, body,
-		"api-key", "api_key", "claude-sonnet-4-6", false, false,
-	)
-	require.NoError(t, err)
-	require.True(t, UpstreamRequestOptionsFromContext(req.Context()).SkipTLSVerify)
-}
-
-func TestAnthropicAPIKeyPassthroughBuildUpstreamRequestAppliesSkipTLSOption(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-
-	account := &Account{
-		ID:       404,
-		Platform: PlatformAnthropic,
-		Type:     AccountTypeAPIKey,
-		Credentials: map[string]any{
-			"api_key":         "sk-ant-test",
-			"base_url":        "https://api.anthropic.com:8443",
-			"skip_tls_verify": true,
-		},
-		Status:      StatusActive,
-		Schedulable: true,
-	}
-	body := []byte(`{"model":"claude-sonnet-4-6","messages":[]}`)
-	svc := &GatewayService{cfg: &config.Config{}}
-	req, _, err := svc.buildUpstreamRequestAnthropicAPIKeyPassthrough(
-		context.Background(), c, account, body, "sk-ant-test",
-	)
-	require.NoError(t, err)
-	require.True(t, UpstreamRequestOptionsFromContext(req.Context()).SkipTLSVerify)
 }
 
 func TestAnthropicBetaTokensContains_SingleToken(t *testing.T) {
@@ -704,6 +651,45 @@ func TestBuildCountTokensRequest_APIKeyHaiku_StripsContextManagementEndToEnd(t *
 		"count_tokens API-key + 客户端未带 beta token → body strip")
 }
 
+func TestAnthropicBuildUpstreamRequestAppliesSkipTLSOption(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	account := &Account{
+		ID: 403, Platform: PlatformAnthropic, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"base_url": "https://api.anthropic.com:8443", "skip_tls_verify": true,
+		},
+		Status: StatusActive, Schedulable: true,
+	}
+	req, _, err := (&GatewayService{cfg: &config.Config{}}).buildUpstreamRequest(
+		context.Background(), c, account, []byte(`{"model":"claude-sonnet-4-6","messages":[]}`),
+		"api-key", "api_key", "claude-sonnet-4-6", false, false,
+	)
+	require.NoError(t, err)
+	require.True(t, UpstreamRequestOptionsFromContext(req.Context()).SkipTLSVerify)
+}
+
+func TestAnthropicAPIKeyPassthroughBuildUpstreamRequestAppliesSkipTLSOption(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	account := &Account{
+		ID: 404, Platform: PlatformAnthropic, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key": "sk-ant-test", "base_url": "https://api.anthropic.com:8443", "skip_tls_verify": true,
+		},
+		Status: StatusActive, Schedulable: true,
+	}
+	req, _, err := (&GatewayService{cfg: &config.Config{}}).buildUpstreamRequestAnthropicAPIKeyPassthrough(
+		context.Background(), c, account, []byte(`{"model":"claude-sonnet-4-6","messages":[]}`), "sk-ant-test",
+	)
+	require.NoError(t, err)
+	require.True(t, UpstreamRequestOptionsFromContext(req.Context()).SkipTLSVerify)
+}
+
 func TestBuildCountTokensRequestsApplySkipTLSOption(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
@@ -735,6 +721,51 @@ func TestBuildCountTokensRequestsApplySkipTLSOption(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.True(t, UpstreamRequestSkipsTLSVerify(passthroughReq))
+}
+
+func TestBuildCountTokensRequest_StripsCacheControlOnlyFromLiteralDeferredTools(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"claude-haiku-4-5","messages":[],"tools":[{"name":"deferred","custom":{"defer_loading":true},"cache_control":{"type":"ephemeral"}},{"name":"ordinary","custom":{"defer_loading":false},"cache_control":{"type":"ephemeral"}},{"name":"string","custom":{"defer_loading":"true"},"cache_control":{"type":"ephemeral"}},{"name":"number","custom":{"defer_loading":1},"cache_control":{"type":"ephemeral"}},{"name":"object","custom":{"defer_loading":{}},"cache_control":{"type":"ephemeral"}}]}`)
+
+	tests := []struct {
+		name      string
+		account   *Account
+		token     string
+		tokenType string
+	}{
+		{
+			name:      "generic API key",
+			account:   &Account{Platform: PlatformAnthropic, Type: AccountTypeAPIKey},
+			token:     "sk-ant-test",
+			tokenType: "apikey",
+		},
+		{
+			name:      "recognized Claude Code OAuth without mimicry",
+			account:   &Account{Platform: PlatformAnthropic, Type: AccountTypeOAuth},
+			token:     "oauth-token",
+			tokenType: "oauth",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", nil)
+			svc := &GatewayService{cfg: &config.Config{}}
+
+			req, wireBody, err := svc.buildCountTokensRequest(
+				context.Background(), c, tt.account, body,
+				tt.token, tt.tokenType, "claude-haiku-4-5", false,
+			)
+			require.NoError(t, err)
+			require.False(t, gjson.GetBytes(wireBody, "tools.0.cache_control").Exists())
+			for idx := 1; idx < 5; idx++ {
+				require.Equal(t, "ephemeral", gjson.GetBytes(wireBody, fmt.Sprintf("tools.%d.cache_control.type", idx)).String())
+			}
+			require.JSONEq(t, string(wireBody), string(readUpstreamBodyForTest(t, req)))
+		})
+	}
 }
 
 // count_tokens passthrough preserve 测试

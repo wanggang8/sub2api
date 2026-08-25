@@ -11,14 +11,6 @@ type chatMessageContent struct {
 	Parts []ChatContentPart
 }
 
-func marshalJSONRaw(value any) json.RawMessage {
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return nil
-	}
-	return raw
-}
-
 // ChatCompletionsToResponses converts a Chat Completions request into a
 // Responses API request. The upstream always streams, so Stream is forced to
 // true. store is always false and reasoning.encrypted_content is always
@@ -386,6 +378,15 @@ func convertChatContentPartsToResponses(parts []ChatContentPart) []ResponsesCont
 					ImageURL: p.ImageURL.URL,
 				})
 			}
+		case "file":
+			if p.File != nil && (p.File.FileData != "" || p.File.FileID != "") {
+				responseParts = append(responseParts, ResponsesContentPart{
+					Type:     "input_file",
+					Filename: p.File.Filename,
+					FileData: p.File.FileData,
+					FileID:   p.File.FileID,
+				})
+			}
 		}
 	}
 	return responseParts
@@ -427,8 +428,20 @@ func convertChatToolsToResponses(tools []ChatTool, functions []ChatFunction) []R
 	var out []ResponsesTool
 
 	for _, t := range tools {
+		if strings.EqualFold(strings.TrimSpace(t.Type), "x_search") {
+			out = append(out, ResponsesTool{
+				Type:                     "x_search",
+				AllowedXHandles:          t.AllowedXHandles,
+				ExcludedXHandles:         t.ExcludedXHandles,
+				FromDate:                 t.FromDate,
+				ToDate:                   t.ToDate,
+				EnableImageUnderstanding: t.EnableImageUnderstanding,
+				EnableVideoUnderstanding: t.EnableVideoUnderstanding,
+			})
+			continue
+		}
 		toolType := strings.TrimSpace(t.Type)
-		if toolType != "" && toolType != "function" {
+		if toolType != "" && !strings.EqualFold(toolType, "function") {
 			continue
 		}
 		fn := t.Function
@@ -447,15 +460,11 @@ func convertChatToolsToResponses(tools []ChatTool, functions []ChatFunction) []R
 		if strings.TrimSpace(fn.Name) == "" {
 			continue
 		}
-		parameters := fn.Parameters
-		if len(parameters) == 0 {
-			parameters = marshalJSONRaw(map[string]any{"type": "object", "properties": map[string]any{}})
-		}
 		rt := ResponsesTool{
 			Type:        "function",
 			Name:        fn.Name,
 			Description: fn.Description,
-			Parameters:  parameters,
+			Parameters:  fn.Parameters,
 			Strict:      defaultStrictFalse(fn.Strict),
 		}
 		out = append(out, rt)
