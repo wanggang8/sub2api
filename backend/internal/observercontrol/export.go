@@ -240,7 +240,7 @@ func (s *Server) persistExport(manifest exportManifest, files []exportSnapshotFi
 		return exportResult{}, err
 	}
 	gzipWriter := gzip.NewWriter(temporary)
-	gzipWriter.Header.ModTime = manifest.CreatedAt
+	gzipWriter.ModTime = manifest.CreatedAt
 	tarWriter := tar.NewWriter(gzipWriter)
 	if err := writeTarMember(tarWriter, "manifest.json", manifestData, manifest.CreatedAt); err != nil {
 		return exportResult{}, err
@@ -423,12 +423,12 @@ func verifyExportPackage(path, exportID string, files []exportSnapshotFile) erro
 	if err != nil {
 		return err
 	}
-	defer handle.Close()
+	defer func() { _ = handle.Close() }()
 	gzipReader, err := gzip.NewReader(handle)
 	if err != nil {
 		return fmt.Errorf("open observer export gzip: %w", err)
 	}
-	defer gzipReader.Close()
+	defer func() { _ = gzipReader.Close() }()
 	tarReader := tar.NewReader(gzipReader)
 	seen := make(map[string]bool, len(expected))
 	manifestSeen := false
@@ -529,7 +529,7 @@ func (s *Server) serveExport(writer http.ResponseWriter, result exportResult, st
 		s.writeInternalError(writer, err)
 		return
 	}
-	defer handle.Close()
+	defer func() { _ = handle.Close() }()
 	writer.Header().Set("Content-Type", "application/gzip")
 	writer.Header().Set("Content-Length", strconv.FormatInt(result.size, 10))
 	writer.Header().Set("Content-Disposition", `attachment; filename="observer-export-`+result.id+`.tar.gz"`)
@@ -558,7 +558,7 @@ func validUploadID(value string) bool {
 }
 
 func regularPrivateFile(path string) (os.FileInfo, error) {
-	info, err := os.Lstat(path)
+	info, err := os.Lstat(path) // #nosec G703 -- Callers use generated paths or IDs validated by exportIDPattern, validUploadID, or validInstallationID.
 	if err != nil {
 		return nil, err
 	}
@@ -569,11 +569,11 @@ func regularPrivateFile(path string) (os.FileInfo, error) {
 }
 
 func hashFile(path string) (string, error) {
-	handle, err := os.Open(path)
+	handle, err := os.Open(path) // #nosec G703 -- Callers use generated paths or IDs validated by exportIDPattern, validUploadID, or validInstallationID.
 	if err != nil {
 		return "", err
 	}
-	defer handle.Close()
+	defer func() { _ = handle.Close() }()
 	hash := sha256.New()
 	if _, err := io.Copy(hash, handle); err != nil {
 		return "", err

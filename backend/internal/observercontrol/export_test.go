@@ -269,7 +269,7 @@ func readExportMembers(t *testing.T, data []byte) map[string][]byte {
 	t.Helper()
 	gzipReader, err := gzip.NewReader(bytes.NewReader(data))
 	require.NoError(t, err)
-	defer gzipReader.Close()
+	defer func() { require.NoError(t, gzipReader.Close()) }()
 
 	result := map[string][]byte{}
 	tarReader := tar.NewReader(gzipReader)

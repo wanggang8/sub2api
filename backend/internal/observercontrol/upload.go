@@ -86,7 +86,7 @@ func parseArchive(data []byte, maxArchiveBytes int64) (parsedArchive, error) {
 	if err != nil {
 		return parsedArchive{}, err
 	}
-	defer gzipReader.Close()
+	defer func() { _ = gzipReader.Close() }()
 	tarReader := tar.NewReader(io.LimitReader(gzipReader, 2*maxArchiveBytes))
 	files := map[string][]byte{}
 	allowed := map[string]bool{"manifest.json": true, "observation.json": true, "collect.log": true}
